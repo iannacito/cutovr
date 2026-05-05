@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PCLaw Migration Console V2</title>
+  <link rel="preconnect" href="https://api.fontshare.com">
+  <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&f[]=general-sans@500,600,700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <svg viewBox="0 0 64 64" aria-label="Product logo" class="logo" fill="none">
+        <rect x="8" y="10" width="20" height="44" rx="8" stroke="currentColor" stroke-width="5"/>
+        <path d="M36 14h20v10H46v8h10v10H46v8h10v10H36z" fill="currentColor"/>
+      </svg>
+      <div>
+        <p class="eyebrow">Version 2 — OAuth enabled</p>
+        <h1>Migration Console</h1>
+      </div>
+    </div>
+    <nav aria-label="Primary">
+      <a class="nav-link active" href="#intake">New migration</a>
+      <a class="nav-link" href="#oauth-status">OAuth status</a>
+      <a class="nav-link" href="#security">Security</a>
+      <a class="nav-link" href="#recent">Recent jobs</a>
+    </nav>
+    <div class="security-card">
+      <p class="eyebrow">Security posture</p>
+      <strong>Encrypted at rest</strong>
+      <p>Files encrypted with AES-256. Tokens encrypted. Auto-deletion after 30 days (coming soon).</p>
+    </div>
+  </aside>
+
+  <div class="content-wrap">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">PCLaw → QuickBooks Online</p>
+        <p class="muted">Full OAuth flow enabled. Upload, connect QBO, and import with real authorization.</p>
+      </div>
+      <button type="button" class="theme-toggle" data-theme-toggle aria-label="Toggle theme">◐</button>
+    </header>
+
+    <main id="main" class="main">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <section class="stack-sm">
+            {% for category, message in messages %}
+              <div class="flash {{ category }}">{{ message }}</div>
+            {% endfor %}
+          </section>
+        {% endif %}
+      {% endwith %}
+
+      {% if not qbo_configured %}
+      <section class="panel warning-panel">
+        <h3>⚠️ QuickBooks OAuth Not Configured</h3>
+        <p>To enable live QuickBooks connections, set these environment variables:</p>
+        <ul class="config-list">
+          <li><code>QBO_CLIENT_ID</code> — from your Intuit app</li>
+          <li><code>QBO_CLIENT_SECRET</code> — from your Intuit app</li>
+          <li><code>QBO_REDIRECT_URI</code> — your callback URL (default: http://localhost:5000/oauth/callback)</li>
+          <li><code>QBO_ENVIRONMENT</code> — 'sandbox' or 'production'</li>
+        </ul>
+        <p class="muted">You can still demo the upload + parsing flow without OAuth configured.</p>
+      </section>
+      {% endif %}
+
+      <section class="hero-panel" id="intake">
+        <div>
+          <p class="eyebrow">V2 capabilities</p>
+          <h2>Encrypted storage, live OAuth, and secure token management.</h2>
+          <p class="muted wide">Upload → Parse → Encrypt → Connect QBO → Import. All files encrypted at rest with AES-256. OAuth tokens encrypted and stored securely.</p>
+        </div>
+        <div class="stats-grid">
+          <article class="stat-card"><span>🔒 Encryption</span><strong>AES-256</strong><p>Files encrypted immediately after upload.</p></article>
+          <article class="stat-card"><span>🔐 OAuth 2.0</span><strong>Intuit flow</strong><p>Secure authorization with refresh tokens.</p></article>
+          <article class="stat-card"><span>🗑️ Auto-delete</span><strong>30 days</strong><p>Automated cleanup (scheduled task needed).</p></article>
+        </div>
+      </section>
+
+      <section class="grid-two">
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Client intake</p>
+              <h3>Start a migration job</h3>
+            </div>
+            <span class="badge">V2</span>
+          </div>
+          <form action="/upload" method="post" enctype="multipart/form-data" class="form-grid">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label>
+              <span>Law firm / company</span>
+              <input type="text" name="company_name" placeholder="Smith & Hart LLP" required>
+            </label>
+            <label>
+              <span>Notification email</span>
+              <input type="email" name="email" placeholder="ops@firm.com" required>
+            </label>
+            <label class="full">
+              <span>PCLaw general ledger CSV</span>
+              <input type="file" name="ledger_file" accept=".csv" required>
+            </label>
+            <div class="full actions-row">
+              <button class="btn btn-primary" type="submit">Upload & encrypt</button>
+            </div>
+          </form>
+        </article>
+
+        <article class="panel" id="oauth-status">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">OAuth configuration</p>
+              <h3>QuickBooks connection</h3>
+            </div>
+            {% if qbo_configured %}
+              <span class="badge success">Configured ✓</span>
+            {% else %}
+              <span class="badge error">Not configured</span>
+            {% endif %}
+          </div>
+          {% if qbo_configured %}
+            <p>OAuth is configured and ready. After uploading a file, you can connect to QuickBooks from the job detail page.</p>
+          {% else %}
+            <p class="muted">Set environment variables to enable OAuth. See the warning panel above for details.</p>
+          {% endif %}
+        </article>
+      </section>
+
+      <section class="panel" id="recent">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Recent jobs</p>
+            <h3>Last 10 migration runs</h3>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Company</th><th>Status</th><th>QBO</th><th>Created</th></tr>
+            </thead>
+            <tbody>
+              {% if jobs %}
+                {% for job in jobs %}
+                <tr>
+                  <td><a href="/jobs/{{ job.id }}">{{ job.company }}</a></td>
+                  <td>{{ job.status }}</td>
+                  <td>{% if job.qbo_connected %}<span class="badge success">Connected</span>{% else %}<span class="badge">Not connected</span>{% endif %}</td>
+                  <td>{{ job.created_at[:10] }}</td>
+                </tr>
+                {% endfor %}
+              {% else %}
+                <tr><td colspan="4">No jobs yet. Upload a sample ledger to generate the first one.</td></tr>
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+<script>
+(() => {
+  const root = document.documentElement;
+  const toggle = document.querySelector("[data-theme-toggle]");
+  let theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  root.setAttribute("data-theme", theme);
+  toggle?.addEventListener("click", () => {
+    theme = theme === "dark" ? "light" : "dark";
+    root.setAttribute("data-theme", theme);
+  });
+})();
+</script>
+</body>
+</html>

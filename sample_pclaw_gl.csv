@@ -1,0 +1,5 @@
+Date,Account,Description,Debit,Credit
+2026-04-01,Cash Operating,Opening balance,1000.00,0.00
+2026-04-01,Retained Earnings,Opening balance,0.00,1000.00
+2026-04-02,Accounts Receivable,Matter invoice 1001,2500.00,0.00
+2026-04-02,Fee Revenue,Matter invoice 1001,0.00,2500.00

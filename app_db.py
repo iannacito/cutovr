@@ -1,0 +1,563 @@
+"""
+Application database for auth + tenancy.
+
+This is intentionally separate from `import_history.py` so each module owns
+its tables and migrations. Both use the same SQLite file by default, which
+keeps the deploy footprint small. Postgres migration is a swap of the
+connection layer; the SQL is ANSI-compatible.
+
+Tables:
+
+  firms
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL
+
+  users
+    id INTEGER PRIMARY KEY,
+    firm_id INTEGER NOT NULL REFERENCES firms(id),
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'admin',
+    created_at TEXT NOT NULL
+
+  jobs
+    id TEXT PRIMARY KEY,                 -- matches the in-memory job id
+    firm_id INTEGER NOT NULL REFERENCES firms(id),
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    company TEXT,
+    source_file TEXT,
+    encrypted_file TEXT,
+    file_sha256 TEXT,
+    status TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+
+  qbo_connections
+    job_id TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
+    firm_id INTEGER NOT NULL REFERENCES firms(id),
+    realm_id TEXT NOT NULL,
+    company_name TEXT,
+    connected_at TEXT NOT NULL
+    -- NOTE: encrypted access/refresh tokens still live in the in-memory
+    -- qbo_connections dict for now. Persisting them to this table
+    -- (still Fernet-encrypted) is a tracked next step.
+
+  audit_logs
+    id INTEGER PRIMARY KEY,
+    firm_id INTEGER,
+    user_id INTEGER,
+    action TEXT NOT NULL,
+    target_type TEXT,
+    target_id TEXT,
+    details TEXT,
+    created_at TEXT NOT NULL
+
+Password storage: werkzeug's pbkdf2 with salt (the default of
+`generate_password_hash`). Never persist plaintext.
+"""
+
+from __future__ import annotations
+
+import os
+import sqlite3
+from contextlib import contextmanager
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+from werkzeug.security import generate_password_hash, check_password_hash
+
+
+# Werkzeug's default in recent versions is scrypt, which depends on
+# hashlib.scrypt. On some Pythons (notably Apple's Xcode-bundled python3 on
+# macOS, where Python is built against an OpenSSL that omits scrypt) that
+# attribute is missing and signup blows up with:
+#     AttributeError: module 'hashlib' has no attribute 'scrypt'
+# Force PBKDF2/SHA-256 explicitly. It's available on every Python build,
+# is still considered acceptable for password storage, and stays compatible
+# with check_password_hash because the chosen method is encoded into the
+# stored hash string itself.
+PASSWORD_HASH_METHOD = "pbkdf2:sha256:600000"
+PASSWORD_SALT_LENGTH = 16
+
+
+def hash_password(password: str) -> str:
+    """Return a salted PBKDF2/SHA-256 hash for `password`.
+
+    Centralized so every place that creates a user uses the same algorithm.
+    `check_password_hash` reads the algorithm from the stored hash, so this
+    is forward-compatible with any future change to PASSWORD_HASH_METHOD.
+    """
+    return generate_password_hash(
+        password,
+        method=PASSWORD_HASH_METHOD,
+        salt_length=PASSWORD_SALT_LENGTH,
+    )
+
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS firms (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS users (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    firm_id         INTEGER NOT NULL REFERENCES firms(id),
+    email           TEXT NOT NULL UNIQUE,
+    password_hash   TEXT NOT NULL,
+    role            TEXT NOT NULL DEFAULT 'admin',
+    created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_users_firm ON users(firm_id);
+
+CREATE TABLE IF NOT EXISTS jobs (
+    id              TEXT PRIMARY KEY,
+    firm_id         INTEGER NOT NULL REFERENCES firms(id),
+    user_id         INTEGER NOT NULL REFERENCES users(id),
+    company         TEXT,
+    source_file     TEXT,
+    encrypted_file  TEXT,
+    encrypted_output TEXT,
+    output_file     TEXT,
+    file_sha256     TEXT,
+    summary_json    TEXT,
+    qbo_connected   INTEGER NOT NULL DEFAULT 0,
+    qbo_results_json TEXT,
+    import_summary_json TEXT,
+    verification_json TEXT,
+    last_import_id  INTEGER,
+    status          TEXT,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_firm ON jobs(firm_id);
+
+CREATE TABLE IF NOT EXISTS qbo_connections (
+    job_id              TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
+    firm_id             INTEGER NOT NULL REFERENCES firms(id),
+    realm_id            TEXT NOT NULL,
+    company_name        TEXT,
+    legal_name          TEXT,
+    country             TEXT,
+    access_token_enc    TEXT NOT NULL,
+    refresh_token_enc   TEXT NOT NULL,
+    expires_at          TEXT,
+    company_info_error  TEXT,
+    connected_at        TEXT NOT NULL,
+    updated_at          TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS account_mappings (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    firm_id               INTEGER NOT NULL REFERENCES firms(id),
+    realm_id              TEXT NOT NULL,
+    pclaw_account_number  TEXT,
+    pclaw_account_name    TEXT,
+    qbo_account_id        TEXT NOT NULL,
+    qbo_account_name      TEXT,
+    qbo_account_type      TEXT,
+    created_at            TEXT NOT NULL,
+    updated_at            TEXT NOT NULL,
+    UNIQUE (firm_id, realm_id, pclaw_account_number, pclaw_account_name)
+);
+CREATE INDEX IF NOT EXISTS idx_acctmap_firm_realm
+    ON account_mappings(firm_id, realm_id);
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    firm_id     INTEGER,
+    user_id     INTEGER,
+    action      TEXT NOT NULL,
+    target_type TEXT,
+    target_id   TEXT,
+    details     TEXT,
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_audit_firm ON audit_logs(firm_id, created_at);
+"""
+
+
+def _now() -> str:
+    return datetime.utcnow().isoformat()
+
+
+class AppDB:
+    def __init__(self, db_path):
+        self.db_path = str(db_path)
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        with self._conn() as c:
+            c.executescript(SCHEMA)
+            self._migrate(c)
+
+    def _migrate(self, c):
+        """Add columns introduced after the initial schema. Idempotent.
+
+        We never drop or rename columns here; that keeps existing rows
+        readable. ALTER TABLE ... ADD COLUMN raises sqlite3.OperationalError
+        when the column already exists, which we swallow.
+        """
+        def add_col(table, col_def):
+            col_name = col_def.split()[0]
+            try:
+                c.execute(f"ALTER TABLE {table} ADD COLUMN {col_def}")
+            except sqlite3.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
+
+        # jobs table additions for full restart-safe state
+        add_col("jobs", "encrypted_output TEXT")
+        add_col("jobs", "output_file TEXT")
+        add_col("jobs", "summary_json TEXT")
+        add_col("jobs", "qbo_connected INTEGER NOT NULL DEFAULT 0")
+        add_col("jobs", "qbo_results_json TEXT")
+        add_col("jobs", "import_summary_json TEXT")
+        add_col("jobs", "verification_json TEXT")
+        add_col("jobs", "last_import_id INTEGER")
+        add_col("jobs", "unmapped_accounts_json TEXT")
+
+        # qbo_connections additions for encrypted token persistence
+        add_col("qbo_connections", "legal_name TEXT")
+        add_col("qbo_connections", "country TEXT")
+        # Tokens: NOT NULL would break old rows, so add as nullable. The
+        # write path always supplies them.
+        add_col("qbo_connections", "access_token_enc TEXT")
+        add_col("qbo_connections", "refresh_token_enc TEXT")
+        add_col("qbo_connections", "expires_at TEXT")
+        add_col("qbo_connections", "company_info_error TEXT")
+        add_col("qbo_connections", "updated_at TEXT")
+
+    @contextmanager
+    def _conn(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        try:
+            yield conn
+            conn.commit()
+        finally:
+            conn.close()
+
+    # --- firms / users -----------------------------------------------------
+
+    def create_firm_and_admin(self, firm_name: str, email: str, password: str) -> tuple[int, int]:
+        """Create a firm + its first admin user atomically. Returns (firm_id, user_id)."""
+        email = email.strip().lower()
+        with self._conn() as c:
+            existing = c.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
+            if existing:
+                raise ValueError("An account with that email already exists.")
+            cur = c.execute(
+                "INSERT INTO firms (name, created_at) VALUES (?, ?)",
+                (firm_name.strip(), _now()),
+            )
+            firm_id = cur.lastrowid
+            cur = c.execute(
+                "INSERT INTO users (firm_id, email, password_hash, role, created_at) "
+                "VALUES (?, ?, ?, 'admin', ?)",
+                (firm_id, email, hash_password(password), _now()),
+            )
+            user_id = cur.lastrowid
+            return firm_id, user_id
+
+    def authenticate(self, email: str, password: str) -> Optional[dict]:
+        """Return the user dict on success, None on bad email/password."""
+        email = email.strip().lower()
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT * FROM users WHERE email = ?", (email,)
+            ).fetchone()
+            if not row:
+                return None
+            if not check_password_hash(row["password_hash"], password):
+                return None
+            return dict(row)
+
+    def get_user(self, user_id: int) -> Optional[dict]:
+        with self._conn() as c:
+            row = c.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+            return dict(row) if row else None
+
+    def get_firm(self, firm_id: int) -> Optional[dict]:
+        with self._conn() as c:
+            row = c.execute("SELECT * FROM firms WHERE id = ?", (firm_id,)).fetchone()
+            return dict(row) if row else None
+
+    # --- jobs --------------------------------------------------------------
+
+    def upsert_job(
+        self,
+        job_id: str,
+        firm_id: int,
+        user_id: int,
+        company: str,
+        source_file: str,
+        encrypted_file: str,
+        file_sha256: str,
+        status: str,
+    ) -> None:
+        """Initial insert at upload time. Use save_job_state() for updates."""
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO jobs (id, firm_id, user_id, company, source_file, encrypted_file, "
+                "                  file_sha256, status, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET status=excluded.status, updated_at=excluded.updated_at",
+                (
+                    job_id, firm_id, user_id, company, source_file, encrypted_file,
+                    file_sha256, status, _now(), _now(),
+                ),
+            )
+
+    def save_job_state(self, job_id: str, job_dict: dict) -> None:
+        """Persist a snapshot of the in-memory job dict.
+
+        Required keys: status. Optional keys are written when present so the
+        caller doesn't need to construct a complete row. JSON-serializable
+        sub-objects (summary, qbo_results, import_summary, verification)
+        are stored as TEXT to keep the schema flat.
+        """
+        import json
+        fields = ["status", "updated_at"]
+        values: list = [job_dict.get("status"), _now()]
+
+        for key, db_col in [
+            ("output_file", "output_file"),
+            ("encrypted_output", "encrypted_output"),
+            ("last_import_id", "last_import_id"),
+        ]:
+            if key in job_dict:
+                fields.append(db_col)
+                values.append(job_dict[key])
+
+        if "summary" in job_dict:
+            fields.append("summary_json")
+            values.append(json.dumps(job_dict["summary"]) if job_dict["summary"] is not None else None)
+        if "qbo_results" in job_dict:
+            fields.append("qbo_results_json")
+            values.append(json.dumps(job_dict["qbo_results"]) if job_dict["qbo_results"] is not None else None)
+        if "import_summary" in job_dict:
+            fields.append("import_summary_json")
+            values.append(json.dumps(job_dict["import_summary"]) if job_dict["import_summary"] is not None else None)
+        if "verification" in job_dict:
+            fields.append("verification_json")
+            values.append(json.dumps(job_dict["verification"]) if job_dict["verification"] is not None else None)
+        if "unmapped_accounts" in job_dict:
+            fields.append("unmapped_accounts_json")
+            values.append(json.dumps(job_dict["unmapped_accounts"]) if job_dict["unmapped_accounts"] else None)
+        if "qbo_connected" in job_dict:
+            fields.append("qbo_connected")
+            values.append(1 if job_dict["qbo_connected"] else 0)
+
+        set_clause = ", ".join(f"{f} = ?" for f in fields)
+        values.append(job_id)
+        with self._conn() as c:
+            c.execute(f"UPDATE jobs SET {set_clause} WHERE id = ?", values)
+
+    def update_job_status(self, job_id: str, status: str) -> None:
+        with self._conn() as c:
+            c.execute(
+                "UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?",
+                (status, _now(), job_id),
+            )
+
+    def get_job(self, job_id: str) -> Optional[dict]:
+        with self._conn() as c:
+            row = c.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            return dict(row) if row else None
+
+    def hydrate_job(self, job_id: str) -> Optional[dict]:
+        """Return a job in the same shape the in-memory cache uses.
+
+        JSON columns are decoded back into Python objects so the rest of
+        the app can read job["summary"], job["qbo_results"], etc.
+        """
+        import json
+        row = self.get_job(job_id)
+        if not row:
+            return None
+        out = {
+            "id": row["id"],
+            "firm_id": row["firm_id"],
+            "user_id": row["user_id"],
+            "company": row["company"],
+            "email": "",  # not stored; UI uses user.email anyway
+            "source_file": row["source_file"],
+            "encrypted_file": row["encrypted_file"],
+            "encrypted_output": row.get("encrypted_output") if isinstance(row, dict) else row["encrypted_output"],
+            "output_file": row["output_file"] if "output_file" in row.keys() else None,
+            "file_sha256": row["file_sha256"],
+            "status": row["status"],
+            "created_at": row["created_at"],
+            "qbo_connected": bool(row["qbo_connected"]) if row["qbo_connected"] is not None else False,
+        }
+        # decode JSON sub-objects
+        for src, dst in [
+            ("summary_json", "summary"),
+            ("qbo_results_json", "qbo_results"),
+            ("import_summary_json", "import_summary"),
+            ("verification_json", "verification"),
+            ("unmapped_accounts_json", "unmapped_accounts"),
+        ]:
+            v = row[src] if src in row.keys() else None
+            if v:
+                try:
+                    out[dst] = json.loads(v)
+                except (ValueError, TypeError):
+                    out[dst] = None
+        if row["last_import_id"]:
+            out["last_import_id"] = row["last_import_id"]
+        return out
+
+    def list_jobs_for_firm(self, firm_id: int, limit: int = 50) -> list:
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT * FROM jobs WHERE firm_id = ? ORDER BY created_at DESC LIMIT ?",
+                (firm_id, limit),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def delete_job(self, job_id: str) -> None:
+        with self._conn() as c:
+            c.execute("DELETE FROM qbo_connections WHERE job_id = ?", (job_id,))
+            c.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+
+    # --- qbo connections (metadata only; tokens still in-memory) ----------
+
+    def upsert_qbo_connection(
+        self,
+        job_id: str,
+        firm_id: int,
+        realm_id: str,
+        access_token_enc: str,
+        refresh_token_enc: str,
+        company_name: Optional[str] = None,
+        legal_name: Optional[str] = None,
+        country: Optional[str] = None,
+        expires_at: Optional[str] = None,
+        company_info_error: Optional[str] = None,
+    ) -> None:
+        """Insert or update the encrypted QBO connection record for a job.
+
+        Tokens MUST be encrypted before being passed in. This module never
+        sees plaintext tokens.
+        """
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO qbo_connections "
+                "(job_id, firm_id, realm_id, company_name, legal_name, country, "
+                " access_token_enc, refresh_token_enc, expires_at, company_info_error, "
+                " connected_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(job_id) DO UPDATE SET "
+                "    realm_id=excluded.realm_id, company_name=excluded.company_name, "
+                "    legal_name=excluded.legal_name, country=excluded.country, "
+                "    access_token_enc=excluded.access_token_enc, "
+                "    refresh_token_enc=excluded.refresh_token_enc, "
+                "    expires_at=excluded.expires_at, "
+                "    company_info_error=excluded.company_info_error, "
+                "    updated_at=excluded.updated_at",
+                (
+                    job_id, firm_id, realm_id, company_name, legal_name, country,
+                    access_token_enc, refresh_token_enc, expires_at, company_info_error,
+                    _now(), _now(),
+                ),
+            )
+
+    def get_qbo_connection(self, job_id: str) -> Optional[dict]:
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT * FROM qbo_connections WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def delete_qbo_connection(self, job_id: str) -> None:
+        with self._conn() as c:
+            c.execute("DELETE FROM qbo_connections WHERE job_id = ?", (job_id,))
+
+    # --- account mappings --------------------------------------------------
+
+    def list_account_mappings(self, firm_id: int, realm_id: str) -> list:
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT * FROM account_mappings WHERE firm_id = ? AND realm_id = ? "
+                "ORDER BY pclaw_account_number, pclaw_account_name",
+                (firm_id, realm_id),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def save_account_mapping(
+        self,
+        firm_id: int,
+        realm_id: str,
+        pclaw_account_number: Optional[str],
+        pclaw_account_name: Optional[str],
+        qbo_account_id: str,
+        qbo_account_name: Optional[str] = None,
+        qbo_account_type: Optional[str] = None,
+    ) -> None:
+        """Insert or update one mapping row.
+
+        The unique key is (firm_id, realm_id, pclaw_account_number,
+        pclaw_account_name). Either of the PCLaw columns can be NULL — most
+        sandboxes have account numbers but some don't, so the route should
+        pass whichever value the source CSV row supplied.
+        """
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO account_mappings "
+                "(firm_id, realm_id, pclaw_account_number, pclaw_account_name, "
+                " qbo_account_id, qbo_account_name, qbo_account_type, "
+                " created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(firm_id, realm_id, pclaw_account_number, pclaw_account_name) "
+                "DO UPDATE SET qbo_account_id = excluded.qbo_account_id, "
+                "              qbo_account_name = excluded.qbo_account_name, "
+                "              qbo_account_type = excluded.qbo_account_type, "
+                "              updated_at = excluded.updated_at",
+                (
+                    firm_id, realm_id, pclaw_account_number, pclaw_account_name,
+                    qbo_account_id, qbo_account_name, qbo_account_type,
+                    _now(), _now(),
+                ),
+            )
+
+    def delete_account_mapping(
+        self, firm_id: int, realm_id: str,
+        pclaw_account_number: Optional[str], pclaw_account_name: Optional[str],
+    ) -> None:
+        with self._conn() as c:
+            c.execute(
+                "DELETE FROM account_mappings WHERE firm_id = ? AND realm_id = ? "
+                "AND pclaw_account_number IS ? AND pclaw_account_name IS ?",
+                (firm_id, realm_id, pclaw_account_number, pclaw_account_name),
+            )
+
+    # --- audit log ---------------------------------------------------------
+
+    def audit(
+        self,
+        action: str,
+        firm_id: Optional[int] = None,
+        user_id: Optional[int] = None,
+        target_type: Optional[str] = None,
+        target_id: Optional[str] = None,
+        details: Optional[str] = None,
+    ) -> None:
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO audit_logs (firm_id, user_id, action, target_type, target_id, "
+                "                        details, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (firm_id, user_id, action, target_type, target_id, details, _now()),
+            )
+
+    def recent_audit_for_firm(self, firm_id: int, limit: int = 20) -> list:
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT * FROM audit_logs WHERE firm_id = ? ORDER BY id DESC LIMIT ?",
+                (firm_id, limit),
+            ).fetchall()
+            return [dict(r) for r in rows]

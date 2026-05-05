@@ -1,0 +1,11 @@
+transaction_id,date,account_number,account_name,client_id,matter_id,reference,description,customer_name,vendor_name,debit,credit
+JE-0001,2026-05-01,1000,Operating Bank,,,DEP-001,Opening operating cash,,,25000.00,0.00
+JE-0001,2026-05-01,3000,Owner Equity,,,DEP-001,Opening operating cash,,,0.00,25000.00
+JE-0002,2026-05-01,1010,Trust Bank,C-100,M-1001,TRUST-001,Opening trust balance for Smith purchase,,,8500.00,0.00
+JE-0002,2026-05-01,2100,Client Trust Liability,C-100,M-1001,TRUST-001,Opening trust liability for Smith purchase,,,0.00,8500.00
+JE-0003,2026-05-02,1100,Accounts Receivable,C-200,M-2001,INV-1001,Invoice to Johnson Family Law,Johnson Family Law,,4200.00,0.00
+JE-0003,2026-05-02,4000,Legal Fees Revenue,C-200,M-2001,INV-1001,Invoice to Johnson Family Law,,,0.00,4200.00
+JE-0004,2026-05-02,5200,Filing Fees Expense,C-300,M-3001,CHK-501,Court filing fee paid for Chen litigation,,,750.00,0.00
+JE-0004,2026-05-02,1000,Operating Bank,C-300,M-3001,CHK-501,Court filing fee paid for Chen litigation,,,0.00,750.00
+JE-0005,2026-05-03,5000,Rent Expense,,,EFT-RENT,May office rent,,,1900.00,0.00
+JE-0005,2026-05-03,2000,Accounts Payable,,,EFT-RENT,May office rent accrued,,Acme Property Mgmt,0.00,1900.00

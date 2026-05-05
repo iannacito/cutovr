@@ -1,0 +1,7 @@
+check_name,source_report,target_qbo_area,expected_total,actual_total,status,notes
+Trial balance debits equal credits,03_trial_balance.csv,Accounting reports,39600.00,39600.00,Pass,Debits and credits balance
+Operating bank balance,04_bank_balances.csv,QBO bank account 1000,24250.00,,Pending,Fill actual after import
+Trust bank balance,04_bank_balances.csv,QBO bank account 1010,8500.00,,Pending,Fill actual after import
+Trust liability balance,05_trust_listing.csv,QBO liability account 2100,8500.00,,Pending,Must equal trust bank balance
+Accounts receivable balance,06_client_matter_ar.csv,QBO A/R,4200.00,,Pending,Client-level AR may require separate invoice migration later
+Accounts payable balance,07_vendor_ap.csv,QBO A/P,1900.00,,Pending,Vendor-level AP may require separate bill migration later

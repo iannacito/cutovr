@@ -1,0 +1,13 @@
+account_number,account_name,account_type,pclaw_category,qbo_suggested_type,qbo_suggested_detail_type,opening_balance,active
+1000,Operating Bank,Asset,Bank,Bank,Checking,25000.00,Yes
+1010,Trust Bank,Asset,Trust Bank,Bank,Trust Account,8500.00,Yes
+1100,Accounts Receivable,Asset,Receivable,Accounts Receivable,Accounts Receivable,4200.00,Yes
+1200,Unbilled Disbursements,Asset,WIP,Other Current Asset,Other Current Asset,0.00,Yes
+2000,Accounts Payable,Liability,Payable,Accounts Payable,Accounts Payable,1900.00,Yes
+2100,Client Trust Liability,Liability,Trust Liability,Other Current Liability,Trust Accounts - Liabilities,8500.00,Yes
+3000,Owner Equity,Equity,Equity,Equity,Owner's Equity,25000.00,Yes
+4000,Legal Fees Revenue,Income,Revenue,Income,Service/Fee Income,0.00,Yes
+4100,Disbursement Recovery,Income,Recovery,Income,Other Primary Income,0.00,Yes
+5000,Rent Expense,Expense,Overhead,Expense,Rent or Lease of Buildings,0.00,Yes
+5100,Office Expense,Expense,Overhead,Expense,Office/General Administrative Expenses,0.00,Yes
+5200,Filing Fees Expense,Expense,Client Cost,Expense,Legal & Professional Fees,0.00,Yes

@@ -1,0 +1,13 @@
+account_number,account_name,debit_balance,credit_balance
+1000,Operating Bank,24250.00,0.00
+1010,Trust Bank,8500.00,0.00
+1100,Accounts Receivable,4200.00,0.00
+1200,Unbilled Disbursements,0.00,0.00
+2000,Accounts Payable,0.00,1900.00
+2100,Client Trust Liability,0.00,8500.00
+3000,Owner Equity,0.00,25000.00
+4000,Legal Fees Revenue,0.00,4200.00
+4100,Disbursement Recovery,0.00,0.00
+5000,Rent Expense,1900.00,0.00
+5100,Office Expense,0.00,0.00
+5200,Filing Fees Expense,750.00,0.00

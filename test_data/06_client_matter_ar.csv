@@ -1,0 +1,2 @@
+client_id,client_name,matter_id,matter_name,invoice_number,invoice_date,due_date,ar_balance,fees,disbursements,tax
+C-200,Johnson Family,M-2001,Family Law Retainer,INV-1001,2026-05-02,2026-06-01,4200.00,4200.00,0.00,0.00

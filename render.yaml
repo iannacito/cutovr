@@ -1,0 +1,42 @@
+# Render blueprint for pclaw-qbo-v2.
+# Deploy at https://render.com/ -> New -> Blueprint -> point at the repo.
+#
+# IMPORTANT: do NOT commit secrets. Set the *_FROM_DASHBOARD env vars in the
+# Render dashboard after the service is created (Settings -> Environment).
+
+services:
+  - type: web
+    name: pclaw-qbo
+    runtime: python
+    plan: starter           # paid tier required for the persistent disk below
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -w 2 -k gthread --threads 4 -b 0.0.0.0:$PORT app:app
+    autoDeploy: false
+    envVars:
+      - key: QBO_CLIENT_ID
+        sync: false         # set in dashboard
+      - key: QBO_CLIENT_SECRET
+        sync: false         # set in dashboard
+      - key: QBO_REDIRECT_URI
+        # Replace <service-name> with your actual Render URL after deploy.
+        value: https://pclaw-qbo.onrender.com/oauth/callback
+      - key: QBO_ENVIRONMENT
+        value: sandbox
+      - key: QBO_REAL_IMPORT
+        value: "0"          # flip to "1" once you've smoke-tested the deploy
+      - key: ENCRYPTION_KEY
+        generateValue: true # Fernet-compatible 32-byte url-safe base64
+      - key: SECRET_KEY
+        generateValue: true
+      - key: IMPORT_HISTORY_DB
+        value: /var/data/import_history.sqlite3
+      - key: APP_DB
+        value: /var/data/app.sqlite3
+      - key: APP_ENV
+        value: production    # enables Secure cookies + requires SECRET_KEY
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+    disk:
+      name: pclaw-qbo-data
+      mountPath: /var/data
+      sizeGB: 1

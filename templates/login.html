@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in — PCLaw → QuickBooks</title>
+  <link rel="preconnect" href="https://api.fontshare.com">
+  <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&f[]=general-sans@500,600,700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<main class="detail-page" style="max-width:520px;">
+  <h1>Sign in</h1>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <section class="stack-sm">
+        {% for category, message in messages %}
+          <div class="flash {{ category }}">{{ message }}</div>
+        {% endfor %}
+      </section>
+    {% endif %}
+  {% endwith %}
+  <section class="panel">
+    <form method="post" class="form-grid">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      {% if request.args.get('next') %}<input type="hidden" name="next" value="{{ request.args.get('next') }}">{% endif %}
+      <label class="full">
+        <span>Email</span>
+        <input type="email" name="email" required value="{{ email or '' }}" autofocus>
+      </label>
+      <label class="full">
+        <span>Password</span>
+        <input type="password" name="password" required>
+      </label>
+      <div class="full actions-row">
+        <button class="btn btn-primary" type="submit">Sign in</button>
+      </div>
+    </form>
+    <p class="note" style="margin-top:1rem;">No account yet? <a href="{{ url_for('signup') }}">Create one</a>.</p>
+  </section>
+</main>
+</body>
+</html>
