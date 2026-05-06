@@ -19,8 +19,15 @@
       {% if job.last_error.action %}
         <p><strong>Likely next step:</strong> {{ job.last_error.action }}</p>
       {% endif %}
+      {% if job.last_error.intuit_tid %}
+        <p class="muted" style="margin-top:var(--space-2);font-size:.9rem;">
+          <strong>Intuit support reference:</strong>
+          <code>{{ job.last_error.intuit_tid }}</code>
+          &mdash; quote this id when contacting Intuit support so they can find the request in their logs.
+        </p>
+      {% endif %}
       <details style="margin-top:var(--space-3);">
-        <summary class="muted" style="cursor:pointer;">Technical detail (for support){% if job.last_error.status_code %} &middot; HTTP {{ job.last_error.status_code }}{% endif %}</summary>
+        <summary class="muted" style="cursor:pointer;">Technical detail (for support){% if job.last_error.status_code %} &middot; HTTP {{ job.last_error.status_code }}{% endif %}{% if job.last_error.intuit_tid %} &middot; intuit_tid {{ job.last_error.intuit_tid }}{% endif %}</summary>
         <pre style="white-space:pre-wrap;word-break:break-word;font-size:.85rem;margin-top:var(--space-2);">{{ job.last_error.technical_detail }}</pre>
       </details>
     </section>

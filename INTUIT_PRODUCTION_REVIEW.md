@@ -93,6 +93,56 @@ When an Intuit reviewer clicks the *Connect* button you provided:
 - `REVERSAL_NOTES.md` &mdash; the accounting model behind the reversal
   workflow.
 
+## 5.1. Intuit transaction id (`intuit_tid`) capture
+
+Intuit returns an `intuit_tid` HTTP response header on every QuickBooks
+API call, including the OAuth token endpoint. It is an opaque request id
+(no token / secret material) and is what Intuit support staff use to
+look up a specific request in their logs.
+
+The app captures `intuit_tid` from every QBO/Intuit response where one
+is available:
+
+- `QBOAuthHandler.get_bearer_token` and `refresh_access_token` (OAuth
+  token exchange and refresh). Returned in the result dict and stored
+  on the handler as `last_intuit_tid`.
+- `QBOClient.query`, `get_accounts`, `get_company_info`,
+  `get_journal_entry`, `create_journal_entry`, `create_customer`, and
+  `create_vendor` (all v3 entity calls). Stored on the client as
+  `last_intuit_tid` after every call (success or failure) and attached
+  to the `QBOError.intuit_tid` attribute on non-2xx responses.
+
+Where the `intuit_tid` shows up:
+
+- **Audit log** &mdash; `qbo_connected`, `oauth_token_exchange_failed`, and
+  `import_failed` rows include `intuit_tid=<id>` in their `details`
+  column when the upstream response carried one. Visible to firm
+  operators at `/firm/audit`.
+- **Job-detail page** (`/jobs/<id>`) &mdash; the *Last import error* panel
+  shows the Intuit support reference id beside the technical detail
+  collapsible whenever the failure carried one.
+- **Flash messages** &mdash; user-facing import / connect / verify error
+  flashes append `(Intuit support reference: <id>)` so a non-technical
+  user can quote it to support without having to dig through the UI.
+
+What we deliberately do **not** include in audit rows, flashes, UI, or
+the job-detail technical-detail blob:
+
+- Client secret, access token, refresh token, or authorization code.
+- The raw response body of a failed token-endpoint request &mdash;
+  Intuit can echo back fragments that resemble client identifiers,
+  so `QBOAuthError` only carries the status code + `intuit_tid`.
+
+`tests/smoke_intuit_tid.py` exercises the capture path with mocked
+responses and asserts no marker secrets leak into errors.
+
+**Questionnaire answer.** With this change the answer to *"Does your
+app capture intuit_tid from response headers?"* on the Intuit production
+questionnaire is **Yes** &mdash; the app captures `intuit_tid` from QBO
+v3 entity calls and the OAuth token endpoint, surfaces it to operators
+in the audit log and job-detail page, and includes it as a support
+reference in user-facing error flashes.
+
 ## 6. Production cutover (separate from this doc)
 
 When you're cleared to write to a real production QuickBooks company:

@@ -127,13 +127,17 @@ def _extract_qbo_messages(raw: str) -> list[str]:
 _OUTER_RE = re.compile(r"^QBO returned (\d{3})(?: [^:]*)?:\s*", re.IGNORECASE)
 
 
-def parse(raw_error: str) -> dict:
-    """Return {summary, action, technical_detail, status_code} for a raw QBO error.
+def parse(raw_error: str, intuit_tid: Optional[str] = None) -> dict:
+    """Return {summary, action, technical_detail, status_code, intuit_tid}
+    for a raw QBO error.
 
     summary  — short human sentence ("QuickBooks rejected the import …").
     action   — concrete next step the user can take, or None.
     technical_detail — the full original message (for the collapsible).
     status_code — int HTTP code if we could extract one, else None.
+    intuit_tid — Intuit transaction id from the failing response header,
+        when the caller has it. Opaque request id; safe to surface to
+        operators and end-user support references.
     """
     raw = (raw_error or "").strip()
     technical_detail = raw
@@ -169,4 +173,5 @@ def parse(raw_error: str) -> dict:
         "action": action,
         "technical_detail": technical_detail,
         "status_code": status_code,
+        "intuit_tid": intuit_tid,
     }
