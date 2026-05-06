@@ -240,10 +240,10 @@ def login_required(view):
 
 @app.context_processor
 def inject_user():
-    """Make `user` and `firm` available to every template."""
+    """Make `user`, `firm`, and `now_year` available to every template."""
     user = current_user()
     firm = db.get_firm(user["firm_id"]) if user else None
-    return {"user": user, "firm": firm}
+    return {"user": user, "firm": firm, "now_year": datetime.utcnow().year}
 
 
 def _get_job(job_id):
@@ -609,6 +609,28 @@ def index():
     if current_user():
         return redirect(url_for("dashboard"))
     return redirect(url_for("login"))
+
+
+@app.route("/privacy")
+def privacy():
+    """Public privacy page. Linked from login/signup/dashboard footer.
+
+    Content is a starter template — see docs/INTUIT_PRODUCTION_REVIEW.md for
+    the legal-review caveat before pointing Intuit at this URL in production.
+    """
+    return render_template("privacy.html")
+
+
+@app.route("/terms")
+def terms():
+    """Public terms-of-service page (MVP / private beta starter copy)."""
+    return render_template("terms.html")
+
+
+@app.route("/support")
+def support():
+    """Public support / contact page including a security-reporting hint."""
+    return render_template("support.html")
 
 
 @app.route("/healthz")
@@ -1330,16 +1352,31 @@ def account_mapping(job_id):
     )
 
 
-def _build_reversal_payload(original_je, original_je_id, job_id, reversal_date):
+def _build_reversal_payload(
+    original_je, original_je_id, job_id, reversal_date,
+    import_id=None, transaction_id=None,
+):
     """Build a JournalEntry payload that reverses `original_je`.
 
     Each line keeps the same `Amount` and `AccountRef`, swaps `PostingType`
-    Debit↔Credit, and preserves any `Entity` block (required by QBO for
-    A/R and A/P lines). The `PrivateNote` documents what is being reversed.
+    Debit/Credit, and preserves any `Entity` block (required by QBO for
+    A/R and A/P lines).
+
+    To make reversal entries obvious in the QBO Journal report:
+      - Every line `Description` is prefixed with "REVERSAL - " followed by
+        the original line description (or a synthetic label) and a tail
+        that names the original JournalEntry Id and PCLaw transaction_id.
+      - `DocNumber` is set to "REV-<original_je_id>" (capped at QBO's 21-char
+        limit) so it shows up next to the entry in the Journal report.
+      - `PrivateNote` records the import and original JE for audit.
     """
+    txn_suffix_parts = [f"orig JE {original_je_id}"]
+    if transaction_id:
+        txn_suffix_parts.append(f"PCLaw {transaction_id}")
+    txn_suffix = " | ".join(txn_suffix_parts)
+
     new_lines = []
     for line in original_je.get("Line", []) or []:
-        # Skip non-journal lines defensively (shouldn't happen for JE we created)
         detail = line.get("JournalEntryLineDetail")
         if not detail:
             continue
@@ -1348,18 +1385,35 @@ def _build_reversal_payload(original_je, original_je_id, job_id, reversal_date):
             flipped["PostingType"] = "Credit"
         elif flipped.get("PostingType") == "Credit":
             flipped["PostingType"] = "Debit"
+        original_desc = (line.get("Description") or "").strip()
+        if original_desc:
+            base = f"REVERSAL - {original_desc} ({txn_suffix})"
+        else:
+            base = f"REVERSAL - {txn_suffix}"
+        if len(base) > 1000:
+            base = base[:997] + "..."
         new_lines.append({
-            "Description": line.get("Description") or f"Reversal of QBO JE {original_je_id}",
+            "Description": base,
             "Amount": line.get("Amount"),
             "DetailType": "JournalEntryLineDetail",
             "JournalEntryLineDetail": flipped,
         })
+
+    doc_number = f"REV-{original_je_id}"
+    if len(doc_number) > 21:
+        doc_number = doc_number[:21]
+
+    private_note = (
+        f"REVERSAL of PCLaw import (job {job_id}"
+        + (f", import #{import_id}" if import_id is not None else "")
+        + f"); original QBO JournalEntry Id={original_je_id}"
+        + (f"; PCLaw transaction_id={transaction_id}" if transaction_id else "")
+    )
+
     return {
         "TxnDate": reversal_date,
-        "PrivateNote": (
-            f"Reversal of PCLaw import (job {job_id}); "
-            f"original QBO JournalEntry Id={original_je_id}"
-        ),
+        "DocNumber": doc_number,
+        "PrivateNote": private_note,
         "Line": new_lines,
     }
 
@@ -1453,6 +1507,8 @@ def reverse_import(job_id):
                 original_je_id=original_id,
                 job_id=job_id,
                 reversal_date=reversal_date,
+                import_id=last_import["id"],
+                transaction_id=tx.get("transaction_id"),
             )
             resp = qbo.create_journal_entry(payload)
             new_je = resp.get("JournalEntry", {})
@@ -1506,7 +1562,11 @@ def reverse_import(job_id):
            details=f"import #{last_import['id']}")
     flash(
         f"Reversal complete. {len(reversal_rows)} offsetting JournalEntry record(s) "
-        "were created in QuickBooks. The original entries remain visible for audit.",
+        "were created in QuickBooks. The original entries remain visible for audit. "
+        "In QuickBooks, reversals appear as separate journal entries (DocNumber "
+        "starting with 'REV-' and line descriptions prefixed 'REVERSAL'); the "
+        "Journal report will list them alongside the originals rather than marking "
+        "the originals as voided.",
         "success",
     )
     return redirect(url_for("job_detail", job_id=job_id))

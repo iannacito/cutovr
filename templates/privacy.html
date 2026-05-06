@@ -1,0 +1,48 @@
+{% extends "_base.html" %}
+{% block title %}Privacy Policy &mdash; Cutover{% endblock %}
+{% block content %}
+<section class="page page--prose">
+  <p class="eyebrow">Legal</p>
+  <h1 class="display">Privacy <em>Policy</em></h1>
+  <p class="muted">Last updated: {{ now_year }}-01-01. This is a starter policy intended for review by the operating firm's counsel before public launch.</p>
+
+  <h2>What this product is</h2>
+  <p>Cutover (the &ldquo;Service&rdquo;) is a workflow tool that helps law-firm operators move a PCLaw general ledger into QuickBooks Online. The Service accepts an exported PCLaw CSV file, encrypts it on receipt, parses it into journal entries, and posts those entries to the firm's connected QuickBooks Online company via Intuit's official OAuth&nbsp;2.0 API.</p>
+
+  <h2>What we collect</h2>
+  <ul class="secure-list">
+    <li><strong>Account data</strong> &mdash; firm name, your work email, and a hashed password used to sign you in.</li>
+    <li><strong>Uploaded ledger files</strong> &mdash; the PCLaw CSV you upload. Files are encrypted at rest with AES-256 (Fernet) immediately after upload; the unencrypted copy is removed.</li>
+    <li><strong>QuickBooks Online OAuth tokens</strong> &mdash; the access and refresh tokens Intuit issues when you click &ldquo;Connect to QuickBooks.&rdquo; Tokens are encrypted at rest and used only to call Intuit's API on your behalf to read the chart of accounts and create JournalEntry records you initiate.</li>
+    <li><strong>Operational metadata</strong> &mdash; job IDs, file SHA-256 hashes, import counts, error messages, and a per-firm audit log of in-app actions (sign-in, upload, connect, import, reverse, etc.).</li>
+  </ul>
+
+  <h2>What we do not do</h2>
+  <ul class="secure-list">
+    <li>We do not sell your data, your firm's data, or your clients' data.</li>
+    <li>We do not share your QuickBooks data with advertisers or analytics brokers.</li>
+    <li>We do not use your uploaded ledgers to train machine-learning models.</li>
+    <li>We do not access your QuickBooks company beyond what is needed to fulfill the import you trigger (read accounts, create JournalEntry records, look up customers/vendors).</li>
+  </ul>
+
+  <h2>How we secure data</h2>
+  <ul class="secure-list">
+    <li>Uploaded files are encrypted at rest with AES-256 (Fernet symmetric encryption).</li>
+    <li>QuickBooks OAuth tokens are encrypted at rest with the same scheme.</li>
+    <li>Sessions are HTTP-only and (in production) HTTPS-only cookies. CSRF protection is enforced on every state-changing request.</li>
+    <li>The application validates required production environment variables on startup and fails fast if any are missing or malformed.</li>
+  </ul>
+
+  <h2>Retention</h2>
+  <p>Encrypted source files, encrypted output files, and OAuth tokens are kept while the corresponding migration job exists in your firm workspace, and are deleted when you delete the job or your workspace. We retain the operational audit log so you can investigate prior imports and reversals.</p>
+
+  <h2>Your rights</h2>
+  <p>You can delete any individual job from the Service at any time, which deletes its encrypted files and revokes its stored QuickBooks tokens from our database. You can also disconnect a QuickBooks company directly from inside QuickBooks Online &rarr; Apps. To delete your firm workspace entirely, contact <a href="{{ url_for('support') }}">support</a>.</p>
+
+  <h2>Sub-processors</h2>
+  <p>The Service runs on Render (hosting), uses Intuit's QuickBooks Online API (mandatory), and may use a transactional email provider for support correspondence. No other sub-processor receives uploaded ledger files or QuickBooks tokens.</p>
+
+  <h2>Contact</h2>
+  <p>For privacy questions or data-deletion requests, see the <a href="{{ url_for('support') }}">support page</a>.</p>
+</section>
+{% endblock %}

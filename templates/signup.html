@@ -1,51 +1,42 @@
-<!doctype html>
-<html lang="en" data-theme="light">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Create your firm — PCLaw → QuickBooks</title>
-  <link rel="preconnect" href="https://api.fontshare.com">
-  <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&f[]=general-sans@500,600,700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
-<body>
-<main class="detail-page" style="max-width:560px;">
-  <h1>Create your firm</h1>
-  <p class="muted">This creates a new firm workspace and signs you in as its admin.</p>
-  {% with messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}
-      <section class="stack-sm">
-        {% for category, message in messages %}
-          <div class="flash {{ category }}">{{ message }}</div>
-        {% endfor %}
-      </section>
-    {% endif %}
-  {% endwith %}
-  <section class="panel">
-    <form method="post" class="form-grid">
+{% extends "_base.html" %}
+{% block title %}Create your firm &mdash; Cutover{% endblock %}
+{% block content %}
+<section class="auth-page">
+  <div class="auth-card">
+    <p class="eyebrow">New firm workspace</p>
+    <h1 class="display">From PCLaw, <em>to</em> QuickBooks.</h1>
+    <p class="lede">A workspace for your firm: encrypted uploads, OAuth-ed QuickBooks Online connections, and a complete audit trail of every import and reversal.</p>
+
+    <article class="card">
+      <form method="post" class="stack-sm" novalidate>
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <label class="full">
-        <span>Firm / company name</span>
-        <input type="text" name="firm_name" required value="{{ firm_name or '' }}" autofocus>
-      </label>
-      <label class="full">
-        <span>Your work email</span>
-        <input type="email" name="email" required value="{{ email or '' }}">
-      </label>
-      <label>
-        <span>Password (min 8 chars)</span>
-        <input type="password" name="password" minlength="8" required>
-      </label>
-      <label>
-        <span>Confirm password</span>
-        <input type="password" name="confirm_password" minlength="8" required>
-      </label>
-      <div class="full actions-row">
-        <button class="btn btn-primary" type="submit">Create firm and sign in</button>
-      </div>
-    </form>
-    <p class="note" style="margin-top:1rem;">Already have an account? <a href="{{ url_for('login') }}">Sign in</a>.</p>
-  </section>
-</main>
-</body>
-</html>
+        <label>
+          <span>Firm / company name</span>
+          <input type="text" name="firm_name" required value="{{ firm_name or '' }}" autofocus placeholder="Smith & Hart LLP">
+        </label>
+        <label>
+          <span>Your work email</span>
+          <input type="email" name="email" required value="{{ email or '' }}" placeholder="ops@firm.com">
+        </label>
+        <div class="form-grid">
+          <label>
+            <span>Password (8+ chars)</span>
+            <input type="password" name="password" minlength="8" required>
+          </label>
+          <label>
+            <span>Confirm password</span>
+            <input type="password" name="confirm_password" minlength="8" required>
+          </label>
+        </div>
+        <button class="btn btn-primary full-width" type="submit" style="margin-top:.5rem;">Create firm workspace</button>
+        <p class="note" style="margin-top:.75rem;">By creating an account you accept our
+          <a href="{{ url_for('terms') }}">Terms</a> and
+          <a href="{{ url_for('privacy') }}">Privacy Policy</a>.
+        </p>
+      </form>
+    </article>
+
+    <p class="auth-aside">Already have an account? <a href="{{ url_for('login') }}">Sign in</a>.</p>
+  </div>
+</section>
+{% endblock %}

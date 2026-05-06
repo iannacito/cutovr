@@ -1,163 +1,116 @@
-<!doctype html>
-<html lang="en" data-theme="light">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ firm.name }} — Migration Console</title>
-  <link rel="preconnect" href="https://api.fontshare.com">
-  <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&f[]=general-sans@500,600,700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
-<body>
-<a class="skip-link" href="#main">Skip to content</a>
-<div class="app-shell">
-  <aside class="sidebar">
-    <div class="brand">
+{% extends "_base.html" %}
+{% block title %}{{ firm.name }} &mdash; Migration Console{% endblock %}
+{% block content %}
+<section class="page">
+  <div class="hero">
+    <p class="eyebrow">{{ firm.name }} &middot; Migration console</p>
+    <h1>Move PCLaw to QuickBooks <em>cleanly</em>.</h1>
+    <p>Upload a PCLaw general ledger, connect QuickBooks Online, map accounts, and post journal entries with a complete audit trail. Files are encrypted at rest. Imports are duplicate-protected. Reversals are one click and clearly labeled in QuickBooks.</p>
+  </div>
+
+  {% if not qbo_configured %}
+    <div class="card warning-panel">
+      <h3>QuickBooks OAuth not configured</h3>
+      <p>Set <code>QBO_CLIENT_ID</code>, <code>QBO_CLIENT_SECRET</code>, <code>QBO_REDIRECT_URI</code>, and <code>QBO_ENVIRONMENT</code> in the environment to enable live QuickBooks connections. Demo mode (upload + parse) works without them.</p>
+    </div>
+  {% endif %}
+
+  <section class="grid-two" id="intake" style="margin-bottom:var(--space-8);">
+    <article class="card">
+      <p class="eyebrow">Step 01 &middot; Intake</p>
+      <h2>Start a migration job</h2>
+      <p class="muted" style="margin-bottom:var(--space-5);">Drop the firm's PCLaw general ledger CSV here. We encrypt it before any processing.</p>
+      <form action="{{ url_for('upload') }}" method="post" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label>
+          <span>Law firm / company name (as it appears in QBO)</span>
+          <input type="text" name="company_name" placeholder="Smith & Hart LLP" required>
+        </label>
+        <label>
+          <span>Notification email (optional)</span>
+          <input type="email" name="email" placeholder="ops@firm.com">
+        </label>
+        <label>
+          <span>PCLaw general ledger CSV</span>
+          <input type="file" name="ledger_file" accept=".csv" required>
+        </label>
+        <div class="actions-row" style="margin-top:var(--space-4);">
+          <button class="btn btn-primary" type="submit">Upload &amp; encrypt</button>
+        </div>
+      </form>
+    </article>
+
+    <article class="card">
+      <p class="eyebrow">Workspace</p>
+      <h2>Firm details</h2>
+      <dl class="summary-grid">
+        <div><dt>Firm</dt><dd>{{ firm.name }}</dd></div>
+        <div><dt>Admin</dt><dd>{{ user.email }}</dd></div>
+        <div><dt>Created</dt><dd>{{ firm.created_at[:10] }}</dd></div>
+        <div><dt>Jobs</dt><dd>{{ firm_jobs|length }}</dd></div>
+      </dl>
+      <p class="note" style="margin-top:var(--space-4);">Every job, encrypted file, and QuickBooks token created here is scoped to this firm workspace.</p>
+      <div class="actions-row" style="margin-top:var(--space-4);">
+        <a class="btn" href="{{ url_for('support') }}">Contact support</a>
+        <a class="btn" href="{{ url_for('privacy') }}">Privacy</a>
+      </div>
+    </article>
+  </section>
+
+  <section class="card" id="recent" style="margin-bottom:var(--space-8);">
+    <div class="panel-head">
       <div>
-        <p class="eyebrow">Firm workspace</p>
-        <h1>{{ firm.name }}</h1>
-        <p class="muted" style="font-size:0.85em;">Signed in as {{ user.email }}</p>
+        <p class="eyebrow">Step 02 &middot; Recent jobs</p>
+        <h2>Last 20 migrations for this firm</h2>
       </div>
     </div>
-    <nav aria-label="Primary">
-      <a class="nav-link active" href="#intake">New migration</a>
-      <a class="nav-link" href="#recent">Recent jobs</a>
-      <a class="nav-link" href="#audit">Recent activity</a>
-    </nav>
-    <form action="{{ url_for('logout') }}" method="post" style="margin-top:auto;">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button class="btn btn-secondary full-width" type="submit">Log out</button>
-    </form>
-  </aside>
-
-  <div class="content-wrap">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">PCLaw → QuickBooks Online</p>
-        <p class="muted">Upload a PCLaw GL CSV, connect QuickBooks, and import journal entries.</p>
-      </div>
-    </header>
-
-    <main id="main" class="main">
-      {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-          <section class="stack-sm">
-            {% for category, message in messages %}
-              <div class="flash {{ category }}">{{ message }}</div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Company</th><th>Status</th><th>Source file</th><th>Created (UTC)</th></tr>
+        </thead>
+        <tbody>
+          {% if firm_jobs %}
+            {% for job in firm_jobs %}
+            <tr>
+              <td><a href="{{ url_for('job_detail', job_id=job.id) }}">{{ job.company }}</a></td>
+              <td><span class="badge {% if 'Imported' in (job.status or '') %}success{% elif 'failed' in (job.status or '')|lower or 'blocked' in (job.status or '')|lower %}error{% endif %}">{{ job.status }}</span></td>
+              <td><code>{{ job.source_file }}</code></td>
+              <td>{{ job.created_at[:19].replace('T', ' ') }}</td>
+            </tr>
             {% endfor %}
-          </section>
-        {% endif %}
-      {% endwith %}
+          {% else %}
+            <tr><td colspan="4" style="text-align:center;color:var(--ink-muted);padding:var(--space-6);">No jobs yet. Upload a PCLaw general ledger above to start.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </section>
 
-      {% if not qbo_configured %}
-      <section class="panel warning-panel">
-        <h3>⚠️ QuickBooks OAuth Not Configured</h3>
-        <p>Set <code>QBO_CLIENT_ID</code>, <code>QBO_CLIENT_SECRET</code>, <code>QBO_REDIRECT_URI</code>, and <code>QBO_ENVIRONMENT</code> in the environment to enable live QuickBooks connections. Demo mode (upload + parse) works without them.</p>
-      </section>
-      {% endif %}
-
-      <section class="grid-two" id="intake">
-        <article class="panel">
-          <div class="panel-head">
-            <div>
-              <p class="eyebrow">Client intake</p>
-              <h3>Start a migration job</h3>
-            </div>
-          </div>
-          <form action="{{ url_for('upload') }}" method="post" enctype="multipart/form-data" class="form-grid">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <label class="full">
-              <span>Law firm / company (their company name in QBO)</span>
-              <input type="text" name="company_name" placeholder="Smith &amp; Hart LLP" required>
-            </label>
-            <label class="full">
-              <span>Notification email (optional — defaults to your account email)</span>
-              <input type="email" name="email" placeholder="ops@firm.com">
-            </label>
-            <label class="full">
-              <span>PCLaw general ledger CSV</span>
-              <input type="file" name="ledger_file" accept=".csv" required>
-            </label>
-            <div class="full actions-row">
-              <button class="btn btn-primary" type="submit">Upload &amp; encrypt</button>
-            </div>
-          </form>
-        </article>
-
-        <article class="panel">
-          <div class="panel-head">
-            <div>
-              <p class="eyebrow">Workspace</p>
-              <h3>Firm details</h3>
-            </div>
-          </div>
-          <dl class="summary-grid">
-            <div><dt>Firm</dt><dd>{{ firm.name }}</dd></div>
-            <div><dt>Admin</dt><dd>{{ user.email }}</dd></div>
-            <div><dt>Created</dt><dd>{{ firm.created_at[:10] }}</dd></div>
-            <div><dt>Jobs</dt><dd>{{ firm_jobs|length }}</dd></div>
-          </dl>
-          <p class="note">All jobs, files, and QBO connections you create here are scoped to this firm.</p>
-        </article>
-      </section>
-
-      <section class="panel" id="recent">
-        <div class="panel-head">
-          <div>
-            <p class="eyebrow">Recent jobs</p>
-            <h3>Last 20 migration runs (this firm)</h3>
-          </div>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr><th>Company</th><th>Status</th><th>Source file</th><th>Created</th></tr>
-            </thead>
-            <tbody>
-              {% if firm_jobs %}
-                {% for job in firm_jobs %}
-                <tr>
-                  <td><a href="{{ url_for('job_detail', job_id=job.id) }}">{{ job.company }}</a></td>
-                  <td>{{ job.status }}</td>
-                  <td><code style="font-size:0.85em;">{{ job.source_file }}</code></td>
-                  <td>{{ job.created_at[:10] }}</td>
-                </tr>
-                {% endfor %}
-              {% else %}
-                <tr><td colspan="4">No jobs yet. Upload a PCLaw GL CSV above to start.</td></tr>
-              {% endif %}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      {% if recent_audit %}
-      <section class="panel" id="audit">
-        <div class="panel-head">
-          <div>
-            <p class="eyebrow">Audit</p>
-            <h3>Recent activity (last 10)</h3>
-          </div>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>When (UTC)</th><th>Action</th><th>Target</th><th>Details</th></tr></thead>
-            <tbody>
-              {% for a in recent_audit %}
-                <tr>
-                  <td>{{ a.created_at[:19].replace("T", " ") }}</td>
-                  <td>{{ a.action }}</td>
-                  <td>{% if a.target_type %}{{ a.target_type }}/{{ a.target_id }}{% else %}—{% endif %}</td>
-                  <td><code style="font-size:0.85em;">{{ a.details or '' }}</code></td>
-                </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </section>
-      {% endif %}
-    </main>
-  </div>
-</div>
-</body>
-</html>
+  {% if recent_audit %}
+  <section class="card" id="audit">
+    <div class="panel-head">
+      <div>
+        <p class="eyebrow">Audit</p>
+        <h2>Recent activity (last 10)</h2>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>When (UTC)</th><th>Action</th><th>Target</th><th>Details</th></tr></thead>
+        <tbody>
+          {% for a in recent_audit %}
+            <tr>
+              <td>{{ a.created_at[:19].replace("T", " ") }}</td>
+              <td>{{ a.action }}</td>
+              <td>{% if a.target_type %}{{ a.target_type }}/{{ a.target_id }}{% else %}&mdash;{% endif %}</td>
+              <td><code>{{ a.details or '' }}</code></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+</section>
+{% endblock %}
