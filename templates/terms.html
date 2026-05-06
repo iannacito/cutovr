@@ -1,5 +1,5 @@
 {% extends "_base.html" %}
-{% block title %}Terms of Service &mdash; Cutover{% endblock %}
+{% block title %}Terms of Service &mdash; {{ app_name }}{% endblock %}
 {% block content %}
 <section class="page page--prose">
   <p class="eyebrow">Legal</p>
@@ -7,7 +7,7 @@
   <p class="muted">Last updated: {{ now_year }}-01-01. Private beta / MVP terms. Please review with counsel before relying on this for production customer use.</p>
 
   <h2>1. The Service</h2>
-  <p>Cutover (the &ldquo;Service&rdquo;) is a tool that converts a PCLaw general-ledger export and posts journal entries to a QuickBooks Online company you control. You authorize the Service to talk to your QuickBooks Online company by completing Intuit's OAuth&nbsp;2.0 flow.</p>
+  <p>{{ app_name }} (the &ldquo;Service&rdquo;) is a tool that converts a PCLaw general-ledger export and posts journal entries to a QuickBooks Online company you control. You authorize the Service to talk to your QuickBooks Online company by completing Intuit's OAuth&nbsp;2.0 flow.</p>
 
   <h2>2. Not legal or accounting advice</h2>
   <p>The Service is software. It does not provide legal, tax, or accounting advice. Its output is a candidate set of journal entries derived from the file you upload; <strong>you are responsible for reviewing and approving every import in QuickBooks before relying on it</strong>. If a journal entry would be wrong in QuickBooks if you posted it manually, it will be wrong here too.</p>

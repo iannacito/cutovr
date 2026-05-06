@@ -1,0 +1,76 @@
+{% extends "_base.html" %}
+{% block title %}{{ firm.name }} &mdash; Import history{% endblock %}
+{% block content %}
+<section class="page">
+  <div class="hero">
+    <p class="eyebrow">{{ firm.name }} &middot; Operator view</p>
+    <h1>Import <em>history</em>.</h1>
+    <p>Every attempted import for this firm, across all jobs. Use this to spot which job failed, which QuickBooks company received which entries, and whether anything was reversed.</p>
+  </div>
+
+  <section class="card">
+    <div class="panel-head">
+      <div>
+        <p class="eyebrow">All imports</p>
+        <h2>{{ imports|length }} import attempt(s)</h2>
+      </div>
+      <a class="btn" href="{{ url_for('dashboard') }}">Back to dashboard</a>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>When (UTC)</th>
+            <th>Job</th>
+            <th>QBO company</th>
+            <th>realmId</th>
+            <th>Txns</th>
+            <th>Debit</th>
+            <th>Credit</th>
+            <th>Status</th>
+            <th>Reversal</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if imports %}
+            {% for h in imports %}
+              <tr>
+                <td>{{ h.id }}</td>
+                <td>{{ h.created_at[:19].replace("T", " ") }}</td>
+                <td>
+                  <a href="{{ url_for('job_detail', job_id=h.job_id) }}">{{ h.job_company or h.job_id }}</a>
+                </td>
+                <td>{{ h.company_name or '—' }}</td>
+                <td><code>{{ h.realm_id }}</code></td>
+                <td>{{ h.transaction_count }}</td>
+                <td>${{ h.debit_total }}</td>
+                <td>${{ h.credit_total }}</td>
+                <td>
+                  <span class="badge {% if h.status == 'success' %}success{% elif h.status == 'failed' %}error{% endif %}">{{ h.status }}</span>
+                </td>
+                <td>
+                  {% if h.reversal %}
+                    {% if h.reversal.status == 'success' %}
+                      <span class="badge success">Reversed</span>
+                    {% else %}
+                      <span class="badge error">Rev {{ h.reversal.status }}</span>
+                    {% endif %}
+                  {% else %}
+                    <span class="muted">&mdash;</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr><td colspan="10" style="text-align:center;color:var(--ink-muted);padding:var(--space-6);">No imports recorded for this firm yet.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+    <p class="note" style="margin-top:var(--space-4);">
+      Scope: only imports created by jobs in <strong>{{ firm.name }}</strong>. Other firms' imports are not visible here. The history row is preserved even if the job's local data is later deleted, so the duplicate-import guard keeps working.
+    </p>
+  </section>
+</section>
+{% endblock %}

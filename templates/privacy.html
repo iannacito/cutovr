@@ -1,5 +1,5 @@
 {% extends "_base.html" %}
-{% block title %}Privacy Policy &mdash; Cutover{% endblock %}
+{% block title %}Privacy Policy &mdash; {{ app_name }}{% endblock %}
 {% block content %}
 <section class="page page--prose">
   <p class="eyebrow">Legal</p>
@@ -7,7 +7,7 @@
   <p class="muted">Last updated: {{ now_year }}-01-01. This is a starter policy intended for review by the operating firm's counsel before public launch.</p>
 
   <h2>What this product is</h2>
-  <p>Cutover (the &ldquo;Service&rdquo;) is a workflow tool that helps law-firm operators move a PCLaw general ledger into QuickBooks Online. The Service accepts an exported PCLaw CSV file, encrypts it on receipt, parses it into journal entries, and posts those entries to the firm's connected QuickBooks Online company via Intuit's official OAuth&nbsp;2.0 API.</p>
+  <p>{{ app_name }} (the &ldquo;Service&rdquo;) is a workflow tool that helps law-firm operators move a PCLaw general ledger into QuickBooks Online. The Service accepts an exported PCLaw CSV file, encrypts it on receipt, parses it into journal entries, and posts those entries to the firm's connected QuickBooks Online company via Intuit's official OAuth&nbsp;2.0 API.</p>
 
   <h2>What we collect</h2>
   <ul class="secure-list">
@@ -43,6 +43,6 @@
   <p>The Service runs on Render (hosting), uses Intuit's QuickBooks Online API (mandatory), and may use a transactional email provider for support correspondence. No other sub-processor receives uploaded ledger files or QuickBooks tokens.</p>
 
   <h2>Contact</h2>
-  <p>For privacy questions or data-deletion requests, see the <a href="{{ url_for('support') }}">support page</a>.</p>
+  <p>For privacy questions or data-deletion requests, email <a href="mailto:{{ privacy_contact_email }}">{{ privacy_contact_email }}</a> or see the <a href="{{ url_for('support') }}">support page</a>.</p>
 </section>
 {% endblock %}

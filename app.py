@@ -8,6 +8,7 @@ import os, secrets
 import requests
 
 from app_db import AppDB
+import branding
 from pclaw_parser import parse_pclaw_csv, export_qbo_csv
 from pclaw_pipeline import (
     load_general_ledger_csv,
@@ -26,6 +27,7 @@ from qbo_auth import QBOAuthHandler
 from qbo_client import QBOClient, QBOError
 from encryption import encrypt_file, decrypt_file, encrypt_token, decrypt_token
 from import_history import ImportHistory, sha256_of_file
+import qbo_error_hint
 import csv as _csv
 
 app = Flask(__name__)
@@ -240,10 +242,13 @@ def login_required(view):
 
 @app.context_processor
 def inject_user():
-    """Make `user`, `firm`, and `now_year` available to every template."""
+    """Make `user`, `firm`, `now_year`, and configurable branding available
+    to every template."""
     user = current_user()
     firm = db.get_firm(user["firm_id"]) if user else None
-    return {"user": user, "firm": firm, "now_year": datetime.utcnow().year}
+    ctx = {"user": user, "firm": firm, "now_year": datetime.utcnow().year}
+    ctx.update(branding.context())
+    return ctx
 
 
 def _get_job(job_id):
@@ -488,6 +493,34 @@ def dashboard():
     )
 
 
+@app.route("/firm/imports")
+@login_required
+def firm_imports():
+    """Per-firm import-history summary. Read-only.
+
+    Lists every import this firm has ever attempted (success and failure)
+    across all its jobs, with per-row links back to the source job.
+    Constrained to the logged-in user's firm so this works as a
+    lightweight admin/operator view without needing a separate role
+    model. We do not expose other firms' data.
+    """
+    user = current_user()
+    firm_jobs = db.list_jobs_for_firm(user["firm_id"], limit=500)
+    job_index = {j["id"]: j for j in firm_jobs}
+    imports = history.get_history_for_jobs(job_index.keys())
+    # Annotate each import with the parent job's company + last_error
+    # summary if any, so the user sees a one-glance "what failed" view.
+    for imp in imports:
+        parent = job_index.get(imp["job_id"]) or {}
+        imp["job_company"] = parent.get("company")
+        imp["job_status"] = parent.get("status")
+    return render_template(
+        "firm-imports.html",
+        firm_jobs=firm_jobs,
+        imports=imports,
+    )
+
+
 def _resolve_entity_hints(qbo, payloads):
     """Replace `_pclaw_entity_hint` markers on JE lines with real Entity refs.
 
@@ -647,6 +680,8 @@ def healthz():
         "encryption_key_set": bool(os.environ.get("ENCRYPTION_KEY")),
         "qbo_client_id_set": QBO_CLIENT_ID != "your-client-id-here" and bool(QBO_CLIENT_ID),
         "qbo_redirect_uri_set": bool(QBO_REDIRECT_URI) and not QBO_REDIRECT_URI.startswith("http://localhost"),
+        "branding_support_email_set": not branding.is_placeholder_email(branding.SUPPORT_EMAIL),
+        "branding_security_email_set": not branding.is_placeholder_email(branding.SECURITY_EMAIL),
     }), 200
 
 
@@ -1056,6 +1091,9 @@ def import_to_qbo(job_id):
                 new_entities = _resolve_entity_hints(qbo, payloads)
             except QBOError as e:
                 job["status"] = "Import failed (entity setup)"
+                job["last_error"] = qbo_error_hint.parse(str(e))
+                _save_job(job_id)
+                _audit("import_failed", target_type="job", target_id=job_id, details=f"entity setup: {e}")
                 flash(
                     "Could not set up the Customer/Vendor required by QBO for "
                     f"Accounts Receivable / Accounts Payable lines: {e}",
@@ -1107,6 +1145,7 @@ def import_to_qbo(job_id):
 
             job["status"] = f"Imported {len(created)} journal entries to QuickBooks"
             job["unmapped_accounts"] = None
+            job["last_error"] = None
             _save_job(job_id)
             _audit("import_success", target_type="job", target_id=job_id,
                    details=f"{len(created)} JEs, debit=${source_debit}, credit=${source_credit}")
@@ -1161,16 +1200,33 @@ def import_to_qbo(job_id):
 
     except QBOError as e:
         job["status"] = "Import failed (QBO error)"
+        job["last_error"] = qbo_error_hint.parse(str(e))
         _save_job(job_id)
         _audit("import_failed", target_type="job", target_id=job_id, details=str(e))
-        flash(f"QuickBooks rejected the import: {e}", "error")
+        hint = job["last_error"]
+        msg = hint["summary"]
+        if hint.get("action"):
+            msg = f"{msg} {hint['action']}"
+        flash(msg, "error")
     except ValueError as e:
         job["status"] = "Import failed (validation)"
+        job["last_error"] = {
+            "summary": str(e),
+            "action": None,
+            "technical_detail": str(e),
+            "status_code": None,
+        }
         _save_job(job_id)
         _audit("import_failed", target_type="job", target_id=job_id, details=str(e))
         flash(f"Import failed: {e}", "error")
     except Exception as e:  # noqa: BLE001
         job["status"] = "Import failed"
+        job["last_error"] = {
+            "summary": "Unexpected error during import. The full message is in the technical details below.",
+            "action": "Try again, and if the problem persists, contact support with the job ID.",
+            "technical_detail": str(e),
+            "status_code": None,
+        }
         _save_job(job_id)
         _audit("import_failed", target_type="job", target_id=job_id, details=str(e))
         flash(f"Import failed: {e}", "error")
@@ -1575,7 +1631,33 @@ def reverse_import(job_id):
 @app.route("/jobs/<job_id>/delete", methods=["POST"])
 @login_required
 def delete_job(job_id):
-    job, _user = _job_or_403(job_id)
+    """Purge local app data for a job.
+
+    Deletes the encrypted source/output files, the in-memory and DB job
+    row, and the QBO connection record (encrypted tokens). Does NOT
+    delete or reverse any JournalEntry records that were posted to
+    QuickBooks; those stay in the firm's QBO company until explicitly
+    reversed via /jobs/<id>/reverse-import.
+
+    Duplicate-import protection is preserved: the `imports` table in the
+    separate import_history database is intentionally kept so a future
+    upload of the same file content into the same realm is still
+    blocked. Audit log rows are preserved for the same reason.
+
+    Requires the user to type "DELETE" in `confirm_delete` so a stray
+    click on the danger button cannot wipe a job's local record.
+    """
+    job, user = _job_or_403(job_id)
+
+    if (request.form.get("confirm_delete") or "").strip().upper() != "DELETE":
+        flash(
+            "Deletion not confirmed. Type DELETE in the confirmation box and try again.",
+            "error",
+        )
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    had_qbo_results = bool(job.get("qbo_results"))
+    last_import_id = job.get("last_import_id")
 
     try:
         if "encrypted_file" in job:
@@ -1585,12 +1667,35 @@ def delete_job(job_id):
 
         if job_id in qbo_connections:
             del qbo_connections[job_id]
-        del jobs[job_id]
+        jobs.pop(job_id, None)
         db.delete_job(job_id)
-        _audit("delete_job", target_type="job", target_id=job_id)
+        _audit(
+            "delete_job",
+            target_type="job",
+            target_id=job_id,
+            details=(
+                f"company={job.get('company')}"
+                + (f" had_qbo_import={had_qbo_results}" if had_qbo_results else "")
+                + (f" last_import_id={last_import_id}" if last_import_id else "")
+                + " (QBO records preserved; import_history row preserved for duplicate guard)"
+            ),
+        )
 
-        flash("Job and associated files deleted", "success")
+        if had_qbo_results:
+            flash(
+                "Local job data deleted. Note: this does NOT remove any journal "
+                "entries already posted to QuickBooks. To remove those, use "
+                "Reverse this import on the job page before deleting next time, "
+                "or void / delete them manually in QuickBooks.",
+                "success",
+            )
+        else:
+            flash(
+                "Local job data deleted (encrypted file, QuickBooks tokens, job row).",
+                "success",
+            )
     except Exception as e:
+        _audit("delete_job_failed", target_type="job", target_id=job_id, details=str(e))
         flash(f"Deletion error: {str(e)}", "error")
 
     return redirect(url_for("dashboard"))

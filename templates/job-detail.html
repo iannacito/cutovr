@@ -12,6 +12,20 @@
     </div>
   {% endif %}
 
+  {% if job.last_error %}
+    <section class="card error-panel">
+      <p class="eyebrow" style="color:var(--error);">Last import error</p>
+      <h2 style="margin-top:.25rem;">{{ job.last_error.summary }}</h2>
+      {% if job.last_error.action %}
+        <p><strong>Likely next step:</strong> {{ job.last_error.action }}</p>
+      {% endif %}
+      <details style="margin-top:var(--space-3);">
+        <summary class="muted" style="cursor:pointer;">Technical detail (for support){% if job.last_error.status_code %} &middot; HTTP {{ job.last_error.status_code }}{% endif %}</summary>
+        <pre style="white-space:pre-wrap;word-break:break-word;font-size:.85rem;margin-top:var(--space-2);">{{ job.last_error.technical_detail }}</pre>
+      </details>
+    </section>
+  {% endif %}
+
   <section class="card detail-hero">
     <div class="flex-between">
       <div>
@@ -279,16 +293,31 @@
 
   <section class="card danger-zone">
     <p class="eyebrow" style="color:var(--error);">Danger zone</p>
-    <div class="flex-between">
-      <div>
-        <h3 style="margin:0;">Delete this job</h3>
-        <p class="muted" style="margin:.25rem 0 0;">Permanently delete encrypted files and OAuth tokens. This cannot be undone.</p>
-      </div>
-      <form action="/jobs/{{ job.id }}/delete" method="post" onsubmit="return confirm('Are you sure? This will delete all files and tokens.')">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button class="btn btn-danger" type="submit">Delete job</button>
-      </form>
+    <h3 style="margin:0 0 var(--space-2);">Delete local job data</h3>
+    <p class="muted" style="margin:0 0 var(--space-3);">
+      Permanently deletes the encrypted source file, encrypted output file, the
+      QuickBooks tokens for this job, and the local job record. This cannot be
+      undone.
+    </p>
+    <div class="card" style="background:var(--surface-muted, #f7f7f5); margin:var(--space-3) 0;">
+      <p style="margin:0 0 var(--space-2);"><strong>What this does NOT do</strong></p>
+      <ul class="secure-list" style="margin:0;">
+        <li>It does <strong>not</strong> delete or reverse any JournalEntry records already posted in QuickBooks. Those stay in your QBO company.{% if job.qbo_results %} If you want to remove the {{ job.qbo_results|length }} entry/entries posted by this job, use <em>Reverse this import</em> above first.{% endif %}</li>
+        <li>It does <strong>not</strong> remove this file from the duplicate-import history. If you upload the same file to the same QuickBooks company later, it will still be blocked as a duplicate &mdash; that protects you from accidental double-posting.</li>
+        <li>It does <strong>not</strong> remove audit-log rows for this job; those are kept for compliance.</li>
+      </ul>
     </div>
+    <form action="/jobs/{{ job.id }}/delete" method="post"
+          onsubmit="return confirm('Delete local data for this job? This does NOT undo any QuickBooks entries.');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>
+        <span>Type DELETE to confirm</span>
+        <input type="text" name="confirm_delete" placeholder="DELETE" autocomplete="off" required>
+      </label>
+      <div class="actions-row" style="margin-top:var(--space-3);">
+        <button class="btn btn-danger" type="submit">Delete local job data</button>
+      </div>
+    </form>
   </section>
 </section>
 {% endblock %}

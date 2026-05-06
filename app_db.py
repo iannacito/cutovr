@@ -217,6 +217,7 @@ class AppDB:
         add_col("jobs", "verification_json TEXT")
         add_col("jobs", "last_import_id INTEGER")
         add_col("jobs", "unmapped_accounts_json TEXT")
+        add_col("jobs", "last_error_json TEXT")
 
         # qbo_connections additions for encrypted token persistence
         add_col("qbo_connections", "legal_name TEXT")
@@ -347,6 +348,9 @@ class AppDB:
         if "unmapped_accounts" in job_dict:
             fields.append("unmapped_accounts_json")
             values.append(json.dumps(job_dict["unmapped_accounts"]) if job_dict["unmapped_accounts"] else None)
+        if "last_error" in job_dict:
+            fields.append("last_error_json")
+            values.append(json.dumps(job_dict["last_error"]) if job_dict["last_error"] else None)
         if "qbo_connected" in job_dict:
             fields.append("qbo_connected")
             values.append(1 if job_dict["qbo_connected"] else 0)
@@ -400,6 +404,7 @@ class AppDB:
             ("import_summary_json", "import_summary"),
             ("verification_json", "verification"),
             ("unmapped_accounts_json", "unmapped_accounts"),
+            ("last_error_json", "last_error"),
         ]:
             v = row[src] if src in row.keys() else None
             if v:

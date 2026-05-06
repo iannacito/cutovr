@@ -32,11 +32,25 @@ every page, including the unauthenticated login and signup screens.
 
 ## 2. Customize the placeholders before submission
 
-Before submitting the Intuit production form, do a find-and-replace across
-the new templates:
+The contact addresses, app name, and operating-company name shown on the
+public pages are now driven by environment variables, not hardcoded in the
+templates. Set these in Render → Service → Environment before submitting the
+Intuit production form:
 
-- `support@your-domain.example` &rarr; your real support inbox.
-- `security@your-domain.example` &rarr; your real security inbox (can be the same).
+| Env var | Where it shows | Default |
+| --- | --- | --- |
+| `APP_NAME` | Page title, brand mark in header | `Cutover` |
+| `COMPANY_NAME` | Footer copyright | `Cutover` |
+| `SUPPORT_EMAIL` | `/support` &mdash; "Email …" line | `support@your-domain.example` |
+| `SECURITY_EMAIL` | `/support` &mdash; "Reporting a security issue" | `security@your-domain.example` |
+| `PRIVACY_CONTACT_EMAIL` | `/privacy` &mdash; "Contact" | falls back to `SUPPORT_EMAIL` |
+
+Hit `/healthz` after the deploy: `branding_support_email_set` and
+`branding_security_email_set` should both be `true`. If they read `false`,
+the `@your-domain.example` placeholders are still being shown.
+
+You will still need to edit by hand:
+
 - The starter "Last updated" date in `privacy.html` / `terms.html`.
 - The "Sub-processors" list in `privacy.html` (Render, Intuit, your email
   vendor) &mdash; add or remove based on what your deployment actually uses.
