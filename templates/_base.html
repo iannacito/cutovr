@@ -19,7 +19,9 @@
       <nav aria-label="Primary">
         {% if user %}
           <a href="{{ url_for('dashboard') }}">Dashboard</a>
-          <a href="{{ url_for('readiness_page') }}">Readiness</a>
+          {% if show_operator_tools %}
+            <a href="{{ url_for('readiness_page') }}">Readiness</a>
+          {% endif %}
           <a href="{{ url_for('support') }}">Support</a>
           <form action="{{ url_for('logout') }}" method="post" style="display:inline;">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

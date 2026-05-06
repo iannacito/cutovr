@@ -17,6 +17,9 @@ Checks:
      echoing the value back.
   T6 Custom-domain inference: PUBLIC_APP_URL or a non-onrender.com host
      marks custom_domain_present True.
+  T7 The Readiness link is hidden from the public top nav and dashboard
+     by default, but visible when SHOW_OPERATOR_TOOLS=1. The /readiness
+     route itself stays reachable for any logged-in user regardless.
 """
 
 import importlib
@@ -221,6 +224,52 @@ def t6_custom_domain_inference():
     print("T6 custom_domain_inference PASS")
 
 
+def _signup_and_get(env, path):
+    """Boot the app under `env`, sign up a fresh user, return GET `path`."""
+    appmod = _reset_app_env(env)
+    client = appmod.app.test_client()
+    client.post(
+        "/signup",
+        data={
+            "firm_name": "Operator Tools Firm",
+            "email": "ops@example.test",
+            "password": "passw0rd!",
+            "confirm_password": "passw0rd!",
+        },
+    )
+    return client, client.get(path)
+
+
+def t7_readiness_nav_link_gated_by_env_flag():
+    # Default deploy (no SHOW_OPERATOR_TOOLS): nav and dashboard hide
+    # the Readiness link, but /readiness itself still renders for the
+    # logged-in user.
+    base_env = _good_local_env()
+    client, dash = _signup_and_get(base_env, "/dashboard")
+    assert dash.status_code == 200, dash.status_code
+    dash_text = dash.get_data(as_text=True)
+    # The nav and dashboard should not advertise the readiness page.
+    assert ">Readiness<" not in dash_text, \
+        "Readiness link should be hidden from default nav"
+    assert ">Go-live readiness<" not in dash_text, \
+        "Go-live readiness button should be hidden from default dashboard"
+    # /readiness still reachable directly.
+    direct = client.get("/readiness")
+    assert direct.status_code == 200, direct.status_code
+
+    # Operator deploy (SHOW_OPERATOR_TOOLS=1): both surfaces show the link.
+    env = _good_local_env()
+    env["SHOW_OPERATOR_TOOLS"] = "1"
+    client, dash = _signup_and_get(env, "/dashboard")
+    assert dash.status_code == 200, dash.status_code
+    dash_text = dash.get_data(as_text=True)
+    assert ">Readiness<" in dash_text, \
+        "Readiness link should appear in nav when SHOW_OPERATOR_TOOLS=1"
+    assert ">Go-live readiness<" in dash_text, \
+        "Go-live readiness button should appear on dashboard when SHOW_OPERATOR_TOOLS=1"
+    print("T7 readiness_nav_link_gated_by_env_flag PASS")
+
+
 if __name__ == "__main__":
     t1_collect_checks_all_green()
     t2_required_failures_when_unset()
@@ -228,4 +277,5 @@ if __name__ == "__main__":
     t4_readiness_page_protected_then_renders()
     t5_malformed_fernet_flags_check()
     t6_custom_domain_inference()
+    t7_readiness_nav_link_gated_by_env_flag()
     print("ALL READINESS SMOKE TESTS PASSED")
