@@ -1,5 +1,5 @@
 {% extends "_base.html" %}
-{% block title%}Support &mdash; Cutover{% endblock %}
+{% block title%}Support &mdash; {{ app_name }}{% endblock %}
 {% block content %}
 <section class="page page--prose">
   <p class="eyebrow">Help</p>
@@ -18,7 +18,7 @@
 
   <section class="card" style="margin-top:var(--space-6);">
     <h2>Reporting an issue</h2>
-    <p>Email <a href="mailto:support@your-domain.example">support@your-domain.example</a> (replace before launch). Please include:</p>
+    <p>Email <a href="mailto:{{ support_email }}">{{ support_email }}</a>. Please include:</p>
     <ul class="secure-list">
       <li>The job ID (<code>job_YYYYMMDDHHMMSS</code>, visible at the top of the job page).</li>
       <li>The exact action you took (button or URL).</li>
@@ -31,7 +31,7 @@
 
   <section class="card" style="margin-top:var(--space-6);">
     <h2>Reporting a security issue</h2>
-    <p>If you think you've found a vulnerability (auth bypass, CSRF gap, leaked secret, IDOR, etc.), please email <a href="mailto:security@your-domain.example">security@your-domain.example</a> (replace before launch) instead of opening a public issue. Include the same details as above plus a short reproduction. We will acknowledge within 2&nbsp;business days.</p>
+    <p>If you think you've found a vulnerability (auth bypass, CSRF gap, leaked secret, IDOR, etc.), please email <a href="mailto:{{ security_email }}">{{ security_email }}</a> instead of opening a public issue. Include the same details as above plus a short reproduction. We will acknowledge within 2&nbsp;business days.</p>
   </section>
 
   <section class="card" style="margin-top:var(--space-6);">

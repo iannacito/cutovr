@@ -22,6 +22,11 @@ code, commit them to git, or share them in screenshots.
 | `IMPORT_HISTORY_DB` | optional | Path to SQLite file on the Render persistent disk, e.g. `/var/data/import_history.sqlite3`. |
 | `APP_DB` | optional | Path to the auth/jobs SQLite file on the persistent disk, e.g. `/var/data/app.sqlite3`. |
 | `CSRF_DISABLE` | **never** | Tests only. The app refuses to start if this is on with `APP_ENV=production`. |
+| `APP_NAME` | optional | Display name shown in the page title and brand mark. Defaults to `Cutover`. |
+| `COMPANY_NAME` | optional | Operating-company name shown in the footer copyright. Defaults to `Cutover`. |
+| `SUPPORT_EMAIL` | optional but recommended | Address surfaced on `/support` for customer issues. Defaults to `support@your-domain.example` &mdash; set this before customer testing. |
+| `SECURITY_EMAIL` | optional but recommended | Address surfaced on `/support` for vulnerability reports. Defaults to `security@your-domain.example` &mdash; set this before customer testing. |
+| `PRIVACY_CONTACT_EMAIL` | optional | Address shown on `/privacy` for data-deletion requests. Falls back to `SUPPORT_EMAIL`. |
 
 The app calls `_validate_production_env()` on startup. If anything is missing
 or malformed, the deploy will fail loudly with a list of what's wrong. It will
@@ -29,6 +34,10 @@ or malformed, the deploy will fail loudly with a list of what's wrong. It will
 
 You can confirm the deploy is healthy by visiting `/healthz`. It returns JSON
 with which keys are set (true/false), but never the secret values themselves.
+The probe also reports `branding_support_email_set` and
+`branding_security_email_set` &mdash; both are `false` while the
+`@your-domain.example` placeholders are still in use, so you can spot from
+one curl whether the customer-facing addresses still need replacement.
 
 ## 2. Intuit Developer setup
 
@@ -114,6 +123,38 @@ artifacts now:
 
 Vanta or Drata can automate most of the evidence collection once you're
 ready. Until then, a single shared doc tracking the above is enough.
+
+## 8.4. Data retention &amp; deletion
+
+Each migration job stores three things on the server:
+
+1. The encrypted PCLaw CSV (`uploads/<timestamp>_*.csv.enc`).
+2. The encrypted QBO OAuth tokens (`qbo_connections` rows in `app.sqlite3`).
+3. A row in `import_history.sqlite3` for every successful import, used by the
+   duplicate-import guard.
+
+Users can purge (1) and (2) at any time from the job page using the
+**Delete local job data** button in the danger zone. The action requires the
+user to type `DELETE` to confirm and is recorded in the per-firm audit log.
+
+What **Delete local job data** does NOT do, by design:
+
+- It does **not** delete or void any JournalEntry records already posted to
+  QuickBooks. To remove those, the user must run **Reverse this import**
+  *first* (which posts offsetting entries via Intuit's API), or void/delete
+  them by hand in QuickBooks. The job-detail UI explains this distinction.
+- It does **not** remove the row in `import_history.sqlite3`. Keeping the
+  row is what protects the customer from accidentally re-importing the
+  same file content into the same QuickBooks company. If a customer
+  legitimately needs the import-history row gone (e.g. mistaken upload
+  with sensitive content), an operator can delete it directly from the
+  SQLite file out-of-band.
+- It does **not** remove audit-log rows, which are kept for compliance.
+
+Operators have a read-only view of every import this firm has ever
+attempted at `/firm/imports`, scoped to the logged-in firm. Use it to
+spot which job a failed import came from, which QBO company received
+which entries, and whether anything was reversed.
 
 ## 8.5. Public Privacy / Terms / Support pages
 

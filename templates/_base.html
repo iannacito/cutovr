@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}PCLaw to QuickBooks Online migration{% endblock %}</title>
+  <title>{% block title %}{{ app_name }} &mdash; PCLaw to QuickBooks Online migration{% endblock %}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -14,7 +14,7 @@
   <header class="site-header">
     <div class="site-header__inner">
       <a href="{{ url_for('index') }}" class="brand-mark">
-        Cut<em>over</em>
+        {% if app_name == "Cutover" %}Cut<em>over</em>{% else %}{{ app_name }}{% endif %}
       </a>
       <nav aria-label="Primary">
         {% if user %}
@@ -53,7 +53,7 @@
 
   <footer class="site-footer">
     <div class="site-footer__inner">
-      <div>&copy; {{ now_year }} Cutover &mdash; PCLaw to QuickBooks Online</div>
+      <div>&copy; {{ now_year }} {{ company_name }} &mdash; PCLaw to QuickBooks Online</div>
       <div class="site-footer__links">
         <a href="{{ url_for('privacy') }}">Privacy</a>
         <a href="{{ url_for('terms') }}">Terms</a>

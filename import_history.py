@@ -329,6 +329,34 @@ class ImportHistory:
                 )
             return reversal_id
 
+    def get_history_for_jobs(self, job_ids: Iterable[str]) -> list:
+        """Return all import rows whose job_id is in the given set, with
+        their reversal (if any). Ordered newest-first.
+
+        Used by the per-firm import summary view: the caller has already
+        confirmed which job_ids belong to the firm, so we don't enforce
+        that constraint here.
+        """
+        ids = list(job_ids)
+        if not ids:
+            return []
+        placeholders = ",".join("?" * len(ids))
+        with self._conn() as c:
+            rows = [
+                dict(r)
+                for r in c.execute(
+                    f"SELECT * FROM imports WHERE job_id IN ({placeholders}) "
+                    f"ORDER BY id DESC",
+                    ids,
+                ).fetchall()
+            ]
+            for imp in rows:
+                rev = c.execute(
+                    "SELECT * FROM import_reversals WHERE import_id = ?", (imp["id"],),
+                ).fetchone()
+                imp["reversal"] = dict(rev) if rev else None
+        return rows
+
     def get_history_for_job(self, job_id: str) -> list:
         with self._conn() as c:
             imports = [
