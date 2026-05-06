@@ -23,12 +23,34 @@ dashboard, three URLs are required:
 | End-User License    | `/terms`      | Plain-language ToS (no advice, beta caveat). |
 | Privacy Policy      | `/privacy`    | What you collect, store, retain, share.    |
 | Host Domain         | `/`           | Public marketing or sign-in page (already login). |
-| Launch URL / Connect button | `/login` or `/dashboard` | Where users land after Intuit redirects them in. |
-| Disconnect URL      | (in-app)      | The job-detail page has a *Disconnect QuickBooks* form. |
+| Launch URL / Connect button | `/` (redirects to login or dashboard) | Where users land after Intuit redirects them in. |
+| Disconnect URL      | `/disconnect` (alias `/quickbooks/disconnect`) | Public page explaining how to disconnect, with a logged-in revoke flow. |
+| Redirect URI (OAuth) | `/oauth/callback` | Must match `QBO_REDIRECT_URI` exactly. |
 
-The new templates (`privacy.html`, `terms.html`, `support.html`) ship today
-in the `go-live-foundation` branch and are linked from the site footer on
-every page, including the unauthenticated login and signup screens.
+### Exact production URLs to register with Intuit
+
+After the custom domain (`https://www.pclawmigrate.com`) is live, the URLs
+to enter in the Intuit Developer dashboard are:
+
+| Field | Value |
+| --- | --- |
+| Host Domain / Launch URL | `https://www.pclawmigrate.com` |
+| OAuth 2.0 Redirect URI | `https://www.pclawmigrate.com/oauth/callback` |
+| Disconnect URL | `https://www.pclawmigrate.com/disconnect` |
+| End User License Agreement | `https://www.pclawmigrate.com/terms` |
+| Privacy Policy | `https://www.pclawmigrate.com/privacy` |
+
+The disconnect URL is a real route (added in
+`production-customer-readiness`). Logged-out visitors see an explanation
+of both the QuickBooks-side and app-side disconnect paths. A signed-in
+firm admin sees a list of their currently connected QuickBooks companies
+and can confirm with `DISCONNECT` to revoke tokens at Intuit and delete
+the encrypted token rows from this app.
+
+The new templates (`privacy.html`, `terms.html`, `support.html`,
+`disconnect.html`, `quickbooks-manage.html`) are linked from the site
+footer / nav on every page, including the unauthenticated login and
+signup screens.
 
 ## 2. Customize the placeholders before submission
 
@@ -66,8 +88,32 @@ are public pages.
   (trailing slash matters, http vs https matters).
 - Scope: `com.intuit.quickbooks.accounting`. The app does not request
   `payments`, `payroll`, or `openid` scopes.
-- The disconnect path is exposed in the UI (job detail page &rarr; *Disconnect
-  QuickBooks*) and removes the encrypted token from the database.
+- The disconnect path is exposed at the public `/disconnect` URL and
+  separately on each job detail page. Both paths attempt a server-side
+  revoke at Intuit's `https://developer.api.intuit.com/v2/oauth2/tokens/revoke`
+  endpoint and then delete the encrypted refresh token from this app's
+  database, so a successful disconnect always removes the local token
+  even if the Intuit revoke call fails.
+
+## 3.1. Production-mode connect guard
+
+When `QBO_ENVIRONMENT=production`, the *Connect to QuickBooks* button is
+gated by a startup-time configuration check. If any of the following are
+missing or wrong, clicking *Connect* fails closed with a clear, secret-
+free message instead of starting OAuth against a real customer company:
+
+- `QBO_CLIENT_ID` / `QBO_CLIENT_SECRET` are not configured.
+- `QBO_REDIRECT_URI` is missing, points at `localhost`, or is not HTTPS.
+- `QBO_REAL_IMPORT` is not `1` (we never want to start a real OAuth flow
+  if the import path will fall back to demo).
+- `APP_ENV` is not `production` (Secure cookies / strict env validation
+  must be on).
+- `SUPPORT_EMAIL` is still the deploy-default placeholder.
+
+These checks live in `app._qbo_production_blockers()` and are also
+surfaced on the `/quickbooks` connection-management page so the operator
+can see exactly which env vars to set in Render before flipping the
+deploy live.
 
 ## 4. What the reviewer will see when they connect
 
@@ -147,10 +193,26 @@ reference in user-facing error flashes.
 
 When you're cleared to write to a real production QuickBooks company:
 
-1. Create or convert the Intuit app to a production app.
-2. Update Render env: `QBO_CLIENT_ID`, `QBO_CLIENT_SECRET`,
-   `QBO_REDIRECT_URI`, `QBO_ENVIRONMENT=production`.
-3. Run through the §9 pre-launch smoke checklist in `PRODUCTION_READINESS.md`
-   against the live URL.
-4. Test against a low-stakes company first (e.g. your own bookkeeping)
-   before exposing to a paying customer.
+1. Create or convert the Intuit app to a production app, then in the
+   Intuit Developer dashboard set:
+   - **Host Domain / Launch URL:** `https://www.pclawmigrate.com`
+   - **Redirect URI:** `https://www.pclawmigrate.com/oauth/callback`
+   - **Disconnect URL:** `https://www.pclawmigrate.com/disconnect`
+   - **EULA URL:** `https://www.pclawmigrate.com/terms`
+   - **Privacy URL:** `https://www.pclawmigrate.com/privacy`
+2. Update Render env (Render &rarr; Service &rarr; Environment):
+   - `QBO_CLIENT_ID` &mdash; production client id from Intuit
+   - `QBO_CLIENT_SECRET` &mdash; production client secret from Intuit
+   - `QBO_REDIRECT_URI=https://www.pclawmigrate.com/oauth/callback`
+   - `QBO_ENVIRONMENT=production`
+   - `QBO_REAL_IMPORT=1`
+   - Confirm `APP_ENV=production` and `SUPPORT_EMAIL` are real values
+3. Restart the service. Hit `/healthz` and `/readiness`; every required
+   item must read green before connecting any real customer.
+4. Open `/quickbooks` (logged in). The page should show a
+   "Production Mode active" banner; if it shows blockers, fix them in
+   Render and restart.
+5. Test against a low-stakes company first (e.g. your own bookkeeping)
+   before exposing to a paying customer. The production-mode import flow
+   requires you to type `IMPORT` to confirm before any journal entries
+   are posted.

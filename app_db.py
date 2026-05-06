@@ -482,6 +482,36 @@ class AppDB:
         with self._conn() as c:
             c.execute("DELETE FROM qbo_connections WHERE job_id = ?", (job_id,))
 
+    def list_qbo_connections_for_firm(self, firm_id: int) -> list:
+        """Return every QBO connection (one per job) for the given firm.
+
+        Used by the /quickbooks management page so the user can see what
+        QuickBooks companies they currently have connected and disconnect
+        any of them. Tokens stay encrypted; the page never decrypts them.
+        """
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT job_id, firm_id, realm_id, company_name, legal_name, "
+                "country, expires_at, company_info_error, connected_at, "
+                "updated_at FROM qbo_connections WHERE firm_id = ? "
+                "ORDER BY connected_at DESC",
+                (firm_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def delete_qbo_connections_for_firm(self, firm_id: int) -> int:
+        """Delete every QBO connection row for a firm. Returns count.
+
+        Used by the public /disconnect flow when a logged-in user requests
+        a "disconnect everything" so we drop encrypted tokens for every job
+        owned by their firm.
+        """
+        with self._conn() as c:
+            cur = c.execute(
+                "DELETE FROM qbo_connections WHERE firm_id = ?", (firm_id,)
+            )
+            return cur.rowcount or 0
+
     # --- account mappings --------------------------------------------------
 
     def list_account_mappings(self, firm_id: int, realm_id: str) -> list:

@@ -419,6 +419,16 @@ tr:last-child td { border-bottom: none; }
 }
 .warning-panel h3 { color: var(--warning); }
 .danger-zone { border-color: var(--error); }
+.error-panel {
+  border-color: var(--error);
+  background: #fbecec;
+}
+.error-panel h3 { color: var(--error); }
+.success-panel {
+  border-color: var(--success, #2f7a4f);
+  background: #eaf5ee;
+}
+.success-panel h3 { color: var(--success, #2f7a4f); }
 
 /* Misc utilities ------------------------------------------------------- */
 .muted { color: var(--ink-muted); }

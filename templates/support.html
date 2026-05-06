@@ -38,5 +38,16 @@
     <h2>Status &amp; uptime</h2>
     <p>The application exposes a <code>/healthz</code> probe used by hosting (Render). It returns presence (not values) of the critical configuration so you can confirm a deploy is healthy without leaking secrets.</p>
   </section>
+
+  <section class="card" style="margin-top:var(--space-6);">
+    <h2>Disconnecting QuickBooks</h2>
+    <p>
+      Open <a href="{{ url_for('public_disconnect') }}">/disconnect</a> for the
+      official disconnect page. From there a logged-in firm admin can revoke
+      tokens at Intuit and remove the encrypted token rows from this app.
+      You can also reach the same page from QuickBooks Online &rarr;
+      <em>Apps</em> &rarr; <em>Connected apps</em> &rarr; <em>Disconnect</em>.
+    </p>
+  </section>
 </section>
 {% endblock %}

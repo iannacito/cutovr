@@ -1,0 +1,126 @@
+{% extends "_base.html" %}
+{% block title %}QuickBooks connections &mdash; {{ firm.name }}{% endblock %}
+{% block content %}
+<section class="page">
+  <a href="{{ url_for('dashboard') }}" class="back-link">&larr; Back to dashboard</a>
+
+  <div class="hero">
+    <p class="eyebrow">{{ firm.name }} &middot; QuickBooks</p>
+    <h1>Connected <em>QuickBooks</em> companies</h1>
+    <p>
+      Each migration job in {{ app_name }} can connect to one QuickBooks
+      Online company. Below is every job in this firm that currently has
+      stored QuickBooks tokens, plus controls to reconnect or disconnect.
+      Tokens are stored encrypted at rest and never displayed.
+    </p>
+  </div>
+
+  {% if qbo_is_sandbox %}
+    <div class="card warning-panel" role="status">
+      <h3>Sandbox Testing Mode</h3>
+      <p>
+        This deploy is connected to QuickBooks <strong>Sandbox</strong>.
+        Anything listed below is the sandbox company we sent you, not a
+        real customer's QuickBooks Online company.
+      </p>
+    </div>
+  {% elif production_blockers %}
+    <div class="card error-panel" role="alert">
+      <h3>Production deploy not ready for real customer connections</h3>
+      <p>
+        The Connect button is currently blocked for new connections because
+        of these configuration issues:
+      </p>
+      <ul class="secure-list">
+        {% for b in production_blockers %}<li>{{ b }}.</li>{% endfor %}
+      </ul>
+      <p class="note">
+        Existing connections shown below still work, but you cannot start
+        a new one until these items are fixed in Render and the deploy is
+        restarted. Open the
+        <a href="{{ url_for('readiness_page') }}">readiness checklist</a>
+        for full remediation hints.
+      </p>
+    </div>
+  {% else %}
+    <div class="card success-panel" role="status">
+      <h3>Production mode active</h3>
+      <p>
+        Connections you start here will authorize the user's
+        <strong>real QuickBooks Online company</strong>. Imports posted
+        from this deploy are real journal entries in real customer books.
+      </p>
+    </div>
+  {% endif %}
+
+  <section class="card" style="margin-top:var(--space-6);">
+    <div class="panel-head">
+      <div>
+        <p class="eyebrow">Connected jobs</p>
+        <h2>Current connections</h2>
+      </div>
+      <a class="btn" href="{{ url_for('public_disconnect') }}">Disconnect all</a>
+    </div>
+    {% if connections %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Job</th>
+              <th>Firm-side company</th>
+              <th>QBO company</th>
+              <th>realmId</th>
+              <th>Connected (UTC)</th>
+              <th>Token expires (UTC)</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for c in connections %}
+              <tr>
+                <td><a href="{{ url_for('job_detail', job_id=c.job_id) }}">{{ c.job_id }}</a></td>
+                <td>{{ c.job_company or '—' }}</td>
+                <td>{{ c.company_name or '—' }}</td>
+                <td><code>{{ c.realm_id }}</code></td>
+                <td>{{ (c.connected_at or '')[:19].replace('T', ' ') }}</td>
+                <td>{{ (c.expires_at or '—')[:19].replace('T', ' ') }}</td>
+                <td>
+                  <div class="actions-row" style="gap:.5rem;flex-wrap:wrap;">
+                    <a class="btn btn-link" href="{{ url_for('connect_qbo', job_id=c.job_id) }}">Reconnect</a>
+                    <form action="{{ url_for('disconnect_qbo', job_id=c.job_id) }}" method="post"
+                          style="display:inline;"
+                          onsubmit="return confirm('Disconnect QuickBooks for job {{ c.job_id }}? Tokens will be revoked at Intuit and removed from this app.');">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      <button class="btn btn-link" type="submit" style="color:var(--error);">Disconnect</button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted">
+        No QuickBooks connections yet. Open a job and click
+        <em>Connect to QuickBooks</em> to authorize a company.
+      </p>
+    {% endif %}
+  </section>
+
+  <section class="card" style="margin-top:var(--space-6);">
+    <p class="eyebrow">Public links</p>
+    <h2>What we tell Intuit</h2>
+    <dl class="summary-grid">
+      <div><dt>Connect URL</dt><dd><a href="{{ url_for('index', _external=True) }}">{{ url_for('index', _external=True) }}</a></dd></div>
+      <div><dt>Disconnect URL</dt><dd><a href="{{ url_for('public_disconnect', _external=True) }}">{{ url_for('public_disconnect', _external=True) }}</a></dd></div>
+      <div><dt>OAuth Redirect URI</dt><dd><code>{{ url_for('oauth_callback', _external=True) }}</code></dd></div>
+    </dl>
+    <p class="note">
+      These are the URLs you should put in the Intuit Developer dashboard
+      for this app. They are also documented in
+      <code>INTUIT_PRODUCTION_REVIEW.md</code>.
+    </p>
+  </section>
+</section>
+{% endblock %}

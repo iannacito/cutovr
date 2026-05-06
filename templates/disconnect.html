@@ -1,0 +1,144 @@
+{% extends "_base.html" %}
+{% block title %}Disconnect QuickBooks &mdash; {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page page--prose">
+  <p class="eyebrow">QuickBooks</p>
+  <h1 class="display">Disconnect <em>QuickBooks</em></h1>
+  <p class="muted">
+    This page is the official Disconnect URL registered with Intuit for
+    {{ app_name }}. You can land here from QuickBooks &rarr; Apps &rarr;
+    Connected apps, or by clicking the link directly.
+  </p>
+
+  <section class="card" style="margin-top:var(--space-6);">
+    <h2>Two ways to disconnect</h2>
+    <ol class="secure-list">
+      <li>
+        <strong>From QuickBooks Online:</strong> sign in to QuickBooks,
+        open <em>Apps</em> &rarr; <em>My Apps</em> (or <em>Settings</em>
+        &rarr; <em>Apps and integrations</em>) and click
+        <em>Disconnect</em> next to {{ app_name }}. This revokes the app's
+        access at Intuit. We recommend doing this <em>and</em> the in-app
+        disconnect below for a clean removal.
+      </li>
+      <li>
+        <strong>From {{ app_name }}:</strong> sign in to your firm
+        workspace, then click <em>Disconnect</em> below to revoke the
+        stored OAuth tokens server-side. The encrypted tokens are deleted
+        immediately. Journal entries already posted to QuickBooks are
+        <strong>not</strong> deleted &mdash; they remain in your QuickBooks
+        company until you reverse or remove them there.
+      </li>
+    </ol>
+  </section>
+
+  {% if not is_logged_in %}
+    <section class="card" style="margin-top:var(--space-6);">
+      <h2>Sign in to manage connections</h2>
+      <p>
+        To disconnect from inside {{ app_name }}, you need to sign in to
+        your firm workspace first. We never store QuickBooks credentials,
+        only an encrypted refresh token tied to a specific firm.
+      </p>
+      <div class="actions-row" style="margin-top:var(--space-3);">
+        <a class="btn btn-primary" href="{{ url_for('login', next=url_for('public_disconnect')) }}">Sign in</a>
+        <a class="btn" href="{{ url_for('signup') }}">Create workspace</a>
+      </div>
+    </section>
+  {% else %}
+    <section class="card" style="margin-top:var(--space-6);">
+      <h2>QuickBooks connections for {{ firm.name }}</h2>
+      {% if connections %}
+        <p class="muted">
+          The list below shows every QuickBooks Online company currently
+          connected to a migration job in this workspace. Disconnecting
+          revokes the refresh token at Intuit and deletes the encrypted
+          token row from this app for every connection shown.
+        </p>
+        <div class="table-wrap" style="margin-top:var(--space-3);">
+          <table>
+            <thead>
+              <tr>
+                <th>Job</th>
+                <th>QuickBooks company</th>
+                <th>realmId</th>
+                <th>Connected (UTC)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for c in connections %}
+                <tr>
+                  <td><a href="{{ url_for('job_detail', job_id=c.job_id) }}">{{ c.job_id }}</a></td>
+                  <td>{{ c.company_name or '—' }}</td>
+                  <td><code>{{ c.realm_id }}</code></td>
+                  <td>{{ (c.connected_at or '')[:19].replace('T', ' ') }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <form action="{{ url_for('public_disconnect') }}" method="post"
+              onsubmit="return confirm('Disconnect ALL QuickBooks connections for {{ firm.name }}? Tokens will be revoked at Intuit and deleted from this app.');"
+              style="margin-top:var(--space-4);">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <label>
+            <span>Type DISCONNECT to confirm</span>
+            <input type="text" name="confirm_disconnect" placeholder="DISCONNECT" autocomplete="off" required>
+          </label>
+          <div class="actions-row" style="margin-top:var(--space-3);">
+            <button class="btn btn-danger" type="submit">Disconnect all QuickBooks connections</button>
+            <a class="btn" href="{{ url_for('quickbooks_manage') }}">Manage individual connections</a>
+          </div>
+        </form>
+        <p class="note" style="margin-top:var(--space-3);">
+          To disconnect a single job's connection only, open the job page
+          and use its <em>Disconnect QuickBooks</em> button.
+        </p>
+      {% else %}
+        <p>
+          {{ firm.name }} has no active QuickBooks connections. Nothing to
+          disconnect here. If you previously connected, the tokens have
+          already been removed from {{ app_name }}.
+        </p>
+        <p class="note">
+          You can still revoke {{ app_name }} from inside QuickBooks Online
+          using the steps in <em>Two ways to disconnect</em> above.
+        </p>
+      {% endif %}
+    </section>
+  {% endif %}
+
+  <section class="card" style="margin-top:var(--space-6);">
+    <h2>What disconnecting does <em>not</em> do</h2>
+    <ul class="secure-list">
+      <li>
+        It does <strong>not</strong> delete or reverse any JournalEntry
+        records {{ app_name }} already posted to QuickBooks. Those stay in
+        your QBO company until you reverse them in {{ app_name }} or
+        delete them in QuickBooks.
+      </li>
+      <li>
+        It does <strong>not</strong> remove your firm workspace, uploaded
+        files, or import history from {{ app_name }}.
+      </li>
+      <li>
+        It does <strong>not</strong> remove duplicate-import protection.
+        If you reconnect later and try to upload the same file to the same
+        QuickBooks company, the duplicate guard still blocks it.
+      </li>
+    </ul>
+  </section>
+
+  {% if support_email and "your-domain.example" not in support_email %}
+    <section class="card" style="margin-top:var(--space-6);">
+      <h2>Need help?</h2>
+      <p>
+        Email <a href="mailto:{{ support_email }}">{{ support_email }}</a>
+        if you cannot disconnect using the steps above, or if you believe
+        a QuickBooks company is connected to {{ app_name }} that should
+        not be.
+      </p>
+    </section>
+  {% endif %}
+</section>
+{% endblock %}

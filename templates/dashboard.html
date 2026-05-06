@@ -33,6 +33,18 @@
         {% endif %}
       </p>
     </div>
+  {% else %}
+    <div class="card success-panel" role="status" aria-label="Production mode">
+      <h3>Production Mode</h3>
+      <p>
+        This deploy is in QuickBooks <strong>Production</strong> mode.
+        Clicking <strong>Connect to QuickBooks</strong> on a job will
+        authorize the user's <strong>real QuickBooks Online company</strong>.
+        Imports posted from this deploy are real journal entries in real
+        customer books. Each import requires an explicit
+        &ldquo;type IMPORT to confirm&rdquo; step before anything is posted.
+      </p>
+    </div>
   {% endif %}
 
   <section class="grid-two" id="intake" style="margin-bottom:var(--space-8);">
@@ -71,6 +83,7 @@
       </dl>
       <p class="note" style="margin-top:var(--space-4);">Every job, encrypted file, and QuickBooks token created here is scoped to this firm workspace.</p>
       <div class="actions-row" style="margin-top:var(--space-4);">
+        <a class="btn" href="{{ url_for('quickbooks_manage') }}">QuickBooks connections</a>
         <a class="btn" href="{{ url_for('readiness_page') }}">Go-live readiness</a>
         <a class="btn" href="{{ url_for('support') }}">Contact support</a>
         <a class="btn" href="{{ url_for('privacy') }}">Privacy</a>
