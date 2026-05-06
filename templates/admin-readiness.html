@@ -1,0 +1,79 @@
+{% extends "_base.html" %}
+{% block title %}{{ app_name }} &mdash; Go-live readiness{% endblock %}
+{% block content %}
+<section class="page">
+  <div class="hero">
+    <p class="eyebrow">{{ firm.name }} &middot; Operator view</p>
+    <h1>Go-live <em>readiness</em>.</h1>
+    <p>One-glance status of the configuration Intuit and Render expect for a production deploy. Required items must all be green before submitting for QuickBooks Online production review. Values themselves are never displayed here &mdash; only whether they are present and well-formed.</p>
+  </div>
+
+  <section class="card" style="margin-bottom:var(--space-6);">
+    <div class="panel-head">
+      <div>
+        <p class="eyebrow">Summary</p>
+        <h2>
+          {% if summary.all_required_ok %}
+            <span class="badge success">Ready</span> All required checks pass.
+          {% else %}
+            <span class="badge error">Not ready</span>
+            {{ summary.required_passed }} of {{ summary.required_total }} required checks passing.
+          {% endif %}
+        </h2>
+      </div>
+      <a class="btn" href="{{ url_for('dashboard') }}">Back to dashboard</a>
+    </div>
+    <dl class="summary-grid">
+      <div><dt>APP_ENV</dt><dd><code>{{ app_env }}</code></dd></div>
+      <div><dt>QBO_ENVIRONMENT</dt><dd><code>{{ qbo_environment }}</code></dd></div>
+      <div><dt>Request host</dt><dd><code>{{ request_host }}</code></dd></div>
+      <div><dt>PUBLIC_APP_URL</dt><dd>{% if public_app_url %}<code>{{ public_app_url }}</code>{% else %}<span class="muted">not set</span>{% endif %}</dd></div>
+      <div><dt>Required passing</dt><dd>{{ summary.required_passed }} / {{ summary.required_total }}</dd></div>
+      <div><dt>Recommended passing</dt><dd>{{ summary.recommended_passed }} / {{ summary.recommended_total }}</dd></div>
+    </dl>
+    <p class="note" style="margin-top:var(--space-4);">
+      This page is read-only. Update environment variables in Render &rarr; Environment, redeploy, and refresh.
+    </p>
+  </section>
+
+  <section class="card">
+    <div class="panel-head">
+      <div>
+        <p class="eyebrow">Checks</p>
+        <h2>{{ checks|length }} configuration signals</h2>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Status</th>
+            <th>Check</th>
+            <th>Severity</th>
+            <th>Details</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in checks %}
+            <tr>
+              <td>
+                {% if c.ok %}
+                  <span class="badge success">OK</span>
+                {% else %}
+                  <span class="badge {% if c.severity == 'required' %}error{% endif %}">{% if c.severity == 'required' %}Fix{% else %}Review{% endif %}</span>
+                {% endif %}
+              </td>
+              <td><strong>{{ c.label }}</strong><br><code style="font-size:.75rem;">{{ c.key }}</code></td>
+              <td><span class="muted">{{ c.severity }}</span></td>
+              <td>{{ c.message }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="note" style="margin-top:var(--space-4);">
+      Required checks gate Intuit production submission: SECRET_KEY, ENCRYPTION_KEY, QBO_CLIENT_ID, QBO_CLIENT_SECRET, HTTPS QBO_REDIRECT_URI, monitored SUPPORT_EMAIL and SECURITY_EMAIL, and APP_ENV=production. Recommended items (custom domain, QBO_REAL_IMPORT, PRIVACY_CONTACT_EMAIL) are best-practice but not blocking.
+    </p>
+  </section>
+</section>
+{% endblock %}

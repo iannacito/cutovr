@@ -9,6 +9,7 @@ import requests
 
 from app_db import AppDB
 import branding
+import readiness
 from pclaw_parser import parse_pclaw_csv, export_qbo_csv
 from pclaw_pipeline import (
     load_general_ledger_csv,
@@ -670,19 +671,54 @@ def support():
 def healthz():
     """Lightweight health probe. Reports presence (not values) of critical
     config so Render and humans can confirm the deploy is healthy without
-    leaking secrets."""
-    return jsonify({
+    leaking secrets.
+
+    Public endpoint by design — the detailed message strings live behind
+    auth at /admin/readiness. Here we only emit booleans."""
+    checks = readiness.collect_checks(request_host=request.host)
+    summary = readiness.overall_status(checks)
+    body = {
         "status": "ok",
         "app_env": APP_ENV,
         "qbo_environment": QBO_ENVIRONMENT,
         "qbo_real_import": QBO_REAL_IMPORT,
+        "ready_for_production": summary["all_required_ok"],
+        "required_passed": summary["required_passed"],
+        "required_total": summary["required_total"],
+        "recommended_passed": summary["recommended_passed"],
+        "recommended_total": summary["recommended_total"],
+        # Back-compat boolean fields the existing smoke tests assert on.
         "secret_key_set": bool(os.environ.get("SECRET_KEY") or os.environ.get("APP_SECRET")),
         "encryption_key_set": bool(os.environ.get("ENCRYPTION_KEY")),
         "qbo_client_id_set": QBO_CLIENT_ID != "your-client-id-here" and bool(QBO_CLIENT_ID),
         "qbo_redirect_uri_set": bool(QBO_REDIRECT_URI) and not QBO_REDIRECT_URI.startswith("http://localhost"),
         "branding_support_email_set": not branding.is_placeholder_email(branding.SUPPORT_EMAIL),
         "branding_security_email_set": not branding.is_placeholder_email(branding.SECURITY_EMAIL),
-    }), 200
+        "checks": readiness.summary_booleans(checks),
+    }
+    return jsonify(body), 200
+
+
+@app.route("/admin/readiness")
+@login_required
+def admin_readiness():
+    """Logged-in checklist of go-live readiness signals.
+
+    Authenticated to keep operational detail (e.g. exact email addresses,
+    custom-domain hostname) out of the public surface. Never exposes any
+    secret values — only booleans plus operator-facing prompts.
+    """
+    checks = readiness.collect_checks(request_host=request.host)
+    summary = readiness.overall_status(checks)
+    return render_template(
+        "admin-readiness.html",
+        checks=checks,
+        summary=summary,
+        public_app_url=os.environ.get("PUBLIC_APP_URL") or "",
+        request_host=request.host,
+        qbo_environment=QBO_ENVIRONMENT,
+        app_env=APP_ENV,
+    )
 
 
 @app.route("/upload", methods=["POST"])
