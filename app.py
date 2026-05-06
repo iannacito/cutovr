@@ -87,6 +87,56 @@ QBO_ENVIRONMENT = os.environ.get("QBO_ENVIRONMENT", "sandbox")  # 'sandbox' or '
 # the existing demo flow keeps working until the user opts in.
 QBO_REAL_IMPORT = os.environ.get("QBO_REAL_IMPORT", "0").lower() in ("1", "true", "yes", "on")
 
+# ---------------------------------------------------------------------------
+# Production environment validation.
+#
+# Fail fast at startup with a clear, secret-free error if a required env var
+# is missing or malformed. Only enforced when APP_ENV != 'local'/'dev' so the
+# beginner-friendly local workflow keeps working with sensible defaults.
+# ---------------------------------------------------------------------------
+def _validate_production_env():
+    errors = []
+
+    sk = os.environ.get("SECRET_KEY") or os.environ.get("APP_SECRET") or ""
+    if len(sk) < 32:
+        errors.append("SECRET_KEY must be set and at least 32 characters")
+
+    enc = os.environ.get("ENCRYPTION_KEY", "")
+    if not enc:
+        errors.append("ENCRYPTION_KEY is required (generate with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\")")
+    else:
+        try:
+            from cryptography.fernet import Fernet
+            Fernet(enc.encode())
+        except Exception:
+            errors.append("ENCRYPTION_KEY is not a valid Fernet key (must be 32 url-safe base64-encoded bytes)")
+
+    if QBO_CLIENT_ID == "your-client-id-here" or not QBO_CLIENT_ID:
+        errors.append("QBO_CLIENT_ID is required")
+    if QBO_CLIENT_SECRET == "your-client-secret-here" or not QBO_CLIENT_SECRET:
+        errors.append("QBO_CLIENT_SECRET is required")
+    if not QBO_REDIRECT_URI or QBO_REDIRECT_URI.startswith("http://localhost"):
+        errors.append("QBO_REDIRECT_URI must be set to the public HTTPS callback URL")
+    elif not QBO_REDIRECT_URI.startswith("https://"):
+        errors.append("QBO_REDIRECT_URI must use https:// in production")
+
+    if QBO_ENVIRONMENT not in ("sandbox", "production"):
+        errors.append("QBO_ENVIRONMENT must be 'sandbox' or 'production'")
+
+    if errors:
+        bullets = "\n  - " + "\n  - ".join(errors)
+        raise RuntimeError(
+            "Production environment validation failed (APP_ENV=%s).%s\n"
+            "Set the missing/invalid variables in your hosting provider and redeploy. "
+            "Do not paste real secret values into source code or logs."
+            % (APP_ENV, bullets)
+        )
+
+
+if IS_PRODUCTION:
+    _validate_production_env()
+
+
 qbo_auth = QBOAuthHandler(QBO_CLIENT_ID, QBO_CLIENT_SECRET, QBO_REDIRECT_URI, QBO_ENVIRONMENT)
 
 jobs = {}
@@ -559,6 +609,23 @@ def index():
     if current_user():
         return redirect(url_for("dashboard"))
     return redirect(url_for("login"))
+
+
+@app.route("/healthz")
+def healthz():
+    """Lightweight health probe. Reports presence (not values) of critical
+    config so Render and humans can confirm the deploy is healthy without
+    leaking secrets."""
+    return jsonify({
+        "status": "ok",
+        "app_env": APP_ENV,
+        "qbo_environment": QBO_ENVIRONMENT,
+        "qbo_real_import": QBO_REAL_IMPORT,
+        "secret_key_set": bool(os.environ.get("SECRET_KEY") or os.environ.get("APP_SECRET")),
+        "encryption_key_set": bool(os.environ.get("ENCRYPTION_KEY")),
+        "qbo_client_id_set": QBO_CLIENT_ID != "your-client-id-here" and bool(QBO_CLIENT_ID),
+        "qbo_redirect_uri_set": bool(QBO_REDIRECT_URI) and not QBO_REDIRECT_URI.startswith("http://localhost"),
+    }), 200
 
 
 @app.route("/upload", methods=["POST"])

@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Runtime data: local SQLite DBs and uploaded/processed files
+data/*.sqlite3
+data/*.sqlite3-journal
+data/*.sqlite3-wal
+data/*.sqlite3-shm
+uploads/*
+processed/*
+*.enc
+
+# Keep empty runtime directories under version control
+!data/.gitkeep
+!uploads/.gitkeep
+!processed/.gitkeep
+
+# Logs
+*.log
+logs/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test/coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/

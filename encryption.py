@@ -4,13 +4,23 @@ import os
 import base64
 
 # In production, set ENCRYPTION_KEY in the environment and keep it secret.[web:92][web:124]
+# In local/dev, fall back to an ephemeral generated key so the beginner workflow
+# keeps working. The app-level validator in app.py is what enforces ENCRYPTION_KEY
+# in production with a clean, secret-free error message; we only avoid crashing
+# here on import so that error path can run.
 _raw_key = os.environ.get("ENCRYPTION_KEY")
 if _raw_key:
     ENCRYPTION_KEY = _raw_key.encode()
+    try:
+        cipher = Fernet(ENCRYPTION_KEY)
+    except Exception:
+        # Malformed key. Defer the error to the app-level validator so the
+        # operator sees a single, clean "ENCRYPTION_KEY is not a valid Fernet
+        # key" message instead of a stack trace from cryptography internals.
+        cipher = None
 else:
     ENCRYPTION_KEY = Fernet.generate_key()
-
-cipher = Fernet(ENCRYPTION_KEY)
+    cipher = Fernet(ENCRYPTION_KEY)
 
 def encrypt_file(input_path, output_path):
     """Encrypt a file to output_path using AES-256 via Fernet."""
