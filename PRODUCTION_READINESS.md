@@ -115,6 +115,15 @@ artifacts now:
 Vanta or Drata can automate most of the evidence collection once you're
 ready. Until then, a single shared doc tracking the above is enough.
 
+## 8.5. Public Privacy / Terms / Support pages
+
+The app now ships public pages at `/privacy`, `/terms`, and `/support`,
+linked from the footer of every page (including login and signup). These
+URLs are what Intuit's production app submission asks for. The starter
+copy is intentionally minimal &mdash; see [INTUIT_PRODUCTION_REVIEW.md](INTUIT_PRODUCTION_REVIEW.md)
+for the legal-review caveat and the placeholders to replace before pointing
+Intuit at the production URLs.
+
 ## 9. Pre-launch smoke checklist
 
 Run through this list against the live URL before announcing to a customer:

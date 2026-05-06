@@ -211,12 +211,23 @@ def main():
                 assert "AccountRef" in detail
                 # PostingType is one of Debit/Credit
                 assert detail["PostingType"] in ("Debit", "Credit")
-            # Reversal note references the original
-            assert "Reversal of PCLaw import" in payload["PrivateNote"]
-        # Compare flipped types line-for-line vs the original JEs (matched by note)
+            # Reversal note references the original. The prefix shouts
+            # REVERSAL so the QBO Audit Log/PrivateNote field is unambiguous.
+            assert "REVERSAL of PCLaw import" in payload["PrivateNote"]
+            # DocNumber is set to "REV-<id>" so it's obvious in the
+            # QuickBooks Journal report.
+            assert payload.get("DocNumber", "").startswith("REV-")
+            # Every line description starts with "REVERSAL" so the report
+            # rows themselves are self-labeling.
+            for line in payload["Line"]:
+                assert (line.get("Description") or "").startswith("REVERSAL")
+        # Compare flipped types line-for-line vs the original JEs.
+        # DocNumber is "REV-<original_je_id>", which is the stable way to
+        # tie a reversal payload back to its original entry.
         for entry in new_posts:
-            note = entry["payload"]["PrivateNote"]
-            orig_id = note.split("Id=")[-1].strip()
+            doc = entry["payload"]["DocNumber"]
+            assert doc.startswith("REV-"), doc
+            orig_id = doc[len("REV-"):]
             orig = original_jes[orig_id]
             for orig_line, rev_line in zip(orig["Line"], entry["payload"]["Line"]):
                 op = orig_line["JournalEntryLineDetail"]["PostingType"]

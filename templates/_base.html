@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}PCLaw to QuickBooks Online migration{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="site-header__inner">
+      <a href="{{ url_for('index') }}" class="brand-mark">
+        Cut<em>over</em>
+      </a>
+      <nav aria-label="Primary">
+        {% if user %}
+          <a href="{{ url_for('dashboard') }}">Dashboard</a>
+          <a href="{{ url_for('support') }}">Support</a>
+          <form action="{{ url_for('logout') }}" method="post" style="display:inline;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-link" type="submit" style="padding:0;">Log out</button>
+          </form>
+        {% else %}
+          <a href="{{ url_for('support') }}">Support</a>
+          <a href="{{ url_for('login') }}">Sign in</a>
+          <a href="{{ url_for('signup') }}" class="btn btn-primary" style="padding:.55rem 1rem;">Get started</a>
+        {% endif %}
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    {% block flash %}
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <section class="page" style="padding-bottom:0;">
+            <div class="stack-sm">
+              {% for category, message in messages %}
+                <div class="flash {{ category }}">{{ message }}</div>
+              {% endfor %}
+            </div>
+          </section>
+        {% endif %}
+      {% endwith %}
+    {% endblock %}
+
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="site-footer">
+    <div class="site-footer__inner">
+      <div>&copy; {{ now_year }} Cutover &mdash; PCLaw to QuickBooks Online</div>
+      <div class="site-footer__links">
+        <a href="{{ url_for('privacy') }}">Privacy</a>
+        <a href="{{ url_for('terms') }}">Terms</a>
+        <a href="{{ url_for('support') }}">Support</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

@@ -1,76 +1,53 @@
-<!doctype html>
-<html lang="en" data-theme="light">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Migration Job</title>
-  <link rel="preconnect" href="https://api.fontshare.com">
-  <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&f[]=general-sans@500,600,700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
-<body>
-<main class="detail-page">
-  <div class="flex-between" style="align-items:center;margin-bottom:0.5rem;">
-    <a href="{{ url_for('dashboard') }}" class="back-link">← Back to dashboard</a>
-    {% if user %}
-      <span class="muted" style="font-size:0.9em;">
-        {{ firm.name }} · {{ user.email }}
-        <form action="{{ url_for('logout') }}" method="post" style="display:inline;margin-left:0.5rem;">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button class="btn btn-secondary" type="submit" style="padding:0.3rem 0.7rem;">Log out</button>
-        </form>
-      </span>
-    {% endif %}
-  </div>
-
-  {% with messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}
-      <section class="stack-sm">
-        {% for category, message in messages %}
-          <div class="flash {{ category }}">{{ message }}</div>
-        {% endfor %}
-      </section>
-    {% endif %}
-  {% endwith %}
+{% extends "_base.html" %}
+{% block title %}{{ job.company }} &mdash; Migration Job{% endblock %}
+{% block content %}
+<section class="detail-page">
+  <a href="{{ url_for('dashboard') }}" class="back-link">&larr; Back to dashboard</a>
 
   {% if job.unmapped_accounts %}
-    <section class="flash error">
+    <div class="flash error">
       <strong>Unmapped accounts blocking import:</strong>
       {{ job.unmapped_accounts|join(', ') }}.
-      <a href="{{ url_for('account_mapping', job_id=job.id) }}" style="color:inherit;text-decoration:underline;">Open the account mapping page</a> to fix this.
-    </section>
+      <a href="{{ url_for('account_mapping', job_id=job.id) }}">Open the account mapping page</a> to fix this.
+    </div>
   {% endif %}
 
-  <section class="panel detail-hero">
+  <section class="card detail-hero">
     <div class="flex-between">
       <div>
         <p class="eyebrow">Job {{ job.id }}</p>
         <h1>{{ job.company }}</h1>
-        <p class="muted">Status: {{ job.status }}</p>
+        <p class="muted" style="margin-top:.25rem;">Status &middot; {{ job.status }}</p>
       </div>
-      {% if job.qbo_connected %}
-        <span class="badge success large">QuickBooks Connected ✓</span>
-      {% endif %}
+      <div class="stack-sm" style="text-align:right;">
+        {% if job.qbo_connected %}
+          <span class="badge success large">QuickBooks connected</span>
+        {% else %}
+          <span class="badge large">QuickBooks not connected</span>
+        {% endif %}
+      </div>
     </div>
   </section>
 
   <section class="grid-two">
-    <article class="panel">
-      <h2>Pre-import validation</h2>
+    <article class="card">
+      <p class="eyebrow">Step 01 &middot; Pre-import</p>
+      <h2>File &amp; ledger</h2>
       <dl class="summary-grid">
-        <div><dt>Source file</dt><dd>{{ job.source_file }}</dd></div>
-        {% if job.output_file %}<div><dt>Output file</dt><dd>{{ job.output_file }}</dd></div>{% endif %}
+        <div><dt>Source file</dt><dd><code>{{ job.source_file }}</code></dd></div>
+        {% if job.output_file %}<div><dt>Output file</dt><dd><code>{{ job.output_file }}</code></dd></div>{% endif %}
         <div><dt>Rows parsed</dt><dd>{{ job.summary.row_count }}</dd></div>
         {% if job.summary.format %}<div><dt>Format</dt><dd>{{ job.summary.format }}</dd></div>{% endif %}
         {% if job.summary.balanced is defined %}<div><dt>Balanced</dt><dd>{{ "Yes" if job.summary.balanced else "No" }}</dd></div>{% endif %}
         <div><dt>Storage</dt><dd>Encrypted (AES-256)</dd></div>
-        <div><dt>File hash</dt><dd><code style="font-size:0.85em;">{{ (job.file_sha256 or '')[:16] }}…</code></dd></div>
+        <div><dt>File hash</dt><dd><code>{{ (job.file_sha256 or '')[:16] }}&hellip;</code></dd></div>
         <div><dt>Created</dt><dd>{{ job.created_at[:19].replace("T", " ") }} UTC</dd></div>
       </dl>
     </article>
 
-    <article class="panel">
-      <h2>QuickBooks connection</h2>
+    <article class="card">
+      <p class="eyebrow">Step 02 &middot; QuickBooks</p>
+      <h2>QuickBooks Online</h2>
       {% if job.qbo_connected %}
         {% if qbo_connection.company_name %}
           <p><strong>Company:</strong> {{ qbo_connection.company_name }}</p>
@@ -79,31 +56,21 @@
         {% endif %}
         <p class="muted">realmId: <code>{{ qbo_connection.realm_id }}</code></p>
         <p class="muted">Connected at: {{ qbo_connection.connected_at[:19].replace("T", " ") }} UTC</p>
-        <p class="note">Wrong company? Disconnect below and reconnect to pick a different sandbox.</p>
-        <div class="actions-col">
+        <p class="note">Wrong company? Disconnect and reconnect to pick a different sandbox.</p>
+        <div class="actions-col" style="margin-top:var(--space-4);">
           <form action="/jobs/{{ job.id }}/import-to-qbo" method="post">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="btn btn-primary full-width" type="submit">Import to QuickBooks</button>
           </form>
-          <a class="btn btn-secondary full-width" href="{{ url_for('account_mapping', job_id=job.id) }}">Map accounts</a>
+          <a class="btn full-width" href="{{ url_for('account_mapping', job_id=job.id) }}">Map accounts</a>
           <form action="/jobs/{{ job.id }}/disconnect-qbo" method="post" onsubmit="return confirm('Disconnect QuickBooks for this job? You can reconnect to a different company afterward.');">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="btn btn-secondary full-width" type="submit">Disconnect QuickBooks</button>
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn full-width" type="submit">Disconnect QuickBooks</button>
           </form>
           {% if qbo_real_import %}
             <p class="note">Real import is <strong>enabled</strong>. Clicking this will create journal entries in your QuickBooks sandbox.</p>
           {% else %}
             <p class="note">Demo mode: this simulates the import. To perform a real sandbox import, set <code>QBO_REAL_IMPORT=1</code> and restart the app.</p>
-          {% endif %}
-          {% if job.qbo_results %}
-            <details class="note" style="margin-top:0.75rem;">
-              <summary>Created {{ job.qbo_results|length }} journal entry record(s)</summary>
-              <ul>
-                {% for r in job.qbo_results %}
-                  <li>Id={{ r.Id }} DocNumber={{ r.DocNumber }} TxnDate={{ r.TxnDate }}</li>
-                {% endfor %}
-              </ul>
-            </details>
           {% endif %}
         </div>
       {% else %}
@@ -112,15 +79,15 @@
           <a href="/jobs/{{ job.id }}/connect-qbo" class="btn btn-primary">Connect to QuickBooks</a>
         {% else %}
           <p class="muted">QuickBooks OAuth not configured. Set environment variables to enable.</p>
-          <a href="/#oauth-status" class="btn btn-secondary">View setup instructions</a>
         {% endif %}
       {% endif %}
     </article>
   </section>
 
   {% if job.import_summary %}
-  <section class="panel">
-    <h2>Import result</h2>
+  <section class="card">
+    <p class="eyebrow">Step 03 &middot; Import result</p>
+    <h2>Import receipt</h2>
     <dl class="summary-grid">
       <div><dt>Source transactions</dt><dd>{{ job.import_summary.source_transaction_count }}</dd></div>
       <div><dt>QBO journal entries created</dt><dd>{{ job.import_summary.qbo_je_count }}</dd></div>
@@ -129,40 +96,51 @@
       <div><dt>Balanced</dt><dd>{{ "Yes" if job.import_summary.balanced else "No" }}</dd></div>
     </dl>
     {% if job.qbo_results %}
-      <details class="note" style="margin-top:0.75rem;">
-        <summary>Created journal entries ({{ job.qbo_results|length }})</summary>
-        <ul>
-          {% for r in job.qbo_results %}
-            <li>{{ r.transaction_id or '' }} → Id={{ r.Id }} DocNumber={{ r.DocNumber }} TxnDate={{ r.TxnDate }}</li>
-          {% endfor %}
-        </ul>
+      <details style="margin-top:var(--space-4);">
+        <summary class="muted" style="cursor:pointer;">Show created QuickBooks JournalEntry IDs ({{ job.qbo_results|length }})</summary>
+        <div class="table-wrap" style="margin-top:var(--space-3);">
+          <table>
+            <thead><tr><th>PCLaw transaction</th><th>QBO Id</th><th>DocNumber</th><th>TxnDate</th></tr></thead>
+            <tbody>
+              {% for r in job.qbo_results %}
+                <tr>
+                  <td><code>{{ r.transaction_id or '—' }}</code></td>
+                  <td><code>{{ r.Id }}</code></td>
+                  <td><code>{{ r.DocNumber }}</code></td>
+                  <td>{{ r.TxnDate }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </details>
     {% endif %}
   </section>
   {% endif %}
 
   {% if job.qbo_results %}
-  <section class="panel">
+  <section class="card">
+    <p class="eyebrow">Step 04 &middot; Verification</p>
     <h2>Verification result</h2>
     {% if job.verification %}
       {% set v = job.verification %}
       <p>
         <strong>Status:</strong>
         {% if v.status == 'ok' %}
-          <span class="badge success">OK ✓</span>
+          <span class="badge success">OK</span>
         {% elif v.status == 'mismatch' %}
-          <span class="badge" style="background:#f59e0b;color:white;">Mismatch ⚠</span>
+          <span class="badge warn">Mismatch</span>
         {% else %}
-          <span class="badge" style="background:#ef4444;color:white;">Error</span>
+          <span class="badge error">Error</span>
         {% endif %}
       </p>
       <p class="muted">Method: {{ v.method or 'response-based' }}</p>
       {% if v.error %}<p class="flash error">{{ v.error }}</p>{% endif %}
       {% if v.qbo_je_count is defined %}
         <dl class="summary-grid">
-          <div><dt>QBO JEs found</dt><dd>{{ v.qbo_je_count }} {% if v.je_count_match %}✓{% else %}≠{% endif %}</dd></div>
-          <div><dt>QBO debits</dt><dd>${{ v.qbo_debit_total }} {% if v.debits_match %}✓{% else %}≠ ${{ v.source_debit_total }}{% endif %}</dd></div>
-          <div><dt>QBO credits</dt><dd>${{ v.qbo_credit_total }} {% if v.credits_match %}✓{% else %}≠ ${{ v.source_credit_total }}{% endif %}</dd></div>
+          <div><dt>QBO JEs found</dt><dd>{{ v.qbo_je_count }} {% if v.je_count_match %}&check;{% else %}&ne;{% endif %}</dd></div>
+          <div><dt>QBO debits</dt><dd>${{ v.qbo_debit_total }} {% if v.debits_match %}&check;{% else %}&ne; ${{ v.source_debit_total }}{% endif %}</dd></div>
+          <div><dt>QBO credits</dt><dd>${{ v.qbo_credit_total }} {% if v.credits_match %}&check;{% else %}&ne; ${{ v.source_credit_total }}{% endif %}</dd></div>
           <div><dt>Verified at</dt><dd>{{ v.verified_at[:19].replace("T", " ") }} UTC</dd></div>
         </dl>
         {% if v.not_found_ids %}
@@ -172,57 +150,70 @@
     {% else %}
       <p class="muted">Verification has not been run yet.</p>
     {% endif %}
-    <form action="/jobs/{{ job.id }}/verify" method="post" style="margin-top:0.5rem;">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button class="btn btn-secondary" type="submit">Re-verify against QuickBooks</button>
+    <form action="/jobs/{{ job.id }}/verify" method="post" style="margin-top:var(--space-4);">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn" type="submit">Re-verify against QuickBooks</button>
     </form>
-    <p class="note">Verification re-queries each created JournalEntry by Id and totals up debits/credits to compare against the source CSV.</p>
+    <p class="note">Verification re-queries each created JournalEntry by Id and totals the debits/credits to compare against the source CSV.</p>
   </section>
   {% endif %}
 
   {% if job.qbo_results %}
     {% set latest = job_history[0] if job_history else None %}
-    <section class="panel danger-zone">
+    <section class="card danger-zone">
+      <p class="eyebrow" style="color:var(--error);">Reversal</p>
       <h2>Reverse this import</h2>
       <p class="muted">
-        A reversal posts <strong>offsetting</strong> JournalEntry records to QuickBooks.
-        It does not delete the original entries — both sides remain visible for audit.
-        Use this if you imported into the wrong period, the wrong company, or with
-        the wrong account mapping.
+        A reversal posts <strong>offsetting</strong> JournalEntry records to QuickBooks. It does not delete the original entries &mdash; both sides remain visible for audit.
+        Use this if you imported into the wrong period, the wrong company, or with the wrong account mapping.
+      </p>
+      <p class="note">
+        In QuickBooks, reversals appear as <em>new</em> journal entries with DocNumber starting <code>REV-</code> and line descriptions prefixed <strong>REVERSAL</strong>. The Journal report will list them alongside the originals; QuickBooks does not mark the originals as voided.
       </p>
       {% if latest and latest.reversal %}
-        <p>
+        <p style="margin-top:var(--space-4);">
           <strong>Status:</strong>
           {% if latest.reversal.status == 'success' %}
-            <span class="badge success">Reversed ✓</span>
+            <span class="badge success">Reversed</span>
           {% else %}
-            <span class="badge" style="background:#ef4444;color:white;">Reversal {{ latest.reversal.status }}</span>
+            <span class="badge error">Reversal {{ latest.reversal.status }}</span>
           {% endif %}
           on {{ latest.reversal.reversed_at[:19].replace("T", " ") }} UTC.
         </p>
         {% if latest.reversal.error %}
           <p class="flash error">{{ latest.reversal.error }}</p>
         {% endif %}
-        <details class="note">
-          <summary>Reversal records ({{ latest.reversal.transactions|length if latest.reversal.transactions else 0 }})</summary>
-          <ul>
-            {% for t in (latest.reversal.transactions or []) %}
-              <li>{{ t.transaction_id }} — original Id={{ t.original_qbo_je_id }} → reversal Id={{ t.reversal_qbo_je_id or '—' }} ({{ t.reversal_doc_number or '—' }})</li>
-            {% endfor %}
-          </ul>
+        <details style="margin-top:var(--space-3);">
+          <summary class="muted" style="cursor:pointer;">Show reversal records ({{ latest.reversal.transactions|length if latest.reversal.transactions else 0 }})</summary>
+          <div class="table-wrap" style="margin-top:var(--space-3);">
+            <table>
+              <thead><tr><th>PCLaw transaction</th><th>Original QBO Id</th><th>Reversal QBO Id</th><th>Reversal DocNumber</th><th>Reversal date</th></tr></thead>
+              <tbody>
+                {% for t in (latest.reversal.transactions or []) %}
+                  <tr>
+                    <td><code>{{ t.transaction_id }}</code></td>
+                    <td><code>{{ t.original_qbo_je_id or '—' }}</code></td>
+                    <td><code>{{ t.reversal_qbo_je_id or '—' }}</code></td>
+                    <td><code>{{ t.reversal_doc_number or '—' }}</code></td>
+                    <td>{{ t.reversal_txn_date or '—' }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
         </details>
       {% else %}
-        <p class="note">
-          Type <code>REVERSE</code> in the box below to confirm. We do not allow this on a single click.
+        <p class="note" style="margin-top:var(--space-3);">
+          Type <code>REVERSE</code> below to confirm. We do not allow this on a single click.
         </p>
         <form action="/jobs/{{ job.id }}/reverse-import" method="post"
               onsubmit="return confirm('Post offsetting JournalEntries to QuickBooks for this import?');">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <label class="full">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <label>
             <span>Type REVERSE to confirm</span>
             <input type="text" name="confirm_reverse" placeholder="REVERSE" autocomplete="off" required>
           </label>
-          <div class="actions-row">
+          <div class="actions-row" style="margin-top:var(--space-3);">
             <button class="btn btn-danger" type="submit">Reverse import</button>
           </div>
         </form>
@@ -230,16 +221,14 @@
     </section>
   {% endif %}
 
-  <section class="panel">
+  <section class="card">
+    <p class="eyebrow">Duplicate guard</p>
     <h2>Duplicate protection</h2>
     {% if job.file_sha256 %}
-      <p class="muted">This file's content hash (SHA-256) and its transaction_id values are checked
-      against the persistent <code>data/import_history.sqlite3</code> database before any JournalEntry
-      is posted. If the same file or any of the same transaction_ids were already imported successfully
-      to this QBO company, the import is blocked.</p>
-      <p><strong>Status:</strong>
+      <p class="muted">This file's SHA-256 content hash and its <code>transaction_id</code> values are checked against the persistent <code>data/import_history.sqlite3</code> database before any JournalEntry is posted. If the same file or any of the same <code>transaction_id</code> values were already imported successfully to this QBO company, the import is blocked.</p>
+      <p style="margin-top:var(--space-3);"><strong>Status:</strong>
         {% if job.status == 'Duplicate blocked' %}
-          <span class="badge" style="background:#ef4444;color:white;">Blocked</span>
+          <span class="badge error">Blocked</span>
         {% elif job.last_import_id %}
           <span class="badge success">Recorded as import #{{ job.last_import_id }}</span>
         {% else %}
@@ -252,44 +241,48 @@
   </section>
 
   {% if job_history %}
-  <section class="panel">
+  <section class="card">
+    <p class="eyebrow">History</p>
     <h2>Import history (this job)</h2>
-    <table class="summary-grid" style="width:100%;font-size:0.92em;">
-      <thead><tr><th>#</th><th>When (UTC)</th><th>Company</th><th>Txns</th><th>Debit</th><th>Credit</th><th>Status</th></tr></thead>
-      <tbody>
-        {% for h in job_history %}
-          <tr>
-            <td>{{ h.id }}</td>
-            <td>{{ h.created_at[:19].replace("T", " ") }}</td>
-            <td>{{ h.company_name or '—' }}</td>
-            <td>{{ h.transaction_count }}</td>
-            <td>${{ h.debit_total }}</td>
-            <td>${{ h.credit_total }}</td>
-            <td>{{ h.status }}</td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>When (UTC)</th><th>Company</th><th>Txns</th><th>Debit</th><th>Credit</th><th>Status</th></tr></thead>
+        <tbody>
+          {% for h in job_history %}
+            <tr>
+              <td>{{ h.id }}</td>
+              <td>{{ h.created_at[:19].replace("T", " ") }}</td>
+              <td>{{ h.company_name or '—' }}</td>
+              <td>{{ h.transaction_count }}</td>
+              <td>${{ h.debit_total }}</td>
+              <td>${{ h.credit_total }}</td>
+              <td><span class="badge {% if h.status == 'success' %}success{% elif h.status == 'failed' %}error{% endif %}">{{ h.status }}</span></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
   </section>
   {% endif %}
 
-  <section class="panel">
-    <h2>Security & compliance notes</h2>
+  <section class="card">
+    <p class="eyebrow">Security</p>
+    <h2>Security &amp; compliance</h2>
     <ul class="secure-list">
-      <li>Source file encrypted immediately after upload with AES-256</li>
-      <li>Processed export encrypted before storage</li>
-      <li>OAuth tokens encrypted at rest</li>
-      <li>Access tokens refreshed automatically before expiration</li>
-      <li>Tokens removed when job is deleted</li>
+      <li>Source file encrypted immediately after upload with AES-256.</li>
+      <li>Processed export encrypted before storage.</li>
+      <li>OAuth tokens encrypted at rest.</li>
+      <li>Access tokens refreshed automatically before expiration.</li>
+      <li>Tokens removed when job is deleted.</li>
     </ul>
   </section>
 
-  <section class="panel danger-zone">
-    <h3>Danger zone</h3>
+  <section class="card danger-zone">
+    <p class="eyebrow" style="color:var(--error);">Danger zone</p>
     <div class="flex-between">
       <div>
-        <strong>Delete this job</strong>
-        <p class="muted">Permanently delete encrypted files and OAuth tokens. This cannot be undone.</p>
+        <h3 style="margin:0;">Delete this job</h3>
+        <p class="muted" style="margin:.25rem 0 0;">Permanently delete encrypted files and OAuth tokens. This cannot be undone.</p>
       </div>
       <form action="/jobs/{{ job.id }}/delete" method="post" onsubmit="return confirm('Are you sure? This will delete all files and tokens.')">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -297,13 +290,5 @@
       </form>
     </div>
   </section>
-</main>
-<script>
-(() => {
-  const root = document.documentElement;
-  let theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-  root.setAttribute("data-theme", theme);
-})();
-</script>
-</body>
-</html>
+</section>
+{% endblock %}

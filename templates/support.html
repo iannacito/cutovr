@@ -1,0 +1,42 @@
+{% extends "_base.html" %}
+{% block title%}Support &mdash; Cutover{% endblock %}
+{% block content %}
+<section class="page page--prose">
+  <p class="eyebrow">Help</p>
+  <h1 class="display">Support &amp; <em>contact</em></h1>
+  <p class="muted">Most issues have a quick answer below. If yours isn't here, send us the bundle described under &ldquo;Reporting an issue&rdquo; and we'll dig in.</p>
+
+  <section class="card" style="margin-top:var(--space-6);">
+    <h2>Quick answers</h2>
+    <ul class="secure-list">
+      <li><strong>QuickBooks rejected the import.</strong> Open the job, scroll to <em>QuickBooks Online</em>, and click <em>Map accounts</em>. Make sure every PCLaw account is matched to a real QBO account, then click <em>Import</em> again.</li>
+      <li><strong>I imported into the wrong company.</strong> Open the job, scroll to <em>Reverse this import</em>, type <code>REVERSE</code>, and click the button. QuickBooks will get offsetting JournalEntry records (DocNumber starting <code>REV-</code>); the originals stay visible for audit.</li>
+      <li><strong>&ldquo;Duplicate import blocked.&rdquo;</strong> The same file (or the same <code>transaction_id</code>s) was already imported into this QuickBooks company. Either export a fresh ledger from PCLaw covering only the new period, or delete the prior import in QBO if you really want to re-post.</li>
+      <li><strong>Reversal entries don't say &ldquo;reversal&rdquo; in QBO.</strong> Reversals posted by Cutover have <code>DocNumber</code> starting with <code>REV-</code> and every line description prefixed <strong>REVERSAL</strong>. The QuickBooks Journal report shows them as separate entries alongside the originals; QuickBooks does not visually mark the originals as voided.</li>
+    </ul>
+  </section>
+
+  <section class="card" style="margin-top:var(--space-6);">
+    <h2>Reporting an issue</h2>
+    <p>Email <a href="mailto:support@your-domain.example">support@your-domain.example</a> (replace before launch). Please include:</p>
+    <ul class="secure-list">
+      <li>The job ID (<code>job_YYYYMMDDHHMMSS</code>, visible at the top of the job page).</li>
+      <li>The exact action you took (button or URL).</li>
+      <li>The flash / error message text, verbatim.</li>
+      <li>The approximate time (UTC) you saw the issue.</li>
+      <li>Whether you were in <em>demo mode</em> or had <code>QBO_REAL_IMPORT</code> enabled.</li>
+    </ul>
+    <p class="note">Do not paste raw OAuth tokens, secret keys, or full PCLaw ledger content into a support email. The job ID is enough for us to look up the encrypted record on the server.</p>
+  </section>
+
+  <section class="card" style="margin-top:var(--space-6);">
+    <h2>Reporting a security issue</h2>
+    <p>If you think you've found a vulnerability (auth bypass, CSRF gap, leaked secret, IDOR, etc.), please email <a href="mailto:security@your-domain.example">security@your-domain.example</a> (replace before launch) instead of opening a public issue. Include the same details as above plus a short reproduction. We will acknowledge within 2&nbsp;business days.</p>
+  </section>
+
+  <section class="card" style="margin-top:var(--space-6);">
+    <h2>Status &amp; uptime</h2>
+    <p>The application exposes a <code>/healthz</code> probe used by hosting (Render). It returns presence (not values) of the critical configuration so you can confirm a deploy is healthy without leaking secrets.</p>
+  </section>
+</section>
+{% endblock %}

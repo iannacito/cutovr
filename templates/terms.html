@@ -1,0 +1,36 @@
+{% extends "_base.html" %}
+{% block title %}Terms of Service &mdash; Cutover{% endblock %}
+{% block content %}
+<section class="page page--prose">
+  <p class="eyebrow">Legal</p>
+  <h1 class="display">Terms of <em>Service</em></h1>
+  <p class="muted">Last updated: {{ now_year }}-01-01. Private beta / MVP terms. Please review with counsel before relying on this for production customer use.</p>
+
+  <h2>1. The Service</h2>
+  <p>Cutover (the &ldquo;Service&rdquo;) is a tool that converts a PCLaw general-ledger export and posts journal entries to a QuickBooks Online company you control. You authorize the Service to talk to your QuickBooks Online company by completing Intuit's OAuth&nbsp;2.0 flow.</p>
+
+  <h2>2. Not legal or accounting advice</h2>
+  <p>The Service is software. It does not provide legal, tax, or accounting advice. Its output is a candidate set of journal entries derived from the file you upload; <strong>you are responsible for reviewing and approving every import in QuickBooks before relying on it</strong>. If a journal entry would be wrong in QuickBooks if you posted it manually, it will be wrong here too.</p>
+
+  <h2>3. Beta status</h2>
+  <p>The Service is in private beta. Functionality may change without notice. The Service is provided <em>as is</em>, without warranty of any kind. Use it against a sandbox QuickBooks company first, then a low-stakes production company, before depending on it.</p>
+
+  <h2>4. Reversals</h2>
+  <p>The Service supports posting offsetting JournalEntry records to QuickBooks (a &ldquo;reversal&rdquo;). A reversal does not delete the original entries; it adds new entries that net the originals to zero. Both sides remain visible in QuickBooks for audit. You are responsible for confirming the reversal posted as expected and for any further cleanup in QuickBooks.</p>
+
+  <h2>5. Acceptable use</h2>
+  <p>You will not (a) upload ledgers you are not authorized to handle, (b) use the Service to import to a QuickBooks company you are not authorized to modify, (c) attempt to break out of your firm workspace, scrape other firms' data, or attack the underlying infrastructure, or (d) use the Service to commit fraud or violate law.</p>
+
+  <h2>6. Your data</h2>
+  <p>Your uploaded files and QuickBooks tokens are handled per the <a href="{{ url_for('privacy') }}">Privacy Policy</a>. You retain ownership of your data. You can delete any job at any time.</p>
+
+  <h2>7. Limitation of liability</h2>
+  <p>To the maximum extent permitted by law, the Service and its operator are not liable for indirect, incidental, special, consequential, or punitive damages, lost profits, lost revenue, or lost data arising out of your use of the Service. Direct damages are limited to the fees you have paid for the Service in the prior 12&nbsp;months (which, during private beta, may be zero).</p>
+
+  <h2>8. Changes</h2>
+  <p>We may update these terms; we will note the effective date above and, for material changes, surface a notice in-app the next time you sign in.</p>
+
+  <h2>9. Contact</h2>
+  <p>Questions about these terms: see the <a href="{{ url_for('support') }}">support page</a>.</p>
+</section>
+{% endblock %}

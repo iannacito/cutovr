@@ -1,35 +1,11 @@
-<!doctype html>
-<html lang="en" data-theme="light">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Account mapping — {{ job.company }}</title>
-  <link rel="preconnect" href="https://api.fontshare.com">
-  <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&f[]=general-sans@500,600,700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
-<body>
-<main class="detail-page">
-  <div class="flex-between" style="align-items:center;margin-bottom:0.5rem;">
-    <a href="{{ url_for('job_detail', job_id=job.id) }}" class="back-link">← Back to job</a>
-    {% if user %}
-      <span class="muted" style="font-size:0.9em;">
-        {{ firm.name }} · {{ user.email }}
-      </span>
-    {% endif %}
-  </div>
+{% extends "_base.html" %}
+{% block title %}Account mapping &mdash; {{ job.company }}{% endblock %}
+{% block content %}
+<section class="detail-page">
+  <a href="{{ url_for('job_detail', job_id=job.id) }}" class="back-link">&larr; Back to job</a>
 
-  {% with messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}
-      <section class="stack-sm">
-        {% for category, message in messages %}
-          <div class="flash {{ category }}">{{ message }}</div>
-        {% endfor %}
-      </section>
-    {% endif %}
-  {% endwith %}
-
-  <section class="panel">
+  <section class="card">
+    <p class="eyebrow">Mapping</p>
     <h1>Account mapping</h1>
     <p class="muted">
       Connect each PCLaw account to a QuickBooks account in
@@ -38,9 +14,9 @@
     </p>
   </section>
 
-  <section class="panel">
+  <section class="card">
     <form method="post">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="table-wrap">
         <table>
           <thead>
@@ -78,7 +54,7 @@
                   {% elif r.is_suggestion %}
                     <span class="badge">Auto-match</span>
                   {% else %}
-                    <span class="badge" style="background:#ef4444;color:white;">Unmapped</span>
+                    <span class="badge error">Unmapped</span>
                   {% endif %}
                 </td>
               </tr>
@@ -86,16 +62,15 @@
           </tbody>
         </table>
       </div>
-      <div class="actions-row" style="margin-top:1rem;">
+      <div class="actions-row" style="margin-top:var(--space-4);">
         <button class="btn btn-primary" type="submit">Save mappings</button>
-        <a href="{{ url_for('job_detail', job_id=job.id) }}" class="btn btn-secondary">Cancel</a>
+        <a href="{{ url_for('job_detail', job_id=job.id) }}" class="btn">Cancel</a>
       </div>
-      <p class="note" style="margin-top:0.75rem;">
+      <p class="note" style="margin-top:var(--space-3);">
         Saved mappings take priority over auto-match. Leave a row's dropdown blank
         to keep the auto-match (or to leave it unmapped).
       </p>
     </form>
   </section>
-</main>
-</body>
-</html>
+</section>
+{% endblock %}
