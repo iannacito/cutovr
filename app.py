@@ -247,7 +247,18 @@ def inject_user():
     to every template."""
     user = current_user()
     firm = db.get_firm(user["firm_id"]) if user else None
-    ctx = {"user": user, "firm": firm, "now_year": datetime.utcnow().year}
+    ctx = {
+        "user": user,
+        "firm": firm,
+        "now_year": datetime.utcnow().year,
+        # Operator-only UI affordances (e.g. the Readiness link in the
+        # nav and on the dashboard) are gated behind this env flag so
+        # normal customers do not see internal tools. The /readiness
+        # route itself is independently protected by @login_required;
+        # this flag only controls visibility, never access.
+        "show_operator_tools": os.environ.get("SHOW_OPERATOR_TOOLS", "").lower()
+            in ("1", "true", "yes", "on"),
+    }
     ctx.update(branding.context())
     return ctx
 

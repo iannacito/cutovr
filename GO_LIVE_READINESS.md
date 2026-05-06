@@ -14,6 +14,32 @@ flipping the switch with Intuit.
 Both surfaces are driven by the same source of truth: `readiness.py` →
 `collect_checks()`. Adding or renaming a check updates both at once.
 
+### Operator-only navigation
+
+The `/readiness` page is an internal/operator tool — normal customers
+should not see a "Readiness" link in the top navigation or the dashboard
+during day-to-day app use.
+
+- The `/readiness` route is always protected by `@login_required` and
+  always reachable by direct URL for any logged-in operator.
+- Visibility of the **link** in the top nav and the dashboard's
+  "Firm details" card is gated by the `SHOW_OPERATOR_TOOLS` environment
+  variable. When it is set to `1` / `true` / `yes` / `on`, the link
+  appears for all logged-in users in that deploy (use this on a
+  staging/operator-only deploy). When unset (the default for customer
+  production), the link is hidden and operators reach it by typing
+  `/readiness` directly.
+- Why an env flag instead of a per-user role: the existing user model
+  uses `role='admin'` for *every* signed-up user (each user is the admin
+  of their own firm). There is no global operator concept to gate on, so
+  inventing one would be brittle and easy to misconfigure.
+
+To turn the link on for an operator-only deploy, set in Render:
+
+```
+SHOW_OPERATOR_TOOLS=1
+```
+
 ## Checks performed
 
 Required (blocks go-live):
