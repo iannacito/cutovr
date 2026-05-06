@@ -91,14 +91,67 @@
         {% endif %}
         <p class="muted">realmId: <code>{{ qbo_connection.realm_id }}</code></p>
         <p class="muted">Connected at: {{ qbo_connection.connected_at[:19].replace("T", " ") }} UTC</p>
-        <p class="note">Wrong company? Disconnect and reconnect to pick a different sandbox.</p>
+        <p class="note">
+          {% if qbo_is_sandbox %}
+            Wrong company? Disconnect and reconnect to pick a different sandbox.
+          {% else %}
+            Wrong company? <strong>Disconnect immediately</strong> &mdash; importing
+            into the wrong production QuickBooks company posts real journal entries.
+          {% endif %}
+        </p>
+
+        {% if not qbo_is_sandbox and qbo_real_import and job.pending_production_confirm %}
+          <div class="card error-panel" style="margin-top:var(--space-4);" role="alert">
+            <h3 style="margin-top:0;">Final confirmation: real QuickBooks import</h3>
+            <p>
+              You are about to post
+              <strong>{{ job.summary.row_count or '?' }} ledger row(s)</strong>
+              from <code>{{ job.source_file }}</code> as journal entries to the
+              <strong>real QuickBooks Online company</strong>
+              &ldquo;{{ qbo_connection.company_name or qbo_connection.realm_id }}&rdquo;
+              (realmId <code>{{ qbo_connection.realm_id }}</code>).
+            </p>
+            {% if job.summary.balanced is defined %}
+              <p>
+                Source debit / credit totals balance:
+                <strong>{{ "Yes" if job.summary.balanced else "NO" }}</strong>.
+              </p>
+            {% endif %}
+            <p class="note">
+              This action <strong>cannot be undone with one click</strong>. After
+              the import, you can post offsetting reversal entries from the
+              Reverse this import section, but the originals will stay visible.
+            </p>
+            <form action="/jobs/{{ job.id }}/import-to-qbo" method="post">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <label>
+                <span>Type IMPORT to confirm posting to the real QuickBooks company above</span>
+                <input type="text" name="confirm_import" placeholder="IMPORT" autocomplete="off" required>
+              </label>
+              <div class="actions-row" style="margin-top:var(--space-3);">
+                <button class="btn btn-danger" type="submit">Yes, post to real QuickBooks</button>
+                <a class="btn" href="{{ url_for('job_detail', job_id=job.id) }}">Cancel</a>
+              </div>
+            </form>
+          </div>
+        {% endif %}
+
         <div class="actions-col" style="margin-top:var(--space-4);">
-          <form action="/jobs/{{ job.id }}/import-to-qbo" method="post">
+          <form action="/jobs/{{ job.id }}/import-to-qbo" method="post"
+                {% if not qbo_is_sandbox and qbo_real_import %}
+                onsubmit="return confirm('You are about to post real journal entries to QuickBooks Online company {{ qbo_connection.company_name or qbo_connection.realm_id }}. Continue?');"
+                {% endif %}>
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="btn btn-primary full-width" type="submit">Import to QuickBooks</button>
+            <button class="btn btn-primary full-width" type="submit">
+              {% if not qbo_is_sandbox and qbo_real_import %}
+                Import to real QuickBooks ({{ qbo_connection.company_name or qbo_connection.realm_id }})
+              {% else %}
+                Import to QuickBooks
+              {% endif %}
+            </button>
           </form>
           <a class="btn full-width" href="{{ url_for('account_mapping', job_id=job.id) }}">Map accounts</a>
-          <form action="/jobs/{{ job.id }}/disconnect-qbo" method="post" onsubmit="return confirm('Disconnect QuickBooks for this job? You can reconnect to a different company afterward.');">
+          <form action="/jobs/{{ job.id }}/disconnect-qbo" method="post" onsubmit="return confirm('Disconnect QuickBooks for this job? Tokens will be revoked at Intuit and removed from this app.');">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="btn full-width" type="submit">Disconnect QuickBooks</button>
           </form>
@@ -111,7 +164,9 @@
                 &mdash; nothing is posted to a real customer's books.
               {% else %}
                 Clicking this will create journal entries in the
-                <strong>QuickBooks Online company</strong> shown above.
+                <strong>real QuickBooks Online company</strong> shown above.
+                You will be asked to type <code>IMPORT</code> to confirm
+                before any data is posted.
               {% endif %}
             </p>
           {% else %}
@@ -122,12 +177,12 @@
         {% if qbo_configured %}
           {% if qbo_is_sandbox %}
             <p class="muted">
-              Click <strong>Connect to QuickBooks</strong> below. Intuit will
-              ask you to sign in. <strong>Use the sandbox QuickBooks company
-              we provided</strong>, not a real firm's QuickBooks Online
-              account. Real customer QuickBooks companies require Intuit
-              production approval and production credentials, which this
-              build does not yet have.
+              <strong>Sandbox only.</strong> Click <strong>Connect to QuickBooks</strong>
+              below. Intuit will ask you to sign in. <strong>Use the
+              sandbox QuickBooks company we provided</strong>, not a real
+              firm's QuickBooks Online account. Real customer QuickBooks
+              companies require Intuit production approval and production
+              credentials, which this build does not yet have.
             </p>
             <p class="note">
               If you sign in with a real QuickBooks Online account, Intuit
@@ -136,9 +191,25 @@
               nothing in your real QuickBooks is changed.
             </p>
           {% else %}
-            <p class="muted">Connect this migration to QuickBooks Online to complete the import. Sign in with the QuickBooks Online company that should receive these journal entries.</p>
+            <p class="muted">
+              <strong>Production mode.</strong> Clicking
+              <strong>Connect to QuickBooks</strong> below will start an
+              Intuit OAuth flow that authorizes
+              <strong>your real QuickBooks Online company</strong> to
+              receive journal entries from this app. Sign in to QuickBooks
+              with the user account whose company should receive the
+              journal entries from <code>{{ job.source_file }}</code>.
+            </p>
+            <p class="note">
+              Nothing is posted yet &mdash; after you connect, you will see
+              the QuickBooks company name on this page and a separate
+              <em>Import to real QuickBooks</em> button that requires you
+              to type <code>IMPORT</code> to confirm.
+            </p>
           {% endif %}
-          <a href="/jobs/{{ job.id }}/connect-qbo" class="btn btn-primary">Connect to QuickBooks</a>
+          <a href="/jobs/{{ job.id }}/connect-qbo" class="btn btn-primary">
+            {% if qbo_is_sandbox %}Connect to QuickBooks (sandbox){% else %}Connect to QuickBooks (real){% endif %}
+          </a>
         {% else %}
           <p class="muted">QuickBooks OAuth not configured. Set environment variables to enable.</p>
         {% endif %}

@@ -19,6 +19,7 @@
       <nav aria-label="Primary">
         {% if user %}
           <a href="{{ url_for('dashboard') }}">Dashboard</a>
+          <a href="{{ url_for('quickbooks_manage') }}">QuickBooks</a>
           <a href="{{ url_for('readiness_page') }}">Readiness</a>
           <a href="{{ url_for('support') }}">Support</a>
           <form action="{{ url_for('logout') }}" method="post" style="display:inline;">

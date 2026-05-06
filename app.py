@@ -142,6 +142,47 @@ if IS_PRODUCTION:
 
 qbo_auth = QBOAuthHandler(QBO_CLIENT_ID, QBO_CLIENT_SECRET, QBO_REDIRECT_URI, QBO_ENVIRONMENT)
 
+
+def _qbo_production_blockers():
+    """Return a list of operator-safe reason strings if this deploy is NOT
+    safe to connect a real QuickBooks Online customer company.
+
+    Only enforced when QBO_ENVIRONMENT=production. Sandbox deploys keep the
+    looser checks in place because Intuit's sandbox tooling tolerates
+    localhost redirects, missing PUBLIC_APP_URL, etc.
+
+    Returns ``[]`` when production-mode connect is safe to attempt.
+    The list contains short, non-secret strings such as
+    "QBO_REDIRECT_URI must use https://" — never an actual env value.
+    """
+    if QBO_ENVIRONMENT != "production":
+        return []
+
+    blockers = []
+    if QBO_CLIENT_ID == "your-client-id-here" or not QBO_CLIENT_ID:
+        blockers.append("QBO_CLIENT_ID is not configured")
+    if QBO_CLIENT_SECRET == "your-client-secret-here" or not QBO_CLIENT_SECRET:
+        blockers.append("QBO_CLIENT_SECRET is not configured")
+    if not QBO_REDIRECT_URI:
+        blockers.append("QBO_REDIRECT_URI is not configured")
+    elif not QBO_REDIRECT_URI.startswith("https://"):
+        blockers.append("QBO_REDIRECT_URI must use https:// in production")
+    elif QBO_REDIRECT_URI.startswith("http://localhost"):
+        blockers.append("QBO_REDIRECT_URI must point at the public host, not localhost")
+
+    if not QBO_REAL_IMPORT:
+        blockers.append(
+            "QBO_REAL_IMPORT must be set to 1 before posting real customer data"
+        )
+
+    if not IS_PRODUCTION:
+        blockers.append("APP_ENV must be set to production")
+
+    if branding.is_placeholder_email(branding.SUPPORT_EMAIL):
+        blockers.append("SUPPORT_EMAIL must be a real, monitored mailbox")
+
+    return blockers
+
 jobs = {}
 qbo_connections = {}  # {job_id: {realm_id, access_token_enc, refresh_token_enc, expires_at, connected_at}}
 
@@ -876,6 +917,28 @@ def connect_qbo(job_id):
         )
         return redirect(url_for("job_detail", job_id=job_id))
 
+    # Production-mode safety gate. Prevents the operator from sending a
+    # real customer through Intuit's consent screen against a half-
+    # configured production deploy (e.g. http:// callback, missing
+    # SUPPORT_EMAIL, QBO_REAL_IMPORT off). Sandbox bypasses this on
+    # purpose so beta testing keeps working.
+    blockers = _qbo_production_blockers()
+    if blockers:
+        _audit(
+            "qbo_connect_blocked",
+            target_type="job", target_id=job_id,
+            details="; ".join(blockers),
+        )
+        flash(
+            "Cannot connect to QuickBooks: this production deploy is not "
+            "fully configured to receive real customer data yet. "
+            + " ".join(b + "." for b in blockers)
+            + " Open the readiness page to fix the remaining items, then try again."
+            + _support_suffix(),
+            "error",
+        )
+        return redirect(url_for("job_detail", job_id=job_id))
+
     session["pending_job_id"] = job_id
     auth_url = qbo_auth.get_authorization_url(state=job_id)
     return redirect(auth_url)
@@ -1115,26 +1178,171 @@ def oauth_callback():
         return redirect(url_for("job_detail", job_id=job_id))
 
 
-@app.route("/jobs/<job_id>/disconnect-qbo", methods=["POST"])
-@login_required
-def disconnect_qbo(job_id):
-    job, _user = _job_or_403(job_id)
+def _revoke_and_delete_qbo_connection(job_id, qbo_conn, user, *, source):
+    """Best-effort revoke at Intuit, then drop encrypted tokens for one job.
 
-    # Tokens live only in the in-memory qbo_connections dict (already
-    # Fernet-encrypted at rest there). Remove them and any pending session
-    # marker. There are no token files on disk to delete for this job.
+    Always deletes the local row, even if the Intuit revoke call failed —
+    once the encrypted refresh token is gone we can't reconnect with it,
+    and the user is guaranteed the local app no longer holds credentials
+    for that QuickBooks company.
+    """
+    revoke_attempted = False
+    revoke_ok = False
+    intuit_tid = None
+    if qbo_conn and qbo_conn.get("refresh_token_enc"):
+        try:
+            refresh_plain = decrypt_token(qbo_conn["refresh_token_enc"])
+            revoke_attempted = True
+            revoke_ok = qbo_auth.revoke_token(refresh_plain)
+            intuit_tid = getattr(qbo_auth, "last_intuit_tid", None)
+        except Exception:  # noqa: BLE001
+            revoke_ok = False
+
     qbo_connections.pop(job_id, None)
     if session.get("pending_job_id") == job_id:
         session.pop("pending_job_id", None)
-
-    job["qbo_connected"] = False
-    job["status"] = "Ready for QBO connection"
-    job["qbo_results"] = None
-    job["import_summary"] = None
-    job["verification"] = None
     db.delete_qbo_connection(job_id)
-    _save_job(job_id)
-    _audit("qbo_disconnected", target_type="job", target_id=job_id)
+
+    job = jobs.get(job_id)
+    if job:
+        job["qbo_connected"] = False
+        if not job.get("status", "").startswith("Imported"):
+            job["status"] = "Ready for QBO connection"
+        job["qbo_results"] = None
+        job["import_summary"] = None
+        job["verification"] = None
+        _save_job(job_id)
+
+    details = f"source={source} revoke_attempted={revoke_attempted} revoke_ok={revoke_ok}"
+    _audit(
+        "qbo_disconnected",
+        target_type="job", target_id=job_id,
+        details=_audit_details_with_tid(details, intuit_tid),
+    )
+    return revoke_attempted, revoke_ok
+
+
+@app.route("/disconnect", methods=["GET", "POST"])
+@app.route("/quickbooks/disconnect", methods=["GET", "POST"])
+def public_disconnect():
+    """Public Disconnect page registered with Intuit as the Disconnect URL.
+
+    Behavior:
+      * Anyone (logged out): renders an explanation of how to disconnect
+        from QuickBooks, including the in-app path and the manual
+        QuickBooks app-settings path. No data is required to render this.
+      * Logged in with active QBO connections: renders the same
+        explanation plus a list of the firm's connected QuickBooks
+        companies and a confirmation form to revoke + remove tokens.
+        Submitting the form triggers a server-side revoke call to Intuit
+        for each connection, then deletes the encrypted token rows.
+
+    Tokens are NEVER rendered. Only the realmId, company name, and
+    connected_at timestamp are shown.
+    """
+    user = current_user()
+    connections = []
+    if user:
+        connections = db.list_qbo_connections_for_firm(user["firm_id"])
+
+    if request.method == "POST":
+        if not user:
+            flash("Please log in first to disconnect QuickBooks for your firm.", "error")
+            return redirect(url_for("login", next=url_for("public_disconnect")))
+        confirmation = (request.form.get("confirm_disconnect") or "").strip().upper()
+        if confirmation != "DISCONNECT":
+            flash(
+                "Disconnect not confirmed. Type DISCONNECT in the confirmation "
+                "box and try again.",
+                "error",
+            )
+            return redirect(url_for("public_disconnect"))
+
+        revoked = 0
+        attempted = 0
+        for row in connections:
+            qbo_conn = _get_qbo_connection(row["job_id"])
+            if not qbo_conn:
+                continue
+            attempted_one, revoked_one = _revoke_and_delete_qbo_connection(
+                row["job_id"], qbo_conn, user, source="public_disconnect",
+            )
+            if attempted_one:
+                attempted += 1
+                if revoked_one:
+                    revoked += 1
+
+        # Defensive fallback: if any rows survived (e.g. a connection was
+        # created between the list and the loop), wipe them now. This
+        # guarantees the post-condition: no QBO tokens remain for this firm.
+        db.delete_qbo_connections_for_firm(user["firm_id"])
+        _audit(
+            "qbo_disconnect_all",
+            details=f"attempted={attempted} revoked={revoked}",
+        )
+        if attempted == 0:
+            flash(
+                "No active QuickBooks connections to disconnect for this firm.",
+                "info",
+            )
+        elif revoked == attempted:
+            flash(
+                f"Disconnected {attempted} QuickBooks connection(s). "
+                "Tokens have been revoked at Intuit and removed from this app.",
+                "success",
+            )
+        else:
+            flash(
+                f"Disconnected {attempted} QuickBooks connection(s) locally. "
+                f"Intuit's revoke endpoint accepted {revoked} of {attempted} requests; "
+                "any unrevoked refresh tokens are now deleted from this app and "
+                "can also be revoked manually in QuickBooks → Apps → Connected apps.",
+                "success",
+            )
+        return redirect(url_for("public_disconnect"))
+
+    return render_template(
+        "disconnect.html",
+        connections=connections,
+        is_logged_in=bool(user),
+    )
+
+
+@app.route("/quickbooks", methods=["GET"])
+@login_required
+def quickbooks_manage():
+    """Per-firm dashboard for managing QuickBooks connections.
+
+    Lists every job in this firm that currently has stored QBO tokens,
+    with realmId, company name, connected_at, and links to reconnect
+    (re-run OAuth for that job) or disconnect (revoke + drop tokens).
+    Tokens are never rendered.
+    """
+    user = current_user()
+    rows = db.list_qbo_connections_for_firm(user["firm_id"])
+    # Annotate each connection with the parent job's company so the page
+    # is readable even when CompanyInfo failed at connect time.
+    firm_jobs = {j["id"]: j for j in db.list_jobs_for_firm(user["firm_id"], limit=500)}
+    for r in rows:
+        parent = firm_jobs.get(r["job_id"]) or {}
+        r["job_company"] = parent.get("company")
+        r["job_status"] = parent.get("status")
+    return render_template(
+        "quickbooks-manage.html",
+        connections=rows,
+        production_blockers=_qbo_production_blockers(),
+    )
+
+
+@app.route("/jobs/<job_id>/disconnect-qbo", methods=["POST"])
+@login_required
+def disconnect_qbo(job_id):
+    job, user = _job_or_403(job_id)
+
+    qbo_conn = _get_qbo_connection(job_id)
+    _revoke_and_delete_qbo_connection(
+        job_id, qbo_conn, user, source="job_detail",
+    )
 
     flash(
         "Disconnected QuickBooks. Click Connect to QuickBooks and choose the "
@@ -1164,6 +1372,35 @@ def import_to_qbo(job_id):
             "info",
         )
         return redirect(url_for("job_detail", job_id=job_id))
+
+    # Production-mode final confirmation. The job-detail page surfaces a
+    # two-step flow: the first POST (no confirm_import) lands on the
+    # confirmation card showing connected company + file summary; the
+    # user must re-submit with confirm_import=IMPORT to actually post.
+    # Sandbox-mode imports skip this so existing beta flows are unchanged.
+    if QBO_ENVIRONMENT == "production":
+        confirmation = (request.form.get("confirm_import") or "").strip().upper()
+        if confirmation != "IMPORT":
+            job["pending_production_confirm"] = True
+            _save_job(job_id)
+            _audit(
+                "import_confirmation_shown",
+                target_type="job", target_id=job_id,
+                details=f"realm={qbo_conn.get('realm_id')} company={qbo_conn.get('company_name') or ''}",
+            )
+            flash(
+                "Production safety check: this will post real journal entries to "
+                f"QuickBooks Online company '"
+                f"{qbo_conn.get('company_name') or qbo_conn.get('realm_id')}'. "
+                "Review the import summary and type IMPORT in the confirmation "
+                "box to proceed.",
+                "info",
+            )
+            return redirect(url_for("job_detail", job_id=job_id))
+        # Clear the pending flag once confirmed.
+        if job.get("pending_production_confirm"):
+            job["pending_production_confirm"] = False
+            _save_job(job_id)
 
     user = current_user()
     try:

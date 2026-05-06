@@ -34,6 +34,7 @@ class QBOAuthHandler:
     PRODUCTION_BASE = "https://quickbooks.api.intuit.com"
     AUTH_URL = "https://appcenter.intuit.com/connect/oauth2"
     TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
+    REVOKE_URL = "https://developer.api.intuit.com/v2/oauth2/tokens/revoke"
 
     def __init__(self, client_id, client_secret, redirect_uri, environment="sandbox"):
         self.client_id = client_id
@@ -107,6 +108,37 @@ class QBOAuthHandler:
             "token_type": token_data.get("token_type", "bearer"),
             "intuit_tid": self.last_intuit_tid,
         }
+
+    def revoke_token(self, token):
+        """Revoke a refresh or access token at Intuit's revoke endpoint.
+
+        Best-effort: success returns True, any failure returns False without
+        raising so the local disconnect flow can still wipe the encrypted
+        record on disk. The intuit_tid (when present) is captured on the
+        handler as `last_intuit_tid` so callers can audit the attempt.
+
+        Per Intuit OAuth 2.0 docs the revoke endpoint accepts the bearer
+        client credentials in the Authorization header and the token in a
+        JSON body keyed `token`.
+        """
+        if not token:
+            return False
+        headers = {
+            "Authorization": f"Basic {self._auth_header()}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        try:
+            resp = requests.post(
+                self.REVOKE_URL,
+                headers=headers,
+                json={"token": token},
+                timeout=15,
+            )
+        except requests.RequestException:
+            return False
+        self.last_intuit_tid = extract_intuit_tid(resp)
+        return 200 <= resp.status_code < 300
 
     def refresh_access_token(self, refresh_token):
         """Refresh an expired access token."""
