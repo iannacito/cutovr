@@ -249,6 +249,11 @@ def inject_user():
     firm = db.get_firm(user["firm_id"]) if user else None
     ctx = {"user": user, "firm": firm, "now_year": datetime.utcnow().year}
     ctx.update(branding.context())
+    # Templates use these to render a "Sandbox Testing Mode" banner near
+    # any QuickBooks connect/import affordance, so beta testers don't try
+    # to authorize a real QBO company against sandbox-only credentials.
+    ctx["qbo_environment"] = QBO_ENVIRONMENT
+    ctx["qbo_is_sandbox"] = (QBO_ENVIRONMENT == "sandbox")
     return ctx
 
 
@@ -857,34 +862,117 @@ def connect_qbo(job_id):
     return redirect(auth_url)
 
 
+def _support_suffix():
+    """Append a "contact <support email>" sentence when a real one is
+    configured. Suppressed for the deploy-default placeholder so beta
+    testers never see "support@your-domain.example"."""
+    addr = (branding.SUPPORT_EMAIL or "").strip()
+    if not addr or branding.is_placeholder_email(addr):
+        return ""
+    return f" If this keeps happening, contact {addr}."
+
+
+def _sandbox_hint():
+    """One-sentence reminder that sandbox builds require Intuit's sandbox
+    company, not a real QuickBooks login. Returned as a leading sentence
+    when QBO_ENVIRONMENT=sandbox so beta testers stop seeing Intuit's
+    generic "didn't connect" page without context."""
+    if QBO_ENVIRONMENT == "sandbox":
+        return (
+            "This deploy is in QuickBooks Sandbox Testing Mode. You must "
+            "sign in with the Intuit sandbox company we provided — a real "
+            "QuickBooks Online company will not connect until production "
+            "credentials are approved by Intuit. "
+        )
+    return ""
+
+
 @app.route("/oauth/callback")
 def oauth_callback():
     code = request.args.get("code")
     state = request.args.get("state")
     realm_id = request.args.get("realmId")
     error = request.args.get("error")
+    error_description = (request.args.get("error_description") or "").strip()
 
     user = current_user()
     if not user:
         flash(
             "Your session expired during the QuickBooks redirect. Please log "
-            "in again, then re-click Connect to QuickBooks on the job page.",
+            "in again, then re-click Connect to QuickBooks on the job page."
+            + _support_suffix(),
             "error",
         )
         return redirect(url_for("login"))
 
     if error:
-        flash(f"QuickBooks authorization failed: {error}", "error")
+        # Intuit's hosted error page only says "didn't connect"; map the
+        # OAuth `error` query param to something the tester can act on.
+        # `access_denied` = user clicked Cancel; everything else is some
+        # form of credential/scope/realm rejection from Intuit.
+        db.audit(
+            action="oauth_callback_error",
+            firm_id=user["firm_id"], user_id=user["id"],
+            target_type="job", target_id=state or "",
+            # Audit only records the OAuth error code, not any URL params
+            # that could carry a token or PII.
+            details=f"error={error}",
+        )
+        if error == "access_denied":
+            flash(
+                _sandbox_hint()
+                + "QuickBooks connection cancelled. No data was changed. "
+                "Click Connect to QuickBooks again when you're ready."
+                + _support_suffix(),
+                "error",
+            )
+        else:
+            desc = f" Details from Intuit: {error_description}." if error_description else ""
+            flash(
+                _sandbox_hint()
+                + "QuickBooks did not approve this connection ("
+                + str(error)
+                + ")." + desc
+                + " This usually means the wrong QuickBooks company was "
+                "picked, or this build is not yet approved by Intuit for "
+                "live customer companies."
+                + _support_suffix(),
+                "error",
+            )
         return redirect(url_for("dashboard"))
 
     if not code or not realm_id:
-        flash("Invalid OAuth callback parameters", "error")
+        # No `error=` and no `code` either — Intuit's hosted "Uh oh, there's
+        # a connection problem" page redirects here without a code. Give
+        # the tester a clear next step instead of a generic message.
+        db.audit(
+            action="oauth_callback_missing_params",
+            firm_id=user["firm_id"], user_id=user["id"],
+            target_type="job", target_id=state or "",
+            details=f"have_code={bool(code)} have_realm={bool(realm_id)}",
+        )
+        flash(
+            _sandbox_hint()
+            + "QuickBooks did not return an authorization for this "
+            "connection. If Intuit showed an \"Uh oh, there's a connection "
+            "problem\" page, that means your QuickBooks login is not "
+            "compatible with this build's credentials. Go back to the job "
+            "page and click Connect to QuickBooks again."
+            + _support_suffix(),
+            "error",
+        )
         return redirect(url_for("dashboard"))
 
     job_id = session.pop("pending_job_id", state)
     job = jobs.get(job_id)
     if not job:
-        flash("Job not found", "error")
+        flash(
+            "We could not match this QuickBooks connection back to a "
+            "migration job. Please open the job and click Connect to "
+            "QuickBooks again."
+            + _support_suffix(),
+            "error",
+        )
         return redirect(url_for("dashboard"))
     if job.get("firm_id") != user["firm_id"]:
         # Should not happen unless the OAuth state was tampered with.
@@ -893,7 +981,13 @@ def oauth_callback():
             firm_id=user["firm_id"], user_id=user["id"],
             target_type="job", target_id=job_id,
         )
-        flash("Job not found", "error")
+        flash(
+            "We could not match this QuickBooks connection back to a "
+            "migration job in your firm. Please open the job and click "
+            "Connect to QuickBooks again."
+            + _support_suffix(),
+            "error",
+        )
         return redirect(url_for("dashboard"))
 
     try:
@@ -951,8 +1045,31 @@ def oauth_callback():
             "success",
         )
         return redirect(url_for("job_detail", job_id=job_id))
-    except Exception as e:
-        flash(f"Token exchange failed: {str(e)}", "error")
+    except Exception as e:  # noqa: BLE001
+        # Intuit returns 400/401 here when the build's credentials don't
+        # match the QBO company the user picked (the common beta failure
+        # mode). The raw exception body can include client_id, so we log
+        # the truncated string for ops but show the user a friendly
+        # explanation with no secrets.
+        raw = str(e)
+        db.audit(
+            action="oauth_token_exchange_failed",
+            firm_id=user["firm_id"], user_id=user["id"],
+            target_type="job", target_id=job_id,
+            details=raw[:200],
+        )
+        flash(
+            _sandbox_hint()
+            + "QuickBooks accepted your sign-in but rejected this app's "
+            "credentials when finishing the connection. This usually "
+            "means the QuickBooks company you picked is not the sandbox "
+            "company tied to this build, or this build is not yet "
+            "approved by Intuit for production companies. No journal "
+            "entries were posted. Open the job and click Connect to "
+            "QuickBooks again, picking the sandbox company we provided."
+            + _support_suffix(),
+            "error",
+        )
         return redirect(url_for("job_detail", job_id=job_id))
 
 
