@@ -8,10 +8,42 @@ Used by app.py after OAuth completes to:
 The QuickBooks Online v3 API uses the same hostname for sandbox and
 production companies; the realm_id determines the company. We keep an
 `environment` flag for clarity and so logs can show it.
+
+Every successful or failing QBO HTTP response carries an `intuit_tid`
+header (the Intuit transaction id). We capture it on the client as
+`last_intuit_tid` after each call and propagate it on QBOError so callers
+can surface it to operators / Intuit support without having to plumb the
+raw response object through.
 """
 
 from urllib.parse import quote
 import requests
+
+
+# Intuit returns the transaction id under this header. The casing in their
+# docs varies; requests' case-insensitive header dict normalises it.
+_INTUIT_TID_HEADER = "intuit_tid"
+
+
+def extract_intuit_tid(response):
+    """Pull the intuit_tid from a requests.Response header, or None.
+
+    Safe on any object that exposes a headers mapping (real responses or
+    test doubles). Returns the trimmed string, never an empty string.
+    """
+    if response is None:
+        return None
+    try:
+        headers = response.headers
+    except AttributeError:
+        return None
+    if not headers:
+        return None
+    value = headers.get(_INTUIT_TID_HEADER) or headers.get("Intuit-TID") or headers.get("Intuit_Tid")
+    if not value:
+        return None
+    value = value.strip()
+    return value or None
 
 
 class QBOClient:
@@ -25,6 +57,9 @@ class QBOClient:
         self.base_url = (
             self.SANDBOX_BASE if environment == "sandbox" else self.PRODUCTION_BASE
         )
+        # Updated after every HTTP call (success or failure) so callers can
+        # log / surface it without holding the response.
+        self.last_intuit_tid = None
 
     def _headers(self):
         return {
@@ -33,10 +68,18 @@ class QBOClient:
             "Content-Type": "application/json",
         }
 
+    def _record_tid(self, response):
+        tid = extract_intuit_tid(response)
+        self.last_intuit_tid = tid
+        return tid
+
     def query(self, sql):
         encoded_query = quote(sql)
         url = f"{self.base_url}/v3/company/{self.realm_id}/query?query={encoded_query}&minorversion=65"
         response = requests.get(url, headers=self._headers(), timeout=30)
+        # Capture the Intuit transaction id even on non-2xx responses, then
+        # preserve raise_for_status semantics callers already depend on.
+        self._record_tid(response)
         response.raise_for_status()
         return response.json()
 
@@ -55,6 +98,7 @@ class QBOClient:
             f"{self.realm_id}?minorversion=65"
         )
         response = requests.get(url, headers=self._headers(), timeout=30)
+        self._record_tid(response)
         response.raise_for_status()
         return response.json()
 
@@ -67,6 +111,7 @@ class QBOClient:
             f"?minorversion=65"
         )
         response = requests.get(url, headers=self._headers(), timeout=30)
+        tid = self._record_tid(response)
         if response.status_code == 404:
             return None
         if response.status_code >= 400:
@@ -74,6 +119,7 @@ class QBOClient:
                 f"QBO returned {response.status_code} fetching JournalEntry {je_id}: {response.text}",
                 status_code=response.status_code,
                 body=response.text,
+                intuit_tid=tid,
             )
         return response.json().get("JournalEntry")
 
@@ -84,11 +130,13 @@ class QBOClient:
         response = requests.post(
             url, headers=self._headers(), json=journal_entry_payload, timeout=30
         )
+        tid = self._record_tid(response)
         if response.status_code >= 400:
             raise QBOError(
                 f"QBO returned {response.status_code}: {response.text}",
                 status_code=response.status_code,
                 body=response.text,
+                intuit_tid=tid,
             )
         return response.json()
 
@@ -116,11 +164,13 @@ class QBOClient:
         response = requests.post(
             url, headers=self._headers(), json={"DisplayName": display_name}, timeout=30
         )
+        tid = self._record_tid(response)
         if response.status_code >= 400:
             raise QBOError(
                 f"QBO returned {response.status_code} creating Customer: {response.text}",
                 status_code=response.status_code,
                 body=response.text,
+                intuit_tid=tid,
             )
         return response.json().get("Customer", {})
 
@@ -129,11 +179,13 @@ class QBOClient:
         response = requests.post(
             url, headers=self._headers(), json={"DisplayName": display_name}, timeout=30
         )
+        tid = self._record_tid(response)
         if response.status_code >= 400:
             raise QBOError(
                 f"QBO returned {response.status_code} creating Vendor: {response.text}",
                 status_code=response.status_code,
                 body=response.text,
+                intuit_tid=tid,
             )
         return response.json().get("Vendor", {})
 
@@ -151,7 +203,16 @@ class QBOClient:
 
 
 class QBOError(Exception):
-    def __init__(self, message, status_code=None, body=None):
+    """A QBO API error.
+
+    `intuit_tid` is the Intuit transaction id from the failing response's
+    headers, when present. It is safe to surface to operators and even to
+    end users as a support reference — it identifies the request to Intuit
+    support but contains no token, secret, or PII.
+    """
+
+    def __init__(self, message, status_code=None, body=None, intuit_tid=None):
         super().__init__(message)
         self.status_code = status_code
         self.body = body
+        self.intuit_tid = intuit_tid

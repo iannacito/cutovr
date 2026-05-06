@@ -96,6 +96,13 @@ not a backup.
   window.
 - Confirm the app does not log raw QBO tokens, raw `SECRET_KEY`, or
   `ENCRYPTION_KEY`. The startup error path is already designed not to.
+- The app does capture and log `intuit_tid` (an opaque Intuit request
+  id from response headers) on every QBO API call &mdash; see
+  [INTUIT_PRODUCTION_REVIEW.md §5.1](INTUIT_PRODUCTION_REVIEW.md). When
+  a customer reports a failed import, the Intuit support reference id
+  shown in the flash message and the job-detail error panel is what
+  Intuit support will ask for; it is also embedded in the
+  `import_failed` / `oauth_token_exchange_failed` audit rows.
 
 ## 7. Support process
 

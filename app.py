@@ -358,7 +358,14 @@ def _refresh_qbo_tokens(job_id, qbo_conn, firm_id):
     try:
         new = qbo_auth.refresh_access_token(refresh_plain)
     except Exception as e:  # noqa: BLE001
-        raise QBOAuthExpired(str(e)) from e
+        # Pull the intuit_tid off the exception (or the handler) so the
+        # caller can include it in the audit row when we surface the
+        # "connection expired" flash. Opaque, safe to log.
+        tid = getattr(e, "intuit_tid", None) or getattr(qbo_auth, "last_intuit_tid", None)
+        msg = str(e)
+        if tid:
+            msg = f"{msg} (intuit_tid={tid})"
+        raise QBOAuthExpired(msg) from e
 
     enc_access = encrypt_token(new["access_token"])
     enc_refresh = encrypt_token(new["refresh_token"])
@@ -402,6 +409,18 @@ def _get_qbo_client(job_id, user):
         environment=QBO_ENVIRONMENT,
     )
     return qbo, qbo_conn
+
+
+def _audit_details_with_tid(details, intuit_tid):
+    """Append the Intuit transaction id to an audit detail string, when one
+    is present. The tid is opaque (no token / secret material), so it's
+    safe to include alongside the existing detail text.
+    """
+    if not intuit_tid:
+        return details
+    if not details:
+        return f"intuit_tid={intuit_tid}"
+    return f"{details} intuit_tid={intuit_tid}"
 
 
 def _audit(action, target_type=None, target_id=None, details=None):
@@ -992,6 +1011,9 @@ def oauth_callback():
 
     try:
         token_data = qbo_auth.get_bearer_token(code)
+        # The intuit_tid from the token-exchange response — useful when an
+        # operator needs to ask Intuit support which request they saw.
+        token_exchange_tid = token_data.get("intuit_tid")
 
         encrypted_access = encrypt_token(token_data["access_token"])
         encrypted_refresh = encrypt_token(token_data["refresh_token"])
@@ -1036,8 +1058,15 @@ def oauth_callback():
             company_info_error=qbo_connections[job_id].get("company_info_error"),
         )
         _save_job(job_id)
+        # Include the Intuit transaction id in the audit row so operators
+        # can correlate this connect event with Intuit's logs if support
+        # ever needs to look it up. The tid is an opaque request id, safe
+        # to log alongside firm/user metadata.
+        connect_details = f"realmId={realm_id} company={company_label}"
+        if token_exchange_tid:
+            connect_details = f"{connect_details} intuit_tid={token_exchange_tid}"
         _audit("qbo_connected", target_type="job", target_id=job_id,
-               details=f"realmId={realm_id} company={company_label}")
+               details=connect_details)
 
         flash(
             f"Connected to QuickBooks: {company_label} (realmId {realm_id}). "
@@ -1052,12 +1081,24 @@ def oauth_callback():
         # the truncated string for ops but show the user a friendly
         # explanation with no secrets.
         raw = str(e)
+        # Pull the Intuit transaction id off the exception (when our
+        # QBOAuthError raises it) or off the handler's last_intuit_tid
+        # fallback. Either way, the tid is an opaque request id with no
+        # token material — safe to record in audit and surface to support.
+        tid = getattr(e, "intuit_tid", None) or getattr(qbo_auth, "last_intuit_tid", None)
+        ops_detail = raw[:200]
+        if tid:
+            ops_detail = f"{ops_detail} intuit_tid={tid}"
         db.audit(
             action="oauth_token_exchange_failed",
             firm_id=user["firm_id"], user_id=user["id"],
             target_type="job", target_id=job_id,
-            details=raw[:200],
+            details=ops_detail,
         )
+        # Append the Intuit transaction id (opaque, no secret material) so
+        # the user can quote it to support. This is the same id ops will
+        # have in the audit row, which lets us match user reports to logs.
+        tid_suffix = f" Intuit support reference: {tid}." if tid else ""
         flash(
             _sandbox_hint()
             + "QuickBooks accepted your sign-in but rejected this app's "
@@ -1067,6 +1108,7 @@ def oauth_callback():
             "approved by Intuit for production companies. No journal "
             "entries were posted. Open the job and click Connect to "
             "QuickBooks again, picking the sandbox company we provided."
+            + tid_suffix
             + _support_suffix(),
             "error",
         )
@@ -1252,12 +1294,18 @@ def import_to_qbo(job_id):
                 new_entities = _resolve_entity_hints(qbo, payloads)
             except QBOError as e:
                 job["status"] = "Import failed (entity setup)"
-                job["last_error"] = qbo_error_hint.parse(str(e))
+                job["last_error"] = qbo_error_hint.parse(str(e), intuit_tid=e.intuit_tid)
                 _save_job(job_id)
-                _audit("import_failed", target_type="job", target_id=job_id, details=f"entity setup: {e}")
+                _audit(
+                    "import_failed",
+                    target_type="job",
+                    target_id=job_id,
+                    details=_audit_details_with_tid(f"entity setup: {e}", e.intuit_tid),
+                )
+                tid_suffix = f" (Intuit support reference: {e.intuit_tid})" if e.intuit_tid else ""
                 flash(
                     "Could not set up the Customer/Vendor required by QBO for "
-                    f"Accounts Receivable / Accounts Payable lines: {e}",
+                    f"Accounts Receivable / Accounts Payable lines: {e}{tid_suffix}",
                     "error",
                 )
                 return redirect(url_for("job_detail", job_id=job_id))
@@ -1361,13 +1409,20 @@ def import_to_qbo(job_id):
 
     except QBOError as e:
         job["status"] = "Import failed (QBO error)"
-        job["last_error"] = qbo_error_hint.parse(str(e))
+        job["last_error"] = qbo_error_hint.parse(str(e), intuit_tid=e.intuit_tid)
         _save_job(job_id)
-        _audit("import_failed", target_type="job", target_id=job_id, details=str(e))
+        _audit(
+            "import_failed",
+            target_type="job",
+            target_id=job_id,
+            details=_audit_details_with_tid(str(e), e.intuit_tid),
+        )
         hint = job["last_error"]
         msg = hint["summary"]
         if hint.get("action"):
             msg = f"{msg} {hint['action']}"
+        if e.intuit_tid:
+            msg = f"{msg} (Intuit support reference: {e.intuit_tid})"
         flash(msg, "error")
     except ValueError as e:
         job["status"] = "Import failed (validation)"
@@ -1376,6 +1431,7 @@ def import_to_qbo(job_id):
             "action": None,
             "technical_detail": str(e),
             "status_code": None,
+            "intuit_tid": None,
         }
         _save_job(job_id)
         _audit("import_failed", target_type="job", target_id=job_id, details=str(e))
@@ -1387,6 +1443,7 @@ def import_to_qbo(job_id):
             "action": "Try again, and if the problem persists, contact support with the job ID.",
             "technical_detail": str(e),
             "status_code": None,
+            "intuit_tid": None,
         }
         _save_job(job_id)
         _audit("import_failed", target_type="job", target_id=job_id, details=str(e))
@@ -1419,7 +1476,8 @@ def verify_import(job_id):
     try:
         _verify_import(job, qbo)
     except QBOError as e:
-        flash(f"Verification failed (QBO error): {e}", "error")
+        tid_suffix = f" (Intuit support reference: {e.intuit_tid})" if e.intuit_tid else ""
+        flash(f"Verification failed (QBO error): {e}{tid_suffix}", "error")
         return redirect(url_for("job_detail", job_id=job_id))
     except Exception as e:  # noqa: BLE001
         flash(f"Verification failed: {e}", "error")
@@ -1472,7 +1530,8 @@ def account_mapping(job_id):
     try:
         qbo_accounts_resp = qbo.get_accounts()
     except QBOError as e:
-        flash(f"Could not query QBO accounts: {e}", "error")
+        tid_suffix = f" (Intuit support reference: {e.intuit_tid})" if e.intuit_tid else ""
+        flash(f"Could not query QBO accounts: {e}{tid_suffix}", "error")
         return redirect(url_for("job_detail", job_id=job_id))
     qbo_accounts = qbo_accounts_resp.get("QueryResponse", {}).get("Account", [])
 
@@ -1739,6 +1798,7 @@ def reverse_import(job_id):
     except QBOError as e:
         # Best-effort: persist what we managed to reverse so the user can
         # see partial state and clean up manually.
+        err_with_tid = f"{e} (intuit_tid={e.intuit_tid})" if e.intuit_tid else str(e)
         try:
             history.record_reversal(
                 import_id=last_import["id"],
@@ -1748,15 +1808,20 @@ def reverse_import(job_id):
                 status="failed",
                 created_by_user_id=user["id"],
                 reversed_transactions=reversal_rows,
-                error=str(e),
+                error=err_with_tid,
             )
         except ValueError:
             pass  # already recorded; nothing to do
-        _audit("import_reversal_failed", target_type="job", target_id=job_id,
-               details=str(e))
+        _audit(
+            "import_reversal_failed",
+            target_type="job",
+            target_id=job_id,
+            details=_audit_details_with_tid(str(e), e.intuit_tid),
+        )
+        tid_suffix = f" (Intuit support reference: {e.intuit_tid})" if e.intuit_tid else ""
         flash(
             f"Reversal failed after creating {sum(1 for r in reversal_rows if r['reversal_qbo_je_id'])} "
-            f"of {len(last_import['transactions'])} reversal entries: {e}",
+            f"of {len(last_import['transactions'])} reversal entries: {e}{tid_suffix}",
             "error",
         )
         return redirect(url_for("job_detail", job_id=job_id))
