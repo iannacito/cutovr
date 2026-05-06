@@ -1,0 +1,101 @@
+{% extends "_base.html" %}
+{% block title %}{{ firm.name }} &mdash; Go-live readiness{% endblock %}
+{% block content %}
+<section class="page">
+  <div class="hero">
+    <p class="eyebrow">{{ firm.name }} &middot; Operator view</p>
+    <h1>Go-live <em>readiness</em>.</h1>
+    <p>Checks that this deploy is configured for real customer use. Same data as <code>/healthz</code> with remediation hints. Secret <em>values</em> are never shown &mdash; only whether each one is set.</p>
+  </div>
+
+  {% if overall_ready %}
+    <div class="card" style="border-left:4px solid var(--green);">
+      <p class="eyebrow">Status</p>
+      <h2 style="margin:0;">Ready for go-live <span class="badge success">all required checks pass</span></h2>
+      {% if recommended_failing %}
+        <p class="muted" style="margin-top:var(--space-3);">{{ recommended_failing|length }} recommended item(s) still pending below.</p>
+      {% endif %}
+    </div>
+  {% else %}
+    <div class="card warning-panel">
+      <p class="eyebrow">Status</p>
+      <h2 style="margin:0;">Not ready for go-live <span class="badge error">{{ required_failing|length }} required check(s) failing</span></h2>
+      <p class="muted" style="margin-top:var(--space-3);">Fix the required items below in your Render dashboard, redeploy, then refresh this page.</p>
+    </div>
+  {% endif %}
+
+  <section class="card" style="margin-top:var(--space-6);">
+    <div class="panel-head">
+      <div>
+        <p class="eyebrow">Required for go-live</p>
+        <h2>Critical configuration</h2>
+      </div>
+    </div>
+    <div class="stack-sm">
+      {% for c in required %}
+        <article class="card card--inset">
+          <div class="panel-head">
+            <div>
+              <h3 style="margin:0;">{{ c.label }}</h3>
+              {% if c.detail %}<p class="muted" style="margin:.25rem 0 0;"><code>{{ c.detail }}</code></p>{% endif %}
+            </div>
+            <span class="badge {% if c.ok %}success{% else %}error{% endif %}">{% if c.ok %}OK{% else %}MISSING{% endif %}</span>
+          </div>
+          {% if not c.ok and c.hint %}
+            <p style="margin:var(--space-3) 0 0;">{{ c.hint }}</p>
+          {% endif %}
+        </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="card" style="margin-top:var(--space-6);">
+    <div class="panel-head">
+      <div>
+        <p class="eyebrow">Recommended</p>
+        <h2>Strong suggestions</h2>
+      </div>
+    </div>
+    <div class="stack-sm">
+      {% for c in recommended %}
+        <article class="card card--inset">
+          <div class="panel-head">
+            <div>
+              <h3 style="margin:0;">{{ c.label }}</h3>
+              {% if c.detail %}<p class="muted" style="margin:.25rem 0 0;"><code>{{ c.detail }}</code></p>{% endif %}
+            </div>
+            <span class="badge {% if c.ok %}success{% else %}warn{% endif %}">{% if c.ok %}OK{% else %}TODO{% endif %}</span>
+          </div>
+          {% if not c.ok and c.hint %}
+            <p style="margin:var(--space-3) 0 0;">{{ c.hint }}</p>
+          {% endif %}
+        </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="card" style="margin-top:var(--space-6);">
+    <div class="panel-head">
+      <div>
+        <p class="eyebrow">Diagnostics</p>
+        <h2>Environment</h2>
+      </div>
+      <a class="btn" href="{{ url_for('healthz') }}" target="_blank" rel="noopener">View /healthz JSON &rarr;</a>
+    </div>
+    <dl class="summary-grid">
+      <div><dt>Request host</dt><dd><code>{{ request_host }}</code></dd></div>
+      <div><dt>Request scheme</dt><dd><code>{{ request_scheme }}</code></dd></div>
+      {% if public_url %}<div><dt>PUBLIC_APP_URL</dt><dd><code>{{ public_url }}</code></dd></div>{% endif %}
+      {% for c in info %}
+        <div><dt>{{ c.label }}</dt><dd>{% if c.detail %}<code>{{ c.detail }}</code>{% else %}&mdash;{% endif %}</dd></div>
+      {% endfor %}
+    </dl>
+    <p class="muted" style="margin-top:var(--space-4);">Secret <em>values</em> are never shown on this page or in <code>/healthz</code>. Only presence is reported.</p>
+  </section>
+
+  <div class="actions-row" style="margin-top:var(--space-6);">
+    <a class="btn" href="{{ url_for('dashboard') }}">&larr; Back to dashboard</a>
+    <a class="btn" href="{{ url_for('firm_imports') }}">Import history</a>
+  </div>
+</section>
+{% endblock %}

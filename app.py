@@ -9,6 +9,7 @@ import requests
 
 from app_db import AppDB
 import branding
+import readiness
 from pclaw_parser import parse_pclaw_csv, export_qbo_csv
 from pclaw_pipeline import (
     load_general_ledger_csv,
@@ -668,21 +669,64 @@ def support():
 
 @app.route("/healthz")
 def healthz():
-    """Lightweight health probe. Reports presence (not values) of critical
-    config so Render and humans can confirm the deploy is healthy without
-    leaking secrets."""
-    return jsonify({
+    """Lightweight, public health probe.
+
+    Reports presence (not values) of critical config so Render and humans
+    can confirm the deploy is healthy without leaking secrets. The detailed,
+    human-readable readiness checklist is at /readiness and requires login.
+    """
+    body = {
         "status": "ok",
         "app_env": APP_ENV,
         "qbo_environment": QBO_ENVIRONMENT,
         "qbo_real_import": QBO_REAL_IMPORT,
+        # Backward-compatible booleans (kept for existing scrapers).
         "secret_key_set": bool(os.environ.get("SECRET_KEY") or os.environ.get("APP_SECRET")),
         "encryption_key_set": bool(os.environ.get("ENCRYPTION_KEY")),
         "qbo_client_id_set": QBO_CLIENT_ID != "your-client-id-here" and bool(QBO_CLIENT_ID),
         "qbo_redirect_uri_set": bool(QBO_REDIRECT_URI) and not QBO_REDIRECT_URI.startswith("http://localhost"),
         "branding_support_email_set": not branding.is_placeholder_email(branding.SUPPORT_EMAIL),
         "branding_security_email_set": not branding.is_placeholder_email(branding.SECURITY_EMAIL),
-    }), 200
+    }
+    # Merge in the structured go-live readiness booleans. Only booleans
+    # are exposed here; hints + details stay behind login at /readiness.
+    body["readiness"] = readiness.healthz_booleans(
+        request_host=request.host, request_scheme=request.scheme,
+    )
+    body["ready_for_go_live"] = readiness.overall_ready(
+        readiness.collect_checks(request_host=request.host, request_scheme=request.scheme)
+    )
+    return jsonify(body), 200
+
+
+@app.route("/readiness")
+@login_required
+def readiness_page():
+    """Protected, human-readable go-live readiness checklist.
+
+    Same source of truth as /healthz, but includes remediation hints and
+    visual grouping so an operator can fix red items before flipping the
+    deploy live for real customers.
+    """
+    checks = readiness.collect_checks(
+        request_host=request.host, request_scheme=request.scheme,
+    )
+    required = [c for c in checks if c.severity == readiness.SEVERITY_REQUIRED]
+    recommended = [c for c in checks if c.severity == readiness.SEVERITY_RECOMMENDED]
+    info = [c for c in checks if c.severity == readiness.SEVERITY_INFO]
+    return render_template(
+        "readiness.html",
+        checks=checks,
+        required=required,
+        recommended=recommended,
+        info=info,
+        overall_ready=readiness.overall_ready(checks),
+        required_failing=[c for c in required if not c.ok],
+        recommended_failing=[c for c in recommended if not c.ok],
+        public_url=os.environ.get("PUBLIC_APP_URL", "").strip(),
+        request_host=request.host,
+        request_scheme=request.scheme,
+    )
 
 
 @app.route("/upload", methods=["POST"])
