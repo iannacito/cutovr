@@ -13,6 +13,26 @@
       <h3>QuickBooks OAuth not configured</h3>
       <p>Set <code>QBO_CLIENT_ID</code>, <code>QBO_CLIENT_SECRET</code>, <code>QBO_REDIRECT_URI</code>, and <code>QBO_ENVIRONMENT</code> in the environment to enable live QuickBooks connections. Demo mode (upload + parse) works without them.</p>
     </div>
+  {% elif qbo_is_sandbox %}
+    <div class="card warning-panel" role="status" aria-label="Sandbox testing mode">
+      <h3>Sandbox Testing Mode</h3>
+      <p>
+        This build is connected to QuickBooks <strong>Sandbox</strong>. When
+        you click <strong>Connect to QuickBooks</strong> on a job, Intuit
+        will ask which company to authorize &mdash; please pick the
+        <strong>sandbox QuickBooks company we provided</strong>, not your
+        firm's real QuickBooks Online account. Real customer QBO companies
+        require Intuit production approval and production credentials,
+        which this build does not yet have. If you sign in with a real
+        QuickBooks Online account, Intuit will show
+        &ldquo;Uh oh, there's a connection problem&rdquo; and the
+        connection will fail safely &mdash; nothing in your real
+        QuickBooks is changed.
+        {% if support_email and "your-domain.example" not in support_email %}
+          Need the sandbox login? Email <a href="mailto:{{ support_email }}">{{ support_email }}</a>.
+        {% endif %}
+      </p>
+    </div>
   {% endif %}
 
   <section class="grid-two" id="intake" style="margin-bottom:var(--space-8);">

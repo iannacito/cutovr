@@ -62,6 +62,20 @@
     <article class="card">
       <p class="eyebrow">Step 02 &middot; QuickBooks</p>
       <h2>QuickBooks Online</h2>
+      {% if qbo_is_sandbox %}
+        <div class="flash error" role="status" style="margin-bottom:var(--space-4);">
+          <strong>Sandbox Testing Mode.</strong>
+          This build is connected to QuickBooks <em>Sandbox</em> only.
+          When Intuit asks which company to authorize, pick the
+          <strong>sandbox QuickBooks company</strong> we sent you &mdash;
+          <strong>not</strong> your firm's real QuickBooks Online account.
+          Real customer QBO companies require Intuit production review and
+          production credentials, which this build does not yet have.
+          {% if support_email and "your-domain.example" not in support_email %}
+            Need the sandbox login? Email <a href="mailto:{{ support_email }}">{{ support_email }}</a>.
+          {% endif %}
+        </div>
+      {% endif %}
       {% if job.qbo_connected %}
         {% if qbo_connection.company_name %}
           <p><strong>Company:</strong> {{ qbo_connection.company_name }}</p>
@@ -82,14 +96,41 @@
             <button class="btn full-width" type="submit">Disconnect QuickBooks</button>
           </form>
           {% if qbo_real_import %}
-            <p class="note">Real import is <strong>enabled</strong>. Clicking this will create journal entries in your QuickBooks sandbox.</p>
+            <p class="note">
+              Real import is <strong>enabled</strong>.
+              {% if qbo_is_sandbox %}
+                Clicking this will create journal entries in the
+                <strong>QuickBooks sandbox</strong> company you connected
+                &mdash; nothing is posted to a real customer's books.
+              {% else %}
+                Clicking this will create journal entries in the
+                <strong>QuickBooks Online company</strong> shown above.
+              {% endif %}
+            </p>
           {% else %}
             <p class="note">Demo mode: this simulates the import. To perform a real sandbox import, set <code>QBO_REAL_IMPORT=1</code> and restart the app.</p>
           {% endif %}
         </div>
       {% else %}
         {% if qbo_configured %}
-          <p class="muted">Connect this migration to QuickBooks Online to complete the import.</p>
+          {% if qbo_is_sandbox %}
+            <p class="muted">
+              Click <strong>Connect to QuickBooks</strong> below. Intuit will
+              ask you to sign in. <strong>Use the sandbox QuickBooks company
+              we provided</strong>, not a real firm's QuickBooks Online
+              account. Real customer QuickBooks companies require Intuit
+              production approval and production credentials, which this
+              build does not yet have.
+            </p>
+            <p class="note">
+              If you sign in with a real QuickBooks Online account, Intuit
+              will show "Uh oh, there's a connection problem" and the
+              connection will fail. That is expected in sandbox mode and
+              nothing in your real QuickBooks is changed.
+            </p>
+          {% else %}
+            <p class="muted">Connect this migration to QuickBooks Online to complete the import. Sign in with the QuickBooks Online company that should receive these journal entries.</p>
+          {% endif %}
           <a href="/jobs/{{ job.id }}/connect-qbo" class="btn btn-primary">Connect to QuickBooks</a>
         {% else %}
           <p class="muted">QuickBooks OAuth not configured. Set environment variables to enable.</p>

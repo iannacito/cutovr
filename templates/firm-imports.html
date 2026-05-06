@@ -8,6 +8,18 @@
     <p>Every attempted import for this firm, across all jobs. Use this to spot which job failed, which QuickBooks company received which entries, and whether anything was reversed.</p>
   </div>
 
+  {% if qbo_is_sandbox %}
+    <div class="card warning-panel" role="status" aria-label="Sandbox testing mode">
+      <h3>Sandbox Testing Mode</h3>
+      <p>
+        Imports below were posted to QuickBooks <strong>Sandbox</strong>
+        companies, not real customer books. Production-company imports
+        require Intuit production approval and production credentials,
+        which this build does not yet have.
+      </p>
+    </div>
+  {% endif %}
+
   <section class="card">
     <div class="panel-head">
       <div>
