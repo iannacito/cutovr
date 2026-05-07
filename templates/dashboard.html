@@ -6,6 +6,24 @@
     <p class="eyebrow">{{ firm.name }} &middot; Migration console</p>
     <h1>Move PCLaw to QuickBooks <em>cleanly</em>.</h1>
     <p>Upload a PCLaw general ledger, connect QuickBooks Online, map accounts, and post journal entries with a complete audit trail. Files are encrypted at rest. Imports are duplicate-protected. Reversals are one click and clearly labeled in QuickBooks.</p>
+    <p style="margin-top:var(--space-3);">
+      <a class="btn btn-primary" href="{{ url_for('onboarding') }}">Read the onboarding guide</a>
+      <a class="btn" href="{{ url_for('onboarding_template_csv') }}">Download CSV template</a>
+    </p>
+  </div>
+
+  <div class="card warning-panel" role="status" aria-label="Private beta guidance" style="margin-bottom:var(--space-6);">
+    <h3>Private beta &mdash; please read before importing</h3>
+    <p>
+      <strong>Do not upload a full client ledger on your first run.</strong>
+      Export a small slice of the GL (one or two transactions), import
+      it, and confirm the journal entries land cleanly in QuickBooks
+      before sending the full file. Always review the
+      <em>Map accounts</em> screen before posting &mdash; a wrong
+      mapping will write to the wrong QuickBooks account and has to
+      be reversed afterward.
+      <a href="{{ url_for('onboarding') }}">See the full onboarding guide.</a>
+    </p>
   </div>
 
   {% if not qbo_configured %}

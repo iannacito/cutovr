@@ -28,8 +28,11 @@ from qbo_auth import QBOAuthHandler
 from qbo_client import QBOClient, QBOError
 from encryption import encrypt_file, decrypt_file, encrypt_token, decrypt_token
 from import_history import ImportHistory, sha256_of_file
+from preflight import build_preflight_summary, friendly_validation_message
 import qbo_error_hint
 import csv as _csv
+from io import StringIO
+from flask import Response
 
 app = Flask(__name__)
 
@@ -732,6 +735,76 @@ def support():
     return render_template("support.html")
 
 
+# ---------------------------------------------------------------------------
+# Onboarding / import-prep guide. Public page so customers can read it
+# before signing in. The accompanying CSV downloads are also public — they
+# are static demo data and do not reveal anything about real ledgers.
+# ---------------------------------------------------------------------------
+
+ONBOARDING_TEMPLATE_CSV = (
+    "transaction_id,date,account_number,account_name,debit,credit,memo\n"
+    "JE-0001,2026-04-01,1000,Operating Bank,1000.00,0.00,Opening operating cash\n"
+    "JE-0001,2026-04-01,3000,Owner Equity,0.00,1000.00,Opening operating cash\n"
+    "JE-0002,2026-04-02,1100,Accounts Receivable,2500.00,0.00,Sample matter invoice\n"
+    "JE-0002,2026-04-02,4000,Legal Fees Revenue,0.00,2500.00,Sample matter invoice\n"
+)
+
+
+@app.route("/onboarding")
+def onboarding():
+    """Customer-facing onboarding & import-prep guide.
+
+    Public so prospective customers can read it before signing up. Linked
+    from the dashboard nav for logged-in firm admins.
+    """
+    return render_template("onboarding.html")
+
+
+@app.route("/onboarding/template.csv")
+def onboarding_template_csv():
+    """Tiny, hand-curated CSV demonstrating the required columns.
+
+    Used by the onboarding page download button. Plain CSV body so it
+    opens in Excel / Numbers / Sheets cleanly. No customer data — these
+    are obviously-fake transactions on month/year boundaries.
+    """
+    return Response(
+        ONBOARDING_TEMPLATE_CSV,
+        mimetype="text/csv",
+        headers={
+            "Content-Disposition": (
+                "attachment; filename=pclaw_qbo_template.csv"
+            ),
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@app.route("/onboarding/sample.csv")
+def onboarding_sample_csv():
+    """Larger sample GL covering trust, A/R, A/P, expenses.
+
+    Reuses the bundled multi-transaction demo file from `test_data/` so
+    the file customers see matches what the smoke-test suite exercises.
+    Falls back to the small template if the demo file is missing.
+    """
+    sample_path = BASE_DIR / "test_data" / "02_general_ledger.csv"
+    try:
+        body = sample_path.read_text(encoding="utf-8")
+    except OSError:
+        body = ONBOARDING_TEMPLATE_CSV
+    return Response(
+        body,
+        mimetype="text/csv",
+        headers={
+            "Content-Disposition": (
+                "attachment; filename=pclaw_qbo_sample_general_ledger.csv"
+            ),
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 @app.route("/healthz")
 def healthz():
     """Lightweight, public health probe.
@@ -852,16 +925,35 @@ def upload():
         # don't need to convert it to the flat QBO export here.
         with temp_path.open("r", newline="", encoding="utf-8-sig") as _f:
             _reader = _csv.DictReader(_f)
-            _is_gl = is_gl_format(_reader.fieldnames)
-            _row_count = sum(1 for _ in _reader)
+            _fieldnames = list(_reader.fieldnames or [])
+            _is_gl = is_gl_format(_fieldnames)
+            _gl_rows = list(_reader) if _is_gl else []
+            _row_count = len(_gl_rows) if _is_gl else sum(
+                1 for _ in _csv.DictReader(temp_path.open("r", newline="", encoding="utf-8-sig"))
+            )
 
         if _is_gl:
+            preflight = build_preflight_summary(_gl_rows, _fieldnames)
             jobs[job_id]["status"] = "Ready for QBO connection"
-            jobs[job_id]["summary"] = {"row_count": _row_count, "format": "GL (transaction_id)"}
-            flash(
-                "PCLaw GL file accepted. Connect to QuickBooks to complete the import.",
-                "success",
-            )
+            jobs[job_id]["summary"] = {
+                "row_count": _row_count,
+                "format": "GL (transaction_id)",
+                "balanced": preflight["balanced"],
+            }
+            jobs[job_id]["preflight"] = preflight
+            if preflight["ready"]:
+                flash(
+                    "PCLaw GL file accepted. Review the preflight checklist, "
+                    "then connect QuickBooks to continue.",
+                    "success",
+                )
+            else:
+                flash(
+                    "PCLaw GL file uploaded with warnings. Review the "
+                    "preflight checklist on the job page before connecting "
+                    "QuickBooks.",
+                    "error",
+                )
         else:
             rows = parse_pclaw_csv(temp_path)
             out_path = OUTPUT_DIR / f"{timestamp}_qbo_import.csv"
@@ -878,8 +970,13 @@ def upload():
 
             flash("Migration package prepared successfully. Connect to QuickBooks to complete.", "success")
     except Exception as e:
-        jobs[job_id]["status"] = f"Error: {str(e)}"
-        flash(f"Processing error: {str(e)}", "error")
+        headline, action = friendly_validation_message(e)
+        jobs[job_id]["status"] = f"Error: {headline}"
+        jobs[job_id]["last_validation_error"] = {
+            "headline": headline,
+            "action": action,
+        }
+        flash(f"{headline} {action}", "error")
     finally:
         temp_path.unlink(missing_ok=True)
 
@@ -895,6 +992,18 @@ def job_detail(job_id):
     job, _user = _job_or_403(job_id)
     qbo_conn = _get_qbo_connection(job_id) or {}
     job_history = history.get_history_for_job(job_id)
+
+    # Surface counts the preflight panel renders. We compute these here
+    # rather than on the job dict so they always reflect the current
+    # mapping / connection state, even for jobs created before preflight
+    # existed.
+    preflight = job.get("preflight") or {}
+    unmapped_count = len(job.get("unmapped_accounts") or [])
+    qbo_connection_status = "connected" if job.get("qbo_connected") else "not_connected"
+    qbo_env_status = (
+        "production" if (QBO_ENVIRONMENT or "").lower() == "production" else "sandbox"
+    )
+
     return render_template(
         "job-detail.html",
         job=job,
@@ -902,6 +1011,10 @@ def job_detail(job_id):
         qbo_configured=QBO_CLIENT_ID != "your-client-id-here",
         qbo_real_import=QBO_REAL_IMPORT,
         job_history=job_history,
+        preflight=preflight,
+        unmapped_count=unmapped_count,
+        qbo_connection_status=qbo_connection_status,
+        qbo_env_status=qbo_env_status,
     )
 
 
