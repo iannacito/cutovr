@@ -1,0 +1,185 @@
+{% extends "_base.html" %}
+{% block title %}Operator: {{ firm.name }}{% endblock %}
+{% block content %}
+<section class="page">
+  <div class="hero">
+    <p class="eyebrow">Operator &middot; Firm #{{ firm.id }}</p>
+    <h1>{{ firm.name }}</h1>
+    <p>Read-only operator detail. No tokens, no secrets, no triggering of imports/reversals/disconnects from this view.</p>
+    <p><a class="btn" href="{{ url_for('operator_dashboard') }}">&larr; Back to operator panel</a></p>
+  </div>
+
+  <section class="card">
+    <p class="eyebrow">Firm</p>
+    <ul class="stack-sm">
+      <li>ID: <code>{{ firm.id }}</code></li>
+      <li>Name: <strong>{{ firm.name }}</strong></li>
+      <li>Created: <code>{{ firm.created_at }}</code></li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <p class="eyebrow">Users ({{ users|length }})</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Email</th><th>Role</th><th>Created</th></tr></thead>
+        <tbody>
+          {% for u in users %}
+            <tr>
+              <td>{{ u.id }}</td>
+              <td>{{ u.email }}</td>
+              <td><code>{{ u.role }}</code></td>
+              <td>{{ u.created_at[:19].replace("T", " ") }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="4" class="muted">No users.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <p class="eyebrow">QuickBooks connections ({{ qbo_connections|length }})</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Job</th>
+            <th>realmId</th>
+            <th>Company</th>
+            <th>Country</th>
+            <th>Token expires</th>
+            <th>Connected</th>
+            <th>Updated</th>
+            <th>Last info error</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in qbo_connections %}
+            <tr>
+              <td><code style="font-size:.8em;">{{ c.job_id }}</code></td>
+              <td><code>{{ c.realm_id }}</code></td>
+              <td>{{ c.company_name or c.legal_name or '—' }}</td>
+              <td>{{ c.country or '—' }}</td>
+              <td>{% if c.expires_at %}{{ c.expires_at[:19].replace("T", " ") }}{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
+              <td>{{ c.connected_at[:19].replace("T", " ") }}</td>
+              <td>{% if c.updated_at %}{{ c.updated_at[:19].replace("T", " ") }}{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
+              <td>{% if c.company_info_error %}<code style="font-size:.8em;">{{ c.company_info_error[:120] }}</code>{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="8" class="muted">No connections.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="note" style="margin-top:var(--space-4);">
+      Encrypted access/refresh tokens are stored on disk but are
+      <strong>never</strong> rendered or returned by this view.
+    </p>
+  </section>
+
+  <section class="card">
+    <p class="eyebrow">Jobs ({{ jobs|length }})</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Job ID</th>
+            <th>Company</th>
+            <th>Source file</th>
+            <th>Status</th>
+            <th>QBO?</th>
+            <th>Created</th>
+            <th>Updated</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for j in jobs %}
+            <tr>
+              <td><code style="font-size:.8em;">{{ j.id }}</code></td>
+              <td>{{ j.company or '—' }}</td>
+              <td>{{ j.source_file or '—' }}</td>
+              <td><span class="badge">{{ j.status }}</span></td>
+              <td>{% if j.qbo_connected %}yes{% else %}no{% endif %}</td>
+              <td>{{ j.created_at[:19].replace("T", " ") }}</td>
+              <td>{{ j.updated_at[:19].replace("T", " ") }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="7" class="muted">No jobs.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <p class="eyebrow">Imports ({{ imports|length }})</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>When (UTC)</th>
+            <th>Job</th>
+            <th>QBO company</th>
+            <th>realmId</th>
+            <th>Txns</th>
+            <th>Status</th>
+            <th>Reversal</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for h in imports %}
+            <tr>
+              <td>{{ h.id }}</td>
+              <td>{{ h.created_at[:19].replace("T", " ") }}</td>
+              <td><code style="font-size:.8em;">{{ h.job_id }}</code></td>
+              <td>{{ h.company_name or '—' }}</td>
+              <td><code>{{ h.realm_id }}</code></td>
+              <td>{{ h.transaction_count }}</td>
+              <td><span class="badge {% if h.status == 'success' %}success{% else %}error{% endif %}">{{ h.status }}</span></td>
+              <td>
+                {% if h.reversal %}
+                  <span class="badge {% if h.reversal.status == 'success' %}success{% else %}error{% endif %}">Rev {{ h.reversal.status }}</span>
+                {% else %}
+                  <span class="muted">&mdash;</span>
+                {% endif %}
+              </td>
+              <td>{% if h.notes %}<code style="font-size:.8em;">{{ h.notes }}</code>{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="9" class="muted">No imports.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <p class="eyebrow">Recent audit log ({{ audit|length }})</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>#</th><th>When (UTC)</th><th>User</th><th>Action</th><th>Target</th><th>Detail</th></tr>
+        </thead>
+        <tbody>
+          {% for a in audit %}
+            <tr>
+              <td>{{ a.id }}</td>
+              <td>{{ a.created_at[:19].replace("T", " ") }}</td>
+              <td>{% if a.user_id %}#{{ a.user_id }}{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
+              <td><code>{{ a.action }}</code></td>
+              <td>{% if a.target_type %}{{ a.target_type }}:{{ a.target_id }}{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
+              <td>{% if a.details %}<code style="font-size:.8em;">{{ a.details[:200] }}</code>{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="6" class="muted">No audit entries.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</section>
+{% endblock %}

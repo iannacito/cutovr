@@ -9,6 +9,7 @@ import requests
 
 from app_db import AppDB
 import branding
+import operator_panel
 import readiness
 from pclaw_parser import parse_pclaw_csv, export_qbo_csv
 from pclaw_pipeline import (
@@ -2282,6 +2283,73 @@ def delete_job(job_id):
 def job_api(job_id):
     job, _user = _job_or_403(job_id)
     return jsonify(job)
+
+
+# ---------------------------------------------------------------------------
+# Operator / admin panel
+#
+# Gating: env var OPERATOR_EMAILS lists who is allowed in. The role column
+# is per-firm and every signup creates an 'admin' for *that* firm — it is
+# not a global app role and must not be used to gate this panel.
+#
+# The panel is read-only in v1: no triggering imports/reversals/disconnects.
+# All mutation routes still require firm-scoped login.
+# ---------------------------------------------------------------------------
+
+def _is_operator():
+    return operator_panel.is_operator_user(current_user())
+
+
+def operator_required(view):
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        user = current_user()
+        if not user:
+            flash("Please log in to continue.", "error")
+            return redirect(url_for("login", next=request.path))
+        if not operator_panel.is_operator_user(user):
+            # 404 rather than 403 so we don't confirm the panel exists for
+            # non-operators. This matches the cross-firm 404 convention
+            # used elsewhere (see _job_or_403).
+            abort(404)
+        return view(*args, **kwargs)
+    return wrapper
+
+
+@app.context_processor
+def _inject_operator_flag():
+    """Make `is_operator` available to every template so the nav can
+    conditionally show the Operator link only for allowed emails."""
+    return {"is_operator": _is_operator()}
+
+
+@app.route("/operator")
+@operator_required
+def operator_dashboard():
+    metrics = operator_panel.collect_metrics(db, history)
+    firms = operator_panel.list_firms_overview(db, history)
+    imports = operator_panel.recent_imports(history, limit=25)
+    errors = operator_panel.recent_errors(db, limit=25)
+    return render_template(
+        "operator-dashboard.html",
+        metrics=metrics,
+        firms=firms,
+        recent_imports=imports,
+        recent_errors=errors,
+        operator_emails_count=len(operator_panel.get_operator_emails()),
+        qbo_environment=QBO_ENVIRONMENT,
+        qbo_real_import=QBO_REAL_IMPORT,
+        app_env=APP_ENV,
+    )
+
+
+@app.route("/operator/firm/<int:firm_id>")
+@operator_required
+def operator_firm_detail(firm_id):
+    detail = operator_panel.firm_detail(db, history, firm_id)
+    if not detail:
+        abort(404)
+    return render_template("operator-firm.html", **detail)
 
 
 if __name__ == "__main__":

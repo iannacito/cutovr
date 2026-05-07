@@ -1,0 +1,194 @@
+{% extends "_base.html" %}
+{% block title %}Operator panel{% endblock %}
+{% block content %}
+<section class="page">
+  <div class="hero">
+    <p class="eyebrow">Internal &middot; Operator view</p>
+    <h1>Operator <em>panel</em>.</h1>
+    <p>Cross-firm operational view for app operators. Read-only. Never displays secrets, tokens, or raw OAuth bodies.</p>
+  </div>
+
+  <section class="card">
+    <p class="eyebrow">Deploy</p>
+    <ul class="stack-sm">
+      <li>App env: <code>{{ app_env }}</code></li>
+      <li>QBO environment: <code>{{ qbo_environment }}</code></li>
+      <li>Real QBO writes enabled: <code>{{ qbo_real_import }}</code></li>
+      <li>Operator allowlist size: <code>{{ operator_emails_count }}</code> email(s)</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <p class="eyebrow">High-level metrics</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+        <tbody>
+          <tr><td>Total firms</td><td>{{ metrics.total_firms }}</td></tr>
+          <tr><td>Total users</td><td>{{ metrics.total_users }}</td></tr>
+          <tr><td>Total jobs (uploads)</td><td>{{ metrics.total_jobs }}</td></tr>
+          <tr><td>Total imports attempted</td><td>{{ metrics.total_imports }}</td></tr>
+          <tr><td>Successful imports</td><td>{{ metrics.successful_imports }}</td></tr>
+          <tr><td>Failed/blocked imports</td><td>{{ metrics.failed_imports }}</td></tr>
+          <tr><td>Reversed imports</td><td>{{ metrics.reversed_imports }}</td></tr>
+          <tr><td>QBO connections (rows)</td><td>{{ metrics.qbo_connections }}</td></tr>
+          <tr><td>Distinct QBO realms connected</td><td>{{ metrics.distinct_realms }}</td></tr>
+          <tr><td>Login failures (last 7d)</td><td>{{ metrics.recent_login_failures }}</td></tr>
+          <tr><td>OAuth / token-refresh failures (last 7d)</td><td>{{ metrics.recent_oauth_failures }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <p class="eyebrow">Firms</p>
+    <h2>{{ firms|length }} firm(s)</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Firm</th>
+            <th>Created</th>
+            <th>Admin email</th>
+            <th>Users</th>
+            <th>Jobs</th>
+            <th>QBO</th>
+            <th>Last import</th>
+            <th>Imports (ok / fail)</th>
+            <th>Last error</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if firms %}
+            {% for f in firms %}
+              <tr>
+                <td>{{ f.firm_id }}</td>
+                <td>{{ f.firm_name }}</td>
+                <td>{% if f.created_at %}{{ f.created_at[:10] }}{% else %}&mdash;{% endif %}</td>
+                <td>{{ f.admin_email or '—' }}</td>
+                <td>{{ f.user_count }}</td>
+                <td>{{ f.job_count }}</td>
+                <td>
+                  {% if f.qbo_connected %}
+                    <span class="badge success">{{ f.qbo_realms }} realm(s)</span>
+                  {% else %}
+                    <span class="muted">&mdash;</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if f.last_import_at %}
+                    {{ f.last_import_at[:19].replace("T", " ") }}
+                    {% if f.last_import_status %}
+                      <span class="badge {% if f.last_import_status == 'success' %}success{% else %}error{% endif %}">{{ f.last_import_status }}</span>
+                    {% endif %}
+                  {% else %}
+                    <span class="muted">&mdash;</span>
+                  {% endif %}
+                </td>
+                <td>{{ f.successful_imports }} / {{ f.failed_imports }}</td>
+                <td>
+                  {% if f.last_error_note %}
+                    <code style="font-size:.8em;">{{ f.last_error_note }}</code>
+                  {% else %}
+                    <span class="muted">&mdash;</span>
+                  {% endif %}
+                </td>
+                <td><a class="btn" href="{{ url_for('operator_firm_detail', firm_id=f.firm_id) }}">Detail</a></td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr><td colspan="11" style="text-align:center;color:var(--ink-muted);padding:var(--space-6);">No firms yet.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <p class="eyebrow">Recent imports</p>
+    <h2>Last {{ recent_imports|length }} import attempt(s)</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>When (UTC)</th>
+            <th>Job</th>
+            <th>QBO company</th>
+            <th>realmId</th>
+            <th>Txns</th>
+            <th>Status</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if recent_imports %}
+            {% for h in recent_imports %}
+              <tr>
+                <td>{{ h.id }}</td>
+                <td>{{ h.created_at[:19].replace("T", " ") }}</td>
+                <td><code style="font-size:.8em;">{{ h.job_id }}</code></td>
+                <td>{{ h.company_name or '—' }}</td>
+                <td><code>{{ h.realm_id }}</code></td>
+                <td>{{ h.transaction_count }}</td>
+                <td><span class="badge {% if h.status == 'success' %}success{% else %}error{% endif %}">{{ h.status }}</span></td>
+                <td>{% if h.notes %}<code style="font-size:.8em;">{{ h.notes }}</code>{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr><td colspan="8" style="text-align:center;color:var(--ink-muted);padding:var(--space-6);">No imports recorded.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <p class="eyebrow">Recent errors / auth failures</p>
+    <h2>Last {{ recent_errors|length }} event(s)</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>When (UTC)</th>
+            <th>Firm</th>
+            <th>User</th>
+            <th>Action</th>
+            <th>Target</th>
+            <th>Detail</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if recent_errors %}
+            {% for e in recent_errors %}
+              <tr>
+                <td>{{ e.id }}</td>
+                <td>{{ e.created_at[:19].replace("T", " ") }}</td>
+                <td>
+                  {% if e.firm_id %}
+                    <a href="{{ url_for('operator_firm_detail', firm_id=e.firm_id) }}">#{{ e.firm_id }}</a>
+                  {% else %}<span class="muted">&mdash;</span>{% endif %}
+                </td>
+                <td>{% if e.user_id %}#{{ e.user_id }}{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
+                <td><code>{{ e.action }}</code></td>
+                <td>{% if e.target_type %}{{ e.target_type }}:{{ e.target_id }}{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
+                <td>{% if e.details %}<code style="font-size:.8em;">{{ e.details }}</code>{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr><td colspan="7" style="text-align:center;color:var(--ink-muted);padding:var(--space-6);">No recent errors.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+    <p class="note" style="margin-top:var(--space-4);">
+      Audit log entries are kept indefinitely. The <code>details</code>
+      column is truncated to 200 characters and never contains tokens or
+      OAuth codes by construction; we still review periodically.
+    </p>
+  </section>
+</section>
+{% endblock %}
