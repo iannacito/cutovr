@@ -1,0 +1,192 @@
+{% extends "_base.html" %}
+{% block title %}Onboarding &mdash; {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page page--prose">
+  <p class="eyebrow">Welcome</p>
+  <h1 class="display">Onboarding &amp; <em>import prep</em></h1>
+  <p class="muted">
+    A short, plain-English walkthrough for law-firm staff: how to move a
+    PCLaw general ledger into QuickBooks Online with this app, what to
+    check at each step, and how to roll it back if something looks wrong
+    in QuickBooks.
+  </p>
+
+  <div class="card warning-panel" style="margin-top:var(--space-6);">
+    <h3>Before you start &mdash; private beta guidance</h3>
+    <ul class="secure-list">
+      <li>
+        <strong>Do not upload a full client ledger on your first run.</strong>
+        Export a small slice of the GL covering one or two transactions
+        and confirm it lands correctly in QuickBooks before sending the
+        full file.
+      </li>
+      <li>
+        <strong>Always review the mapped accounts</strong> on the
+        <em>Map accounts</em> screen before posting. A wrong mapping
+        will post real journal entries to the wrong QuickBooks account,
+        which has to be reversed afterwards.
+      </li>
+      <li>
+        <strong>Production mode posts to the real QuickBooks company.</strong>
+        You will be asked to type <code>IMPORT</code> to confirm. Read
+        the company name on screen carefully &mdash; that's the QBO
+        company that will receive the journal entries.
+      </li>
+      <li>
+        <strong>Reversal is one-click but not invisible.</strong>
+        QuickBooks shows reversed journal entries as new
+        <code>REV-&hellip;</code> entries. The original lines stay in the
+        Journal report; QuickBooks does not visually mark them as voided.
+      </li>
+    </ul>
+  </div>
+
+  <section class="card" style="margin-top:var(--space-6);">
+    <h2>The full workflow</h2>
+    <ol class="secure-list" style="counter-reset:steps;">
+      <li>
+        <strong>Export the PCLaw General Ledger as CSV.</strong>
+        In PCLaw, run the General Ledger report for the period you want
+        to migrate and save it as CSV. The file must include the columns
+        listed in &ldquo;Required columns&rdquo; below.
+      </li>
+      <li>
+        <strong>Upload the CSV.</strong>
+        From the <a href="{{ url_for('dashboard') }}">dashboard</a>,
+        enter the firm/company name (must match the company in
+        QuickBooks Online) and pick the CSV. The file is encrypted
+        before any processing happens.
+      </li>
+      <li>
+        <strong>Review the import preflight.</strong>
+        On the job page you'll see a preflight checklist: number of
+        transactions, debit and credit totals, whether the file
+        balances, and how many unique accounts were detected. Stop here
+        if anything looks wrong &mdash; nothing has been sent to
+        QuickBooks yet.
+      </li>
+      <li>
+        <strong>Map your PCLaw accounts to QuickBooks accounts.</strong>
+        Click <em>Map accounts</em> on the job. You will see one row per
+        account from the CSV; pick the matching QuickBooks Online
+        account on the right. The import is blocked until every account
+        is mapped.
+      </li>
+      <li>
+        <strong>Connect QuickBooks Online.</strong>
+        Click <em>Connect to QuickBooks</em>. Intuit will ask you to
+        sign in and pick the company that should receive the journal
+        entries. The QBO company name is shown back on the job page so
+        you can confirm before importing.
+      </li>
+      <li>
+        <strong>Confirm the production import.</strong>
+        In production mode, the job page shows a final confirmation
+        card with the QBO company name, the number of rows, and a text
+        box. You must type <code>IMPORT</code> exactly to enable the
+        post.
+      </li>
+      <li>
+        <strong>Import.</strong>
+        Each PCLaw transaction posts as one QuickBooks JournalEntry.
+        Duplicate protection runs first &mdash; if the same file or
+        transaction ids were already imported into this QBO company,
+        the import is blocked.
+      </li>
+      <li>
+        <strong>Verify in QuickBooks.</strong>
+        Click <em>Re-verify against QuickBooks</em> on the job page to
+        re-fetch every created entry from QBO and compare totals against
+        the CSV. You can also open the QuickBooks Journal report and
+        spot-check the entries by date.
+      </li>
+      <li>
+        <strong>Reverse if needed.</strong>
+        If you imported into the wrong period, the wrong company, or
+        with the wrong account mapping, open the job, scroll to
+        <em>Reverse this import</em>, type <code>REVERSE</code>, and
+        click the button. QuickBooks gets offsetting JournalEntries
+        (<code>DocNumber</code> starting <code>REV-</code>) and the
+        originals stay visible for audit.
+      </li>
+    </ol>
+  </section>
+
+  <section class="card" style="margin-top:var(--space-6);" id="required-columns">
+    <h2>Required columns</h2>
+    <p class="muted">
+      Your CSV must have these columns (case-sensitive). Any extra
+      columns &mdash; <code>description</code>, <code>reference</code>,
+      <code>client_id</code>, <code>matter_id</code>,
+      <code>customer_name</code>, <code>vendor_name</code> &mdash; are
+      kept but optional.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Column</th><th>What it means</th><th>Example</th></tr></thead>
+        <tbody>
+          <tr><td><code>transaction_id</code></td><td>A unique id for the journal entry. Multiple rows with the same id form one balanced QBO JournalEntry.</td><td><code>JE-0001</code></td></tr>
+          <tr><td><code>date</code></td><td>Posting date for the entry, ISO format.</td><td><code>2026-05-01</code></td></tr>
+          <tr><td><code>account_number</code></td><td>The PCLaw account number. Used first for matching to QBO accounts.</td><td><code>1000</code></td></tr>
+          <tr><td><code>account_name</code></td><td>The PCLaw account name. Used as a fallback when the account number doesn't match.</td><td><code>Operating Bank</code></td></tr>
+          <tr><td><code>debit</code></td><td>Debit amount for this row, or <code>0</code>.</td><td><code>1000.00</code></td></tr>
+          <tr><td><code>credit</code></td><td>Credit amount for this row, or <code>0</code>.</td><td><code>0.00</code></td></tr>
+          <tr><td><code>memo</code> <span class="muted">(optional)</span></td><td>Free-text description copied into the QBO line description.</td><td><code>Opening operating cash</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin-top:var(--space-4);">
+      <a class="btn btn-primary" href="{{ url_for('onboarding_template_csv') }}">Download sample CSV template</a>
+      <a class="btn" href="{{ url_for('onboarding_sample_csv') }}">Download larger sample (multi-transaction)</a>
+    </p>
+    <p class="note">
+      The sample template contains two balanced demo transactions and
+      is safe to upload &mdash; nothing reaches QuickBooks until you
+      explicitly connect and confirm.
+    </p>
+  </section>
+
+  <section class="card" style="margin-top:var(--space-6);">
+    <h2>What we check before posting</h2>
+    <ul class="secure-list">
+      <li>The CSV has every required column.</li>
+      <li>Each transaction balances (debits == credits).</li>
+      <li>Every row has a date and at least one of account_number / account_name.</li>
+      <li>Every PCLaw account is mapped to a QuickBooks Online account.</li>
+      <li>QuickBooks is connected and the realm/company id is known.</li>
+      <li>The same file (by SHA-256) has not already been imported into this QBO company.</li>
+      <li>None of the transaction ids in the file have already been posted to this QBO company.</li>
+      <li>You have explicitly confirmed the production import by typing <code>IMPORT</code>.</li>
+    </ul>
+    <p class="note">
+      If any check fails, the import is blocked and a beginner-friendly
+      message is shown on the job page. Nothing is posted to QuickBooks
+      until every check passes.
+    </p>
+  </section>
+
+  <section class="card" style="margin-top:var(--space-6);">
+    <h2>Need help?</h2>
+    <p>
+      Read the <a href="{{ url_for('support') }}">support page</a> for
+      common issues, or email
+      {% if support_email and "your-domain.example" not in support_email %}
+        <a href="mailto:{{ support_email }}">{{ support_email }}</a>.
+      {% else %}
+        the address shown on the support page.
+      {% endif %}
+      Include the job id from the top of the job page and the exact
+      flash message you saw &mdash; please don't paste raw ledger
+      content or OAuth tokens.
+    </p>
+  </section>
+
+  <section style="margin-top:var(--space-6);">
+    <p>
+      <a class="btn btn-primary" href="{{ url_for('dashboard') }}">Back to dashboard</a>
+      <a class="btn" href="{{ url_for('readiness_page') }}">Go-live readiness</a>
+      <a class="btn" href="{{ url_for('quickbooks_manage') }}">QuickBooks connections</a>
+    </p>
+  </section>
+</section>
+{% endblock %}

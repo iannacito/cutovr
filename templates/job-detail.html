@@ -12,6 +12,15 @@
     </div>
   {% endif %}
 
+  {% if job.last_validation_error %}
+    <div class="flash error">
+      <strong>{{ job.last_validation_error.headline }}</strong>
+      {{ job.last_validation_error.action }}
+      <a href="{{ url_for('onboarding') }}">Open the onboarding guide</a>
+      for the required-column reference.
+    </div>
+  {% endif %}
+
   {% if job.last_error %}
     <section class="card error-panel">
       <p class="eyebrow" style="color:var(--error);">Last import error</p>
@@ -49,6 +58,108 @@
       </div>
     </div>
   </section>
+
+  {% if preflight %}
+  <section class="card" id="preflight">
+    <p class="eyebrow">Import preflight</p>
+    <h2>What we found in your CSV</h2>
+    <p class="muted">
+      A snapshot of the uploaded ledger before anything is sent to
+      QuickBooks. Review this before connecting QBO &mdash; nothing has
+      been posted yet.
+    </p>
+    <dl class="summary-grid">
+      <div><dt>Transactions</dt><dd>{{ preflight.transaction_count }}</dd></div>
+      <div><dt>Lines</dt><dd>{{ preflight.line_count }}</dd></div>
+      <div><dt>Total debits</dt><dd>${{ preflight.total_debits }}</dd></div>
+      <div><dt>Total credits</dt><dd>${{ preflight.total_credits }}</dd></div>
+      <div>
+        <dt>Balanced</dt>
+        <dd>
+          {% if preflight.balanced %}
+            <span class="badge success">Yes</span>
+          {% else %}
+            <span class="badge error">No &mdash; debits and credits do not match</span>
+          {% endif %}
+        </dd>
+      </div>
+      <div><dt>Unique accounts</dt><dd>{{ preflight.unique_account_count }}</dd></div>
+      <div>
+        <dt>Unmapped accounts</dt>
+        <dd>
+          {% if unmapped_count == 0 %}
+            <span class="badge success">0</span>
+          {% else %}
+            <span class="badge error">{{ unmapped_count }}</span>
+            &mdash; <a href="{{ url_for('account_mapping', job_id=job.id) }}">Map accounts</a>
+          {% endif %}
+        </dd>
+      </div>
+      <div>
+        <dt>Missing required columns</dt>
+        <dd>
+          {% if preflight.missing_required_columns %}
+            <span class="badge error">{{ preflight.missing_required_columns|join(', ') }}</span>
+          {% else %}
+            <span class="badge success">None</span>
+          {% endif %}
+        </dd>
+      </div>
+      <div>
+        <dt>QuickBooks connection</dt>
+        <dd>
+          {% if qbo_connection_status == 'connected' %}
+            <span class="badge success">Connected</span>
+          {% else %}
+            <span class="badge">Not connected</span>
+          {% endif %}
+        </dd>
+      </div>
+      <div>
+        <dt>QuickBooks environment</dt>
+        <dd>
+          {% if qbo_env_status == 'production' %}
+            <span class="badge success">Production</span>
+          {% else %}
+            <span class="badge warn">Sandbox</span>
+          {% endif %}
+        </dd>
+      </div>
+    </dl>
+
+    {% if preflight.missing_required_columns %}
+      <p class="flash error" style="margin-top:var(--space-4);">
+        Your CSV is missing
+        <strong>{{ preflight.missing_required_columns|join(', ') }}</strong>.
+        Re-export from PCLaw or copy the required columns from the
+        <a href="{{ url_for('onboarding') }}">onboarding guide</a>.
+      </p>
+    {% elif not preflight.balanced %}
+      <p class="flash error" style="margin-top:var(--space-4);">
+        The total debits and credits in this file do not match. Re-export
+        the GL from PCLaw and confirm the period is closed.
+      </p>
+    {% elif preflight.rows_missing_account or preflight.rows_missing_date %}
+      <p class="flash error" style="margin-top:var(--space-4);">
+        {% if preflight.rows_missing_account %}
+          {{ preflight.rows_missing_account }} row(s) are missing both account number and account name.
+        {% endif %}
+        {% if preflight.rows_missing_date %}
+          {{ preflight.rows_missing_date }} row(s) are missing a date.
+        {% endif %}
+        Fix these in the CSV and re-upload.
+      </p>
+    {% else %}
+      <p class="note" style="margin-top:var(--space-4);">
+        Preflight checks passed. Continue to <em>Map accounts</em> and
+        <em>Connect QuickBooks</em> below.
+        <strong>Reminder:</strong> on your first run, upload a small slice
+        of the GL and confirm it lands cleanly in QuickBooks before
+        sending the full client ledger.
+      </p>
+    {% endif %}
+  </section>
+  {% endif %}
 
   <section class="grid-two">
     <article class="card">
