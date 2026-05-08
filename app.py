@@ -1032,9 +1032,10 @@ def _verify_import(job, qbo):
 
 @app.route("/")
 def index():
+    """Public landing page for prospects; authenticated users go to dashboard."""
     if current_user():
         return redirect(url_for("dashboard"))
-    return redirect(url_for("login"))
+    return render_template("landing.html")
 
 
 @app.route("/privacy")
