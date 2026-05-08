@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="PCLaw Migrate">
+  <title>PCLaw Migrate</title>
+  <rect width="64" height="64" rx="12" ry="12" fill="#1f3b5b"/>
+  <path d="M14 46 V18 H26 a8 8 0 0 1 0 16 H20 V46 Z M20 24 V28 H26 a2 2 0 0 0 0 -4 Z"
+        fill="#ffffff"/>
+  <path d="M34 46 V18 h6 l6 14 6 -14 h6 V46 H52 V30 l-6 14 h-4 l-6 -14 V46 Z"
+        fill="#ffffff"/>
+</svg>

@@ -60,11 +60,82 @@ app.secret_key = _secret
 
 # Cookie hardening. SESSION_COOKIE_SECURE is enabled in production so the
 # session cookie is only sent over HTTPS.
+#
+# PERMANENT_SESSION_LIFETIME bounds how long an idle session stays valid
+# (default Flask is 31 days, which is too long for law-firm financial
+# data). 12 hours covers a normal work day; SESSION_HOURS env var lets
+# operators tune it per deploy without a code change.
+#
+# MAX_CONTENT_LENGTH caps any single request body. Real PCLaw GL exports
+# for a year of data fit comfortably under 25 MB; this stops a runaway
+# upload from filling the Render disk.
+try:
+    _session_hours = int(os.environ.get("SESSION_HOURS", "12"))
+except ValueError:
+    _session_hours = 12
+try:
+    _max_upload_mb = int(os.environ.get("MAX_UPLOAD_MB", "25"))
+except ValueError:
+    _max_upload_mb = 25
+
+from datetime import timedelta as _timedelta  # local alias to avoid clobbering datetime above
+
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=IS_PRODUCTION,
+    PERMANENT_SESSION_LIFETIME=_timedelta(hours=max(1, _session_hours)),
+    MAX_CONTENT_LENGTH=max(1, _max_upload_mb) * 1024 * 1024,
 )
+
+
+@app.before_request
+def _make_session_permanent():
+    """Opt every session into PERMANENT_SESSION_LIFETIME so the idle-
+    timeout actually applies. Without ``session.permanent = True`` Flask
+    treats the session as a transient browser-lifetime cookie and
+    PERMANENT_SESSION_LIFETIME is ignored.
+    """
+    session.permanent = True
+
+
+@app.errorhandler(413)
+def _request_entity_too_large(_e):
+    """Friendly message for uploads that exceed MAX_CONTENT_LENGTH."""
+    flash(
+        f"That file is larger than the {_max_upload_mb} MB upload limit. "
+        "Export a smaller PCLaw range or split the file and try again.",
+        "error",
+    )
+    return redirect(url_for("dashboard")), 302
+
+
+@app.after_request
+def _security_headers(resp):
+    """Conservative defensive headers for the whole app.
+
+    These are quick wins that don't require a CSP audit:
+      - X-Content-Type-Options stops MIME sniffing.
+      - Referrer-Policy keeps the QBO realm/job IDs out of cross-origin
+        Referer headers if a customer ever clicks an outbound link.
+      - X-Frame-Options blocks clickjacking via iframe embedding.
+      - Permissions-Policy disables sensors we never use.
+      - HSTS only emitted in production (where TLS is terminated by
+        Render); emitting it on http://localhost would be useless.
+    """
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault(
+        "Permissions-Policy",
+        "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+    )
+    if IS_PRODUCTION:
+        resp.headers.setdefault(
+            "Strict-Transport-Security",
+            "max-age=31536000; includeSubDomains",
+        )
+    return resp
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
@@ -806,6 +877,17 @@ def onboarding_sample_csv():
     )
 
 
+@app.route("/favicon.ico")
+def favicon_ico():
+    """Serve the SVG favicon at /favicon.ico for legacy clients that
+    request the well-known path. Modern browsers use the <link> tags in
+    _base.html and load the SVG directly. We deliberately reuse the same
+    SVG bytes (with the SVG mimetype) rather than ship a separate ICO so
+    the asset stays under version control as a single editable file.
+    """
+    return app.send_static_file("favicon.svg")
+
+
 @app.route("/healthz")
 def healthz():
     """Lightweight, public health probe.
@@ -881,6 +963,16 @@ def upload():
         return redirect(url_for("dashboard"))
 
     safe_name = secure_filename(file.filename)
+    # Reject obviously wrong file types early. We only accept .csv from
+    # PCLaw — refusing .exe / .zip / .xlsx / .pdf at the gate is a cheap
+    # safety win and gives a clearer error than a CSV parse failure.
+    if not safe_name.lower().endswith(".csv"):
+        flash(
+            "Only .csv files exported from PCLaw are supported. "
+            "Re-export the General Ledger as CSV and try again.",
+            "error",
+        )
+        return redirect(url_for("dashboard"))
     timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
     job_id = f"job_{timestamp}"
 
@@ -1860,6 +1952,16 @@ def account_mapping(job_id):
     The mapping is by PCLaw account_number when present, otherwise by
     account_name. Saved mappings then override the auto-match in the
     import flow.
+
+    Resilience notes (production polish):
+      - All expected failure modes (no QBO connection, expired tokens,
+        missing/corrupt encrypted upload, QBO API down, transient form
+        re-submits via browser back) flash a friendly message and redirect
+        to the job page rather than 500-ing.
+      - POST is idempotent: save_account_mapping is an upsert keyed on
+        (firm_id, realm_id, pclaw_*); resubmitting the same form is safe.
+      - If the user clicks "Map accounts" again after a previous save,
+        their saved selections render as "Saved" and remain editable.
     """
     job, user = _job_or_403(job_id)
     qbo_conn = _get_qbo_connection(job_id)
@@ -1877,66 +1979,131 @@ def account_mapping(job_id):
 
     realm_id = qbo_conn["realm_id"]
 
-    # Fetch QBO accounts (the dropdown source of truth).
+    # Fetch QBO accounts (the dropdown source of truth). Any QBO error here
+    # — flaky network, throttle, brief Intuit outage — should send the user
+    # back to the job page with a friendly message instead of a traceback.
     try:
         qbo_accounts_resp = qbo.get_accounts()
     except QBOError as e:
         tid_suffix = f" (Intuit support reference: {e.intuit_tid})" if e.intuit_tid else ""
         flash(f"Could not query QBO accounts: {e}{tid_suffix}", "error")
         return redirect(url_for("job_detail", job_id=job_id))
+    except Exception as e:  # noqa: BLE001 — last-resort net for unexpected client errors
+        _audit("account_mapping_qbo_error", target_type="job", target_id=job_id, details=str(e))
+        flash(
+            "Could not load QuickBooks accounts right now. Please try again "
+            "in a moment, or reconnect QuickBooks if the problem persists.",
+            "error",
+        )
+        return redirect(url_for("job_detail", job_id=job_id))
     qbo_accounts = qbo_accounts_resp.get("QueryResponse", {}).get("Account", [])
 
     if request.method == "POST":
         # Form posts pclaw rows as `mapping[<index>]_*` fields. Anything blank
-        # means "skip" / leave unmapped.
+        # means "skip" / leave unmapped. The save is upsert so re-submission
+        # (e.g. browser back + retry) is safe.
         saved = 0
-        for key, qbo_acct_id in request.form.items(multi=False):
-            if not key.startswith("mapping[") or not key.endswith("]"):
-                continue
-            if not qbo_acct_id:
-                continue
-            row_idx = key[len("mapping["):-1]
-            pclaw_num = (request.form.get(f"pclaw_num[{row_idx}]") or "").strip() or None
-            pclaw_name = (request.form.get(f"pclaw_name[{row_idx}]") or "").strip() or None
-            qbo_match = next((a for a in qbo_accounts if a.get("Id") == qbo_acct_id), None)
-            db.save_account_mapping(
-                firm_id=user["firm_id"],
-                realm_id=realm_id,
-                pclaw_account_number=pclaw_num,
-                pclaw_account_name=pclaw_name,
-                qbo_account_id=qbo_acct_id,
-                qbo_account_name=qbo_match.get("Name") if qbo_match else None,
-                qbo_account_type=qbo_match.get("AccountType") if qbo_match else None,
+        skipped = 0
+        try:
+            for key, qbo_acct_id in request.form.items(multi=False):
+                if not key.startswith("mapping[") or not key.endswith("]"):
+                    continue
+                qbo_acct_id = (qbo_acct_id or "").strip()
+                if not qbo_acct_id:
+                    continue
+                row_idx = key[len("mapping["):-1]
+                pclaw_num = (request.form.get(f"pclaw_num[{row_idx}]") or "").strip() or None
+                pclaw_name = (request.form.get(f"pclaw_name[{row_idx}]") or "").strip() or None
+                if not pclaw_num and not pclaw_name:
+                    # Empty/garbage row — likely a stale form re-submitted
+                    # after the underlying CSV no longer has this account.
+                    skipped += 1
+                    continue
+                qbo_match = next((a for a in qbo_accounts if a.get("Id") == qbo_acct_id), None)
+                db.save_account_mapping(
+                    firm_id=user["firm_id"],
+                    realm_id=realm_id,
+                    pclaw_account_number=pclaw_num,
+                    pclaw_account_name=pclaw_name,
+                    qbo_account_id=qbo_acct_id,
+                    qbo_account_name=qbo_match.get("Name") if qbo_match else None,
+                    qbo_account_type=qbo_match.get("AccountType") if qbo_match else None,
+                )
+                saved += 1
+        except Exception as e:  # noqa: BLE001
+            _audit("account_mapping_save_error", target_type="job", target_id=job_id, details=str(e))
+            flash(
+                "Something went wrong while saving your mappings. Please "
+                "reload the page and try again.",
+                "error",
             )
-            saved += 1
+            return redirect(url_for("account_mapping", job_id=job_id))
         _audit("account_mapping_saved", target_type="job", target_id=job_id,
-               details=f"saved {saved} mapping(s)")
-        flash(f"Saved {saved} account mapping(s). Click Import to retry.", "success")
+               details=f"saved {saved} mapping(s) skipped {skipped}")
+        if saved:
+            flash(f"Saved {saved} account mapping(s). Click Import to retry.", "success")
+        else:
+            flash(
+                "No account mappings were changed. Pick a QuickBooks account "
+                "for at least one row and click Save mappings.",
+                "info",
+            )
         return redirect(url_for("account_mapping", job_id=job_id))
 
     # Build the list of unique PCLaw accounts in this job's source CSV.
+    # Defensive paths cover: encrypted file deleted (e.g. job purged
+    # between visits), corrupt ciphertext (key rotated since upload),
+    # CSV decode errors (encoding edge cases). All redirect cleanly.
     encrypted_in = UPLOAD_DIR / job["encrypted_file"]
     temp_csv = UPLOAD_DIR / f"temp_mapping_{job_id}.csv"
-    decrypt_file(encrypted_in, temp_csv)
+    if not encrypted_in.exists():
+        _audit("account_mapping_missing_file", target_type="job", target_id=job_id)
+        flash(
+            "The original upload for this job is no longer available. "
+            "Re-upload the PCLaw export to continue.",
+            "error",
+        )
+        return redirect(url_for("job_detail", job_id=job_id))
     try:
-        with temp_csv.open("r", newline="", encoding="utf-8-sig") as f:
-            reader = _csv.DictReader(f)
-            if not is_gl_format(reader.fieldnames or []):
-                flash(
-                    "Account mapping is only available for the rich PCLaw GL "
-                    "format (with transaction_id and account_number columns).",
-                    "info",
-                )
-                return redirect(url_for("job_detail", job_id=job_id))
-            seen = {}
-            for r in reader:
-                num = (r.get("account_number") or "").strip() or None
-                name = (r.get("account_name") or "").strip() or None
-                key = (num, name)
-                if key in seen:
-                    continue
-                seen[key] = {"number": num, "name": name}
-        pclaw_accounts = list(seen.values())
+        decrypt_file(encrypted_in, temp_csv)
+    except Exception as e:  # noqa: BLE001
+        _audit("account_mapping_decrypt_error", target_type="job", target_id=job_id, details=str(e))
+        flash(
+            "We could not read the saved upload for this job. Please "
+            "re-upload the PCLaw export to continue.",
+            "error",
+        )
+        # Best-effort cleanup of any partial output.
+        temp_csv.unlink(missing_ok=True)
+        return redirect(url_for("job_detail", job_id=job_id))
+    try:
+        try:
+            with temp_csv.open("r", newline="", encoding="utf-8-sig") as f:
+                reader = _csv.DictReader(f)
+                if not is_gl_format(reader.fieldnames or []):
+                    flash(
+                        "Account mapping is only available for the rich PCLaw GL "
+                        "format (with transaction_id and account_number columns).",
+                        "info",
+                    )
+                    return redirect(url_for("job_detail", job_id=job_id))
+                seen = {}
+                for r in reader:
+                    num = (r.get("account_number") or "").strip() or None
+                    name = (r.get("account_name") or "").strip() or None
+                    key = (num, name)
+                    if key in seen:
+                        continue
+                    seen[key] = {"number": num, "name": name}
+            pclaw_accounts = list(seen.values())
+        except (UnicodeDecodeError, _csv.Error) as e:
+            _audit("account_mapping_csv_error", target_type="job", target_id=job_id, details=str(e))
+            flash(
+                "The saved upload looks corrupt or is in an unexpected format. "
+                "Please re-upload the PCLaw export to continue.",
+                "error",
+            )
+            return redirect(url_for("job_detail", job_id=job_id))
     finally:
         temp_csv.unlink(missing_ok=True)
 
