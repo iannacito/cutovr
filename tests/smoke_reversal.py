@@ -117,7 +117,7 @@ def fake_create_v(self, n):
     return {"Id": f"V_{n}", "DisplayName": n}
 
 
-def signup(client, firm, email, password="passw0rd!"):
+def signup(client, firm, email, password="passw0rd!1234"):
     return client.post(
         "/signup",
         data={"firm_name": firm, "email": email,
@@ -185,7 +185,7 @@ def main():
                     data={"confirm_reverse": "REVERSE"}, follow_redirects=True)
         assert "Nothing to reverse" in r.data.decode()
         assert len(posted) == before
-        firm_b = appmod.db.authenticate("bob@b.test", "passw0rd!")["firm_id"]
+        firm_b = appmod.db.authenticate("bob@b.test", "passw0rd!1234")["firm_id"]
         assert any(a["action"] == "import_reversal_blocked"
                    for a in appmod.db.recent_audit_for_firm(firm_b, 50))
         print("T2 OK: no prior import → blocked")
@@ -249,7 +249,7 @@ def main():
             assert t["original_qbo_je_id"] in original_ids
             assert t["reversal_qbo_je_id"]
         # Audit logs
-        firm_a = appmod.db.authenticate("alice@a.test", "passw0rd!")["firm_id"]
+        firm_a = appmod.db.authenticate("alice@a.test", "passw0rd!1234")["firm_id"]
         actions = [a["action"] for a in appmod.db.recent_audit_for_firm(firm_a, 50)]
         assert "import_reversal_started" in actions and "import_reversal_success" in actions
         # Detail page shows "Reversed" status badge
@@ -293,7 +293,7 @@ def main():
             s["pending_job_id"] = jid_c
         c3.get(f"/oauth/callback?code=X&state={jid_c}&realmId=R-c")
         # Insert a fake successful import so reversal sees something to reverse.
-        firm_c = appmod.db.authenticate("carol@c.test", "passw0rd!")["firm_id"]
+        firm_c = appmod.db.authenticate("carol@c.test", "passw0rd!1234")["firm_id"]
         appmod.history.record_import(
             job_id=jid_c, realm_id=appmod.qbo_connections[jid_c]["realm_id"],
             file_sha256="x", company_name="C",
@@ -337,7 +337,7 @@ def main():
         rev = appmod.history.get_reversal_for_import(last_imp["id"])
         assert rev and rev["status"] == "failed"
         assert rev["error"]
-        firm_d = appmod.db.authenticate("dave@d.test", "passw0rd!")["firm_id"]
+        firm_d = appmod.db.authenticate("dave@d.test", "passw0rd!1234")["firm_id"]
         actions = [a["action"] for a in appmod.db.recent_audit_for_firm(firm_d, 50)]
         assert "import_reversal_failed" in actions
         print("T7 OK: QBO 404 mid-batch → reversal failed, partial state persisted")

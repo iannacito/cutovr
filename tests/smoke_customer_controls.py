@@ -121,7 +121,7 @@ def fake_create_v(self, n):
     return {"Id": f"V_{n}", "DisplayName": n}
 
 
-def signup(client, firm, email, password="passw0rd!"):
+def signup(client, firm, email, password="passw0rd!1234"):
     return client.post(
         "/signup",
         data={"firm_name": firm, "email": email,
@@ -129,7 +129,7 @@ def signup(client, firm, email, password="passw0rd!"):
     )
 
 
-def login(client, email, password="passw0rd!"):
+def login(client, email, password="passw0rd!1234"):
     return client.post("/login", data={"email": email, "password": password})
 
 

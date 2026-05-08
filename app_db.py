@@ -177,6 +177,25 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     created_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_audit_firm ON audit_logs(firm_id, created_at);
+
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL REFERENCES users(id),
+    token_hash  TEXT NOT NULL UNIQUE,
+    expires_at  TEXT NOT NULL,
+    used_at     TEXT,
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pwreset_user ON password_reset_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_pwreset_hash ON password_reset_tokens(token_hash);
+
+CREATE TABLE IF NOT EXISTS rate_limit_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    bucket_key  TEXT NOT NULL,
+    created_at  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ratelimit_bucket
+    ON rate_limit_events(bucket_key, created_at);
 """
 
 
@@ -275,6 +294,88 @@ class AppDB:
             if not check_password_hash(row["password_hash"], password):
                 return None
             return dict(row)
+
+    def get_user_by_email(self, email: str) -> Optional[dict]:
+        email = email.strip().lower()
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT * FROM users WHERE email = ?", (email,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def update_user_password(self, user_id: int, new_password: str) -> None:
+        with self._conn() as c:
+            c.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (hash_password(new_password), user_id),
+            )
+
+    # --- password reset tokens --------------------------------------------
+
+    def create_password_reset_token(
+        self, user_id: int, token_hash: str, expires_at: str
+    ) -> int:
+        with self._conn() as c:
+            cur = c.execute(
+                "INSERT INTO password_reset_tokens "
+                "(user_id, token_hash, expires_at, used_at, created_at) "
+                "VALUES (?, ?, ?, NULL, ?)",
+                (user_id, token_hash, expires_at, _now()),
+            )
+            return cur.lastrowid
+
+    def get_password_reset_token(self, token_hash: str) -> Optional[dict]:
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT * FROM password_reset_tokens WHERE token_hash = ?",
+                (token_hash,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def mark_password_reset_used(self, token_id: int) -> None:
+        with self._conn() as c:
+            c.execute(
+                "UPDATE password_reset_tokens SET used_at = ? WHERE id = ?",
+                (_now(), token_id),
+            )
+
+    def invalidate_user_reset_tokens(self, user_id: int) -> None:
+        """Mark all outstanding (unused) reset tokens for a user as used.
+
+        Called after a successful reset so any other emailed token for the
+        same account can no longer be redeemed.
+        """
+        with self._conn() as c:
+            c.execute(
+                "UPDATE password_reset_tokens SET used_at = ? "
+                "WHERE user_id = ? AND used_at IS NULL",
+                (_now(), user_id),
+            )
+
+    # --- rate limiting ----------------------------------------------------
+
+    def record_rate_limit_event(self, bucket_key: str, ts: float) -> None:
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO rate_limit_events (bucket_key, created_at) VALUES (?, ?)",
+                (bucket_key, ts),
+            )
+
+    def count_rate_limit_events(self, bucket_key: str, since_ts: float) -> int:
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT COUNT(*) AS n FROM rate_limit_events "
+                "WHERE bucket_key = ? AND created_at >= ?",
+                (bucket_key, since_ts),
+            ).fetchone()
+            return int(row["n"]) if row else 0
+
+    def purge_old_rate_limit_events(self, before_ts: float) -> int:
+        with self._conn() as c:
+            cur = c.execute(
+                "DELETE FROM rate_limit_events WHERE created_at < ?", (before_ts,)
+            )
+            return cur.rowcount or 0
 
     def get_user(self, user_id: int) -> Optional[dict]:
         with self._conn() as c:

@@ -43,16 +43,16 @@ client = appmod.app.test_client()
 
 def _ensure_logged_in():
     """Sign up + log in once so the auth-protected routes work."""
-    if appmod.db.authenticate("smoke@example.test", "passw0rd!"):
-        client.post("/login", data={"email": "smoke@example.test", "password": "passw0rd!"})
+    if appmod.db.authenticate("smoke@example.test", "passw0rd!1234"):
+        client.post("/login", data={"email": "smoke@example.test", "password": "passw0rd!1234"})
         return
     client.post(
         "/signup",
         data={
             "firm_name": "Smoke Firm",
             "email": "smoke@example.test",
-            "password": "passw0rd!",
-            "confirm_password": "passw0rd!",
+            "password": "passw0rd!1234",
+            "confirm_password": "passw0rd!1234",
         },
     )
 

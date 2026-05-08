@@ -1,10 +1,12 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, abort
 from werkzeug.utils import secure_filename
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from functools import wraps
 import os, secrets
+import hashlib
+import logging
 import requests
 
 from app_db import AppDB
@@ -31,6 +33,8 @@ from encryption import encrypt_file, decrypt_file, encrypt_token, decrypt_token
 from import_history import ImportHistory, sha256_of_file
 from preflight import build_preflight_summary, friendly_validation_message
 import qbo_error_hint
+import email_sender
+from rate_limit import RateLimiter, client_ip
 import csv as _csv
 from io import StringIO
 from flask import Response
@@ -82,6 +86,39 @@ history = ImportHistory(DB_PATH)
 # App database for auth + tenancy (firms, users, jobs metadata, audit log).
 APP_DB_PATH = os.environ.get("APP_DB", str(DATA_DIR / "app.sqlite3"))
 db = AppDB(APP_DB_PATH)
+
+# Password policy (applies to signup AND password reset). 12 chars is the
+# baseline NIST SP 800-63B "memorized secret" floor. We don't add complexity
+# rules — length is what matters for offline cracking resistance.
+MIN_PASSWORD_LENGTH = 12
+PASSWORD_TOO_SHORT_MSG = (
+    f"Password must be at least {MIN_PASSWORD_LENGTH} characters."
+)
+
+# Password reset tokens are single-use, time-limited. 30 minutes is short
+# enough to limit exposure if a mailbox is compromised after the email is
+# sent, long enough that a user pulling the reset link off a phone won't
+# get unlucky.
+PASSWORD_RESET_TTL_MINUTES = 30
+
+# Rate limit budgets. Tuned so legit users (typo their password 2-3 times,
+# request a reset link once) never hit them; brute-force attempts do. Values
+# are intentionally conservative for a single-instance Render deploy.
+LOGIN_RATE_LIMIT_MAX = 10
+LOGIN_RATE_LIMIT_WINDOW_SECONDS = 5 * 60
+FORGOT_RATE_LIMIT_MAX = 5
+FORGOT_RATE_LIMIT_WINDOW_SECONDS = 15 * 60
+
+login_limiter = RateLimiter(
+    db,
+    max_events=LOGIN_RATE_LIMIT_MAX,
+    window_seconds=LOGIN_RATE_LIMIT_WINDOW_SECONDS,
+)
+forgot_limiter = RateLimiter(
+    db,
+    max_events=FORGOT_RATE_LIMIT_MAX,
+    window_seconds=FORGOT_RATE_LIMIT_WINDOW_SECONDS,
+)
 
 # QBO OAuth configuration (set these via environment variables in real use)
 QBO_CLIENT_ID = os.environ.get("QBO_CLIENT_ID", "your-client-id-here")
@@ -499,8 +536,8 @@ def signup():
         if password != confirm:
             flash("Passwords do not match.", "error")
             return render_template("signup.html", firm_name=firm_name, email=email)
-        if len(password) < 8:
-            flash("Password must be at least 8 characters.", "error")
+        if len(password) < MIN_PASSWORD_LENGTH:
+            flash(PASSWORD_TOO_SHORT_MSG, "error")
             return render_template("signup.html", firm_name=firm_name, email=email)
         try:
             firm_id, user_id = db.create_firm_and_admin(firm_name, email, password)
@@ -517,6 +554,12 @@ def signup():
     return render_template("signup.html")
 
 
+RATE_LIMIT_FRIENDLY_MSG = (
+    "Too many attempts from your network. Please wait a few minutes and "
+    "try again."
+)
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if current_user():
@@ -524,6 +567,24 @@ def login():
     if request.method == "POST":
         email = (request.form.get("email") or "").strip().lower()
         password = request.form.get("password") or ""
+
+        # Rate-limit on (route, ip) AND (route, email) so an attacker
+        # rotating either dimension still hits a wall, while a shared
+        # office IP doesn't lock everyone out as long as the targeted
+        # email is rotating too. The limiter is permissive enough that
+        # legit users won't notice.
+        ip_key = f"login:ip:{client_ip(request)}"
+        email_key = f"login:email:{email}" if email else None
+        ip_ok, _ = login_limiter.check_and_record(ip_key)
+        email_ok = True
+        if email_key:
+            email_ok, _ = login_limiter.check_and_record(email_key)
+        if not (ip_ok and email_ok):
+            db.audit(action="login_rate_limited",
+                     details=f"ip={client_ip(request)}")
+            flash(RATE_LIMIT_FRIENDLY_MSG, "error")
+            return render_template("login.html", email=email), 429
+
         user = db.authenticate(email, password)
         if not user:
             db.audit(action="login_failed", details=email)
@@ -538,6 +599,197 @@ def login():
             return redirect(next_url)
         return redirect(url_for("dashboard"))
     return render_template("login.html")
+
+
+# ---------------------------------------------------------------------------
+# Password reset
+#
+# Flow:
+#   1) User submits email at /forgot-password.
+#   2) We always show the same generic "if that email exists, we sent a link"
+#      response, so the page can't be used as an account-existence oracle.
+#   3) If the email matches a real user, we generate a single-use,
+#      time-limited token. Only the SHA-256 hash is stored in the DB; the
+#      plaintext is delivered to the user via SMTP (or, in dev only, via the
+#      server log) and never appears in the HTTP response.
+#   4) /reset-password/<token> validates the token and lets the user pick a
+#      new password (subject to the same length policy as signup).
+#   5) On success we mark the token used, invalidate any other outstanding
+#      tokens for that user, and audit the reset.
+#
+# What we deliberately do NOT do here:
+#   - We never expose the token in the user-facing HTTP response.
+#   - We never include the email body or token URL in the audit log.
+#   - We do not auto-sign-in the user after a reset (they go to /login).
+# ---------------------------------------------------------------------------
+
+_pwreset_log = logging.getLogger("password_reset")
+
+
+def _hash_reset_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _generate_reset_token() -> str:
+    # 32 bytes (~256 bits) of url-safe randomness. Plenty of entropy for a
+    # 30-minute single-use token.
+    return secrets.token_urlsafe(32)
+
+
+def _send_reset_email(user: dict, reset_url: str) -> bool:
+    """Send the reset email. Returns True if delivered via SMTP.
+
+    In non-production we log the URL so a developer running locally can copy
+    it from the console. In production we never log the URL — instead we
+    record an audit warning that SMTP is not configured so the operator can
+    notice. The token itself NEVER appears in the user-facing response.
+    """
+    subject = f"Reset your {branding.context().get('app_name', 'Cutover')} password"
+    body_text = (
+        "Someone (hopefully you) requested a password reset for your account.\n\n"
+        f"Open this link to choose a new password:\n\n  {reset_url}\n\n"
+        f"The link expires in {PASSWORD_RESET_TTL_MINUTES} minutes and can "
+        "only be used once. If you did not request this, you can safely "
+        "ignore this email.\n"
+    )
+    if email_sender.is_smtp_configured():
+        ok = email_sender.send_email(
+            to=user["email"], subject=subject, body_text=body_text
+        )
+        return bool(ok)
+    if not IS_PRODUCTION:
+        # Dev convenience: print to the same stdout the rest of the app
+        # uses. Production never reaches this branch.
+        _pwreset_log.warning(
+            "SMTP not configured; reset URL for %s: %s",
+            user["email"], reset_url,
+        )
+    else:
+        # Production with no SMTP: record an operator-visible warning so
+        # someone notices the misconfiguration. Do NOT include the URL or
+        # token, only the fact that we couldn't send.
+        db.audit(
+            action="password_reset_smtp_missing",
+            firm_id=user.get("firm_id"),
+            user_id=user.get("id"),
+            details="SMTP env vars not set; reset email NOT delivered",
+        )
+    return False
+
+
+@app.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    if request.method == "POST":
+        email = (request.form.get("email") or "").strip().lower()
+
+        # Rate-limit on (route, ip) so a single attacker can't enumerate
+        # accounts by spamming this endpoint.
+        ip_key = f"forgot:ip:{client_ip(request)}"
+        ok, _ = forgot_limiter.check_and_record(ip_key)
+        if not ok:
+            db.audit(action="forgot_password_rate_limited",
+                     details=f"ip={client_ip(request)}")
+            flash(RATE_LIMIT_FRIENDLY_MSG, "error")
+            return render_template("forgot-password.html", email=email), 429
+
+        # Generic response regardless of whether the email exists.
+        generic_msg = (
+            "If an account with that email exists, we've sent a password "
+            "reset link. Check your inbox (and spam folder)."
+        )
+
+        user = db.get_user_by_email(email) if email else None
+        if user:
+            token = _generate_reset_token()
+            token_hash = _hash_reset_token(token)
+            expires_at = (
+                datetime.utcnow() + timedelta(minutes=PASSWORD_RESET_TTL_MINUTES)
+            ).isoformat()
+            db.create_password_reset_token(user["id"], token_hash, expires_at)
+            reset_url = url_for("reset_password", token=token, _external=True)
+            delivered = _send_reset_email(user, reset_url)
+            db.audit(
+                action="password_reset_requested",
+                firm_id=user.get("firm_id"),
+                user_id=user["id"],
+                details=f"smtp_delivered={'yes' if delivered else 'no'}",
+            )
+        else:
+            # Still audit the attempt (no user_id) so operators can spot
+            # high-volume probing. We do not record the email itself in
+            # plaintext to avoid a junk log of typo'd addresses; the IP
+            # is enough.
+            db.audit(
+                action="password_reset_requested_unknown_email",
+                details=f"ip={client_ip(request)}",
+            )
+
+        flash(generic_msg, "success")
+        return render_template("forgot-password.html", submitted=True)
+    return render_template("forgot-password.html")
+
+
+@app.route("/reset-password/<token>", methods=["GET", "POST"])
+def reset_password(token):
+    token_hash = _hash_reset_token(token or "")
+    row = db.get_password_reset_token(token_hash) if token else None
+
+    def _invalid():
+        flash(
+            "This password reset link is invalid or has expired. Please "
+            "request a new one.",
+            "error",
+        )
+        return redirect(url_for("forgot_password"))
+
+    if not row:
+        return _invalid()
+    if row.get("used_at"):
+        return _invalid()
+    try:
+        expires = datetime.fromisoformat(row["expires_at"])
+    except (TypeError, ValueError):
+        return _invalid()
+    if expires < datetime.utcnow():
+        return _invalid()
+
+    user = db.get_user(row["user_id"])
+    if not user:
+        return _invalid()
+
+    if request.method == "POST":
+        password = request.form.get("password") or ""
+        confirm = request.form.get("confirm_password") or ""
+        if password != confirm:
+            flash("Passwords do not match.", "error")
+            return render_template("reset-password.html", token=token)
+        if len(password) < MIN_PASSWORD_LENGTH:
+            flash(PASSWORD_TOO_SHORT_MSG, "error")
+            return render_template("reset-password.html", token=token)
+
+        db.update_user_password(user["id"], password)
+        db.mark_password_reset_used(row["id"])
+        # Invalidate any other outstanding tokens for this user so a
+        # second emailed link can't be used after the password changes.
+        db.invalidate_user_reset_tokens(user["id"])
+        # Force any active session — including the attacker's, if any —
+        # to re-authenticate. We only have access to *this* request's
+        # session; other sessions can't be revoked without a session
+        # store. That's an accepted tradeoff for the simple version.
+        session.clear()
+        db.audit(
+            action="password_reset_completed",
+            firm_id=user.get("firm_id"),
+            user_id=user["id"],
+        )
+        flash(
+            "Your password has been reset. Please sign in with your new "
+            "password.",
+            "success",
+        )
+        return redirect(url_for("login"))
+
+    return render_template("reset-password.html", token=token)
 
 
 @app.route("/logout", methods=["POST"])
