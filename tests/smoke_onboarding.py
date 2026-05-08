@@ -45,7 +45,7 @@ from preflight import build_preflight_summary  # noqa: E402
 GL_BYTES = (ROOT / "test_data" / "02_general_ledger.csv").read_bytes()
 
 
-def signup(client, firm, email, password="passw0rd!"):
+def signup(client, firm, email, password="passw0rd!1234"):
     return client.post(
         "/signup",
         data={"firm_name": firm, "email": email,

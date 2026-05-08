@@ -160,8 +160,8 @@ def t4_readiness_page_protected_then_renders():
         data={
             "firm_name": "Readiness Smoke Firm",
             "email": "readiness@example.test",
-            "password": "passw0rd!",
-            "confirm_password": "passw0rd!",
+            "password": "passw0rd!1234",
+            "confirm_password": "passw0rd!1234",
         },
     )
     r = client.get("/readiness", follow_redirects=False)

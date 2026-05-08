@@ -115,7 +115,7 @@ def _post_with_csrf(client, path, data):
     return client.post(path, data=payload, follow_redirects=True)
 
 
-def _signup(c, firm="ProdCust Firm", email="prodcust@example.test", password="passw0rd!"):
+def _signup(c, firm="ProdCust Firm", email="prodcust@example.test", password="passw0rd!1234"):
     """Sign up via POST. If CSRF is enforced, mint and submit a token."""
     csrf_disabled = os.environ.get("CSRF_DISABLE", "").lower() in ("1", "true", "yes", "on")
     if csrf_disabled:
@@ -202,7 +202,7 @@ def t2_logged_in_disconnect_revokes_and_deletes():
     })
     c = appmod.app.test_client()
     _signup(c)
-    user = appmod.db.authenticate("prodcust@example.test", "passw0rd!")
+    user = appmod.db.authenticate("prodcust@example.test", "passw0rd!1234")
     job_id = _make_job_with_connection(appmod, user["firm_id"], user["id"])
 
     body = c.get("/disconnect").get_data(as_text=True)
@@ -262,7 +262,7 @@ def t4_production_connect_guard_blocks_when_misconfigured():
     })
     c = appmod.app.test_client()
     _signup(c)
-    user = appmod.db.authenticate("prodcust@example.test", "passw0rd!")
+    user = appmod.db.authenticate("prodcust@example.test", "passw0rd!1234")
     job_id = _make_job_with_connection(appmod, user["firm_id"], user["id"])
     # Drop the connection so the route follows the not-yet-connected branch
     # (connect-qbo is the route under test).
@@ -286,7 +286,7 @@ def t4_production_connect_guard_blocks_when_misconfigured():
     })
     c2 = appmod2.app.test_client()
     _signup(c2)
-    user2 = appmod2.db.authenticate("prodcust@example.test", "passw0rd!")
+    user2 = appmod2.db.authenticate("prodcust@example.test", "passw0rd!1234")
     jid2 = _make_job_with_connection(appmod2, user2["firm_id"], user2["id"], job_id="job_pcust_sb")
     appmod2.qbo_connections.pop(jid2, None)
     appmod2.db.delete_qbo_connection(jid2)
@@ -312,7 +312,7 @@ def t5_quickbooks_manage_page_lists_connections():
     })
     c = appmod.app.test_client()
     _signup(c)
-    user = appmod.db.authenticate("prodcust@example.test", "passw0rd!")
+    user = appmod.db.authenticate("prodcust@example.test", "passw0rd!1234")
     _make_job_with_connection(appmod, user["firm_id"], user["id"])
     body = c.get("/quickbooks").get_data(as_text=True)
     _assert_no_secrets(body)
@@ -341,7 +341,7 @@ def t6_production_import_requires_confirmation():
     })
     c = appmod.app.test_client()
     _signup(c)
-    user = appmod.db.authenticate("prodcust@example.test", "passw0rd!")
+    user = appmod.db.authenticate("prodcust@example.test", "passw0rd!1234")
     job_id = _make_job_with_connection(appmod, user["firm_id"], user["id"])
 
     # First POST: no confirm_import → confirmation flow, NOT a real import.
@@ -381,7 +381,7 @@ def t7_job_detail_production_copy():
     })
     c = appmod.app.test_client()
     _signup(c)
-    user = appmod.db.authenticate("prodcust@example.test", "passw0rd!")
+    user = appmod.db.authenticate("prodcust@example.test", "passw0rd!1234")
     job_id = _make_job_with_connection(appmod, user["firm_id"], user["id"])
     body = c.get(f"/jobs/{job_id}").get_data(as_text=True)
     assert "Production" in body or "real QuickBooks" in body, body[:1500]
@@ -404,7 +404,7 @@ def t8_no_secret_leak_in_any_route():
     })
     c = appmod.app.test_client()
     _signup(c)
-    user = appmod.db.authenticate("prodcust@example.test", "passw0rd!")
+    user = appmod.db.authenticate("prodcust@example.test", "passw0rd!1234")
     _make_job_with_connection(appmod, user["firm_id"], user["id"])
     for path in ("/dashboard", "/quickbooks", "/disconnect", "/quickbooks/disconnect",
                  "/readiness", "/healthz", "/support", "/privacy", "/terms"):

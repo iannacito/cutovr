@@ -66,7 +66,7 @@ def _fresh_app(env_overrides=None):
     return importlib.import_module("app")
 
 
-def _signup(c, firm="Beta Firm", email="beta@example.test", password="passw0rd!"):
+def _signup(c, firm="Beta Firm", email="beta@example.test", password="passw0rd!1234"):
     return c.post(
         "/signup",
         data={"firm_name": firm, "email": email,
@@ -133,7 +133,7 @@ def t2_job_detail_sandbox_copy():
     })
     c = appmod.app.test_client()
     _signup(c)
-    user = appmod.db.authenticate("beta@example.test", "passw0rd!")
+    user = appmod.db.authenticate("beta@example.test", "passw0rd!1234")
     job_id = _make_job(appmod, c, user["firm_id"], user["id"])
     body = c.get(f"/jobs/{job_id}").get_data(as_text=True)
     assert "Sandbox Testing Mode" in body, "expected sandbox banner on job detail"
@@ -152,7 +152,7 @@ def t3_oauth_access_denied_friendly():
     })
     c = appmod.app.test_client()
     _signup(c)
-    user = appmod.db.authenticate("beta@example.test", "passw0rd!")
+    user = appmod.db.authenticate("beta@example.test", "passw0rd!1234")
     job_id = _make_job(appmod, c, user["firm_id"], user["id"])
     resp = c.get(
         f"/oauth/callback?error=access_denied&state={job_id}",
@@ -223,7 +223,7 @@ def t6_token_exchange_failure_friendly():
     })
     c = appmod.app.test_client()
     _signup(c)
-    user = appmod.db.authenticate("beta@example.test", "passw0rd!")
+    user = appmod.db.authenticate("beta@example.test", "passw0rd!1234")
     job_id = _make_job(appmod, c, user["firm_id"], user["id"])
 
     # Simulate Intuit rejecting the code (e.g., wrong company / non-sandbox

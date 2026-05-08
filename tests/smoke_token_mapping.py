@@ -105,7 +105,7 @@ def fake_create_v(self, n):
     return {"Id": f"V_{n}", "DisplayName": n}
 
 
-def signup(client, firm, email, password="passw0rd!"):
+def signup(client, firm, email, password="passw0rd!1234"):
     return client.post(
         "/signup",
         data={"firm_name": firm, "email": email,
@@ -185,7 +185,7 @@ def main():
         assert row["refresh_token_enc"] and decrypt_token(row["refresh_token_enc"]).startswith("RT2_")
         # Audit log captured the refresh
         actions = [a["action"] for a in appmod.db.recent_audit_for_firm(
-            appmod.db.authenticate("alice@a.test", "passw0rd!")["firm_id"], 50)]
+            appmod.db.authenticate("alice@a.test", "passw0rd!1234")["firm_id"], 50)]
         assert "qbo_token_refreshed" in actions, actions
         print("T1 OK: expired token refreshed and persisted; import succeeded")
 
@@ -205,7 +205,7 @@ def main():
             r = c2.post(f"/jobs/{job_id2}/import-to-qbo", follow_redirects=True)
         body = r.data.decode()
         assert "QuickBooks connection expired" in body, body[:200]
-        bob_firm = appmod.db.authenticate("bob@b.test", "passw0rd!")["firm_id"]
+        bob_firm = appmod.db.authenticate("bob@b.test", "passw0rd!1234")["firm_id"]
         actions = [a["action"] for a in appmod.db.recent_audit_for_firm(bob_firm, 50)]
         assert "qbo_token_refresh_failed" in actions
         print("T2 OK: refresh failure shows friendly error and audits it")
@@ -213,7 +213,7 @@ def main():
         # === T3: mapping page lists PCLaw accounts and saves mappings =====
         c3 = appmod.app.test_client()
         job_id3 = setup_and_connect(c3, "Firm C", "carol@c.test")
-        firm_c = appmod.db.authenticate("carol@c.test", "passw0rd!")["firm_id"]
+        firm_c = appmod.db.authenticate("carol@c.test", "passw0rd!1234")["firm_id"]
 
         r = c3.get(f"/jobs/{job_id3}/account-mapping")
         assert r.status_code == 200

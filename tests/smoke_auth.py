@@ -41,7 +41,7 @@ def fresh_client():
     return appmod.app.test_client()
 
 
-def signup(client, firm, email, password="passw0rd!"):
+def signup(client, firm, email, password="passw0rd!1234"):
     return client.post(
         "/signup",
         data={"firm_name": firm, "email": email,
@@ -50,7 +50,7 @@ def signup(client, firm, email, password="passw0rd!"):
     )
 
 
-def login(client, email, password="passw0rd!"):
+def login(client, email, password="passw0rd!1234"):
     return client.post(
         "/login",
         data={"email": email, "password": password},
@@ -139,8 +139,8 @@ def main():
     assert r.status_code == 302 and r.headers["Location"].endswith("/dashboard")
     assert job_id_a not in appmod.qbo_connections
     # Audit log captured the mismatch
-    alice = appmod.db.authenticate("alice@acme.test", "passw0rd!")
-    bob = appmod.db.authenticate("bob@bravo.test", "passw0rd!")
+    alice = appmod.db.authenticate("alice@acme.test", "passw0rd!1234")
+    bob = appmod.db.authenticate("bob@bravo.test", "passw0rd!1234")
     bob_audit = appmod.db.recent_audit_for_firm(bob["firm_id"], 50)
     assert any(a["action"] == "oauth_callback_firm_mismatch" for a in bob_audit), [a["action"] for a in bob_audit]
     print("T7 OK: oauth callback rejects firm mismatch and audits it")

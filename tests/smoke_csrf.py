@@ -58,12 +58,12 @@ def main():
     r = c.post(
         "/signup",
         data={"firm_name": "X", "email": "no-csrf@x.test",
-              "password": "passw0rd!", "confirm_password": "passw0rd!"},
+              "password": "passw0rd!1234", "confirm_password": "passw0rd!1234"},
         follow_redirects=False,
     )
     assert r.status_code == 302
     assert "/login" in r.headers["Location"], r.headers["Location"]
-    assert appmod.db.authenticate("no-csrf@x.test", "passw0rd!") is None
+    assert appmod.db.authenticate("no-csrf@x.test", "passw0rd!1234") is None
     print("T2 OK: signup without csrf_token rejected, no user created")
 
     # T3: signup with correct csrf_token succeeds
@@ -71,12 +71,12 @@ def main():
     r = c.post(
         "/signup",
         data={"firm_name": "Acme", "email": "alice@acme.test",
-              "password": "passw0rd!", "confirm_password": "passw0rd!",
+              "password": "passw0rd!1234", "confirm_password": "passw0rd!1234",
               "csrf_token": token},
         follow_redirects=False,
     )
     assert r.status_code == 302 and r.headers["Location"].endswith("/dashboard"), r.headers
-    assert appmod.db.authenticate("alice@acme.test", "passw0rd!"), "user not created"
+    assert appmod.db.authenticate("alice@acme.test", "passw0rd!1234"), "user not created"
     print("T3 OK: signup with csrf_token succeeded")
 
     # T4: logout without csrf_token rejected — user remains logged in
@@ -100,7 +100,7 @@ def main():
     alice_login = get_csrf(c, "/login")
     r = c.post(
         "/login",
-        data={"email": "alice@acme.test", "password": "passw0rd!",
+        data={"email": "alice@acme.test", "password": "passw0rd!1234",
               "csrf_token": alice_login},
         follow_redirects=False,
     )
@@ -116,7 +116,7 @@ def main():
     c_fresh = appmod.app.test_client()
     r = c_fresh.post(
         "/login",
-        data={"email": "alice@acme.test", "password": "passw0rd!"},
+        data={"email": "alice@acme.test", "password": "passw0rd!1234"},
         follow_redirects=False,
     )
     # No token → redirected (back to /login).
@@ -126,7 +126,7 @@ def main():
     fresh_token = get_csrf(c_fresh, "/login")
     r = c_fresh.post(
         "/login",
-        data={"email": "alice@acme.test", "password": "passw0rd!",
+        data={"email": "alice@acme.test", "password": "passw0rd!1234",
               "csrf_token": fresh_token},
         follow_redirects=False,
     )

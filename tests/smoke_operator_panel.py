@@ -75,7 +75,7 @@ def _reset_app(env: dict):
     return importlib.import_module("app")
 
 
-def _signup(client, firm, email, password="passw0rd!"):
+def _signup(client, firm, email, password="passw0rd!1234"):
     return client.post(
         "/signup",
         data={"firm_name": firm, "email": email,
@@ -84,7 +84,7 @@ def _signup(client, firm, email, password="passw0rd!"):
     )
 
 
-def _login(client, email, password="passw0rd!"):
+def _login(client, email, password="passw0rd!1234"):
     return client.post(
         "/login",
         data={"email": email, "password": password},
@@ -143,7 +143,7 @@ def t2_allowlist_does_not_match():
 
     op = sys.modules["operator_panel"]
     assert op.operator_panel_enabled() is True
-    user = appmod.db.authenticate("alice@acme.test", "passw0rd!")
+    user = appmod.db.authenticate("alice@acme.test", "passw0rd!1234")
     assert op.is_operator_user(user) is False
 
     r = c.get("/operator")
@@ -173,7 +173,7 @@ def t3_allowed_operator_sees_panel():
         )
 
     op = sys.modules["operator_panel"]
-    user = appmod.db.authenticate("alice@acme.test", "passw0rd!")
+    user = appmod.db.authenticate("alice@acme.test", "passw0rd!1234")
     assert op.is_operator_user(user) is True
 
     r = c.get("/dashboard")
@@ -192,7 +192,7 @@ def t3_allowed_operator_sees_panel():
     _assert_no_secrets(body, "/operator")
 
     # Per-firm detail
-    bob = appmod.db.authenticate("bob@bravo.test", "passw0rd!")
+    bob = appmod.db.authenticate("bob@bravo.test", "passw0rd!1234")
     bravo_firm_id = bob["firm_id"]
     r = c.get(f"/operator/firm/{bravo_firm_id}")
     assert r.status_code == 200, r.status_code
@@ -241,7 +241,7 @@ def t5_no_secret_leakage():
             content_type="multipart/form-data",
             follow_redirects=False,
         )
-    alice = appmod.db.authenticate("alice@acme.test", "passw0rd!")
+    alice = appmod.db.authenticate("alice@acme.test", "passw0rd!1234")
     for path in ["/operator", f"/operator/firm/{alice['firm_id']}"]:
         r = c.get(path)
         assert r.status_code == 200, (path, r.status_code)
