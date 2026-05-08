@@ -22,8 +22,8 @@ code, commit them to git, or share them in screenshots.
 | `IMPORT_HISTORY_DB` | optional | Path to SQLite file on the Render persistent disk, e.g. `/var/data/import_history.sqlite3`. |
 | `APP_DB` | optional | Path to the auth/jobs SQLite file on the persistent disk, e.g. `/var/data/app.sqlite3`. |
 | `CSRF_DISABLE` | **never** | Tests only. The app refuses to start if this is on with `APP_ENV=production`. |
-| `APP_NAME` | optional | Display name shown in the page title and brand mark. Defaults to `Cutover`. |
-| `COMPANY_NAME` | optional | Operating-company name shown in the footer copyright. Defaults to `Cutover`. |
+| `APP_NAME` | optional | Display name shown in the page title and brand mark. Defaults to `PCLaw Migrate`. |
+| `COMPANY_NAME` | optional | Operating-company name shown in the footer copyright. Defaults to `PCLaw Migrate`. |
 | `SUPPORT_EMAIL` | optional but recommended | Address surfaced on `/support` for customer issues. Defaults to `support@your-domain.example` &mdash; set this before customer testing. |
 | `SECURITY_EMAIL` | optional but recommended | Address surfaced on `/support` for vulnerability reports. Defaults to `security@your-domain.example` &mdash; set this before customer testing. |
 | `PRIVACY_CONTACT_EMAIL` | optional | Address shown on `/privacy` for data-deletion requests. Falls back to `SUPPORT_EMAIL`. |

@@ -12,7 +12,7 @@
       <li><strong>QuickBooks rejected the import.</strong> Open the job, scroll to <em>QuickBooks Online</em>, and click <em>Map accounts</em>. Make sure every PCLaw account is matched to a real QBO account, then click <em>Import</em> again.</li>
       <li><strong>I imported into the wrong company.</strong> Open the job, scroll to <em>Reverse this import</em>, type <code>REVERSE</code>, and click the button. QuickBooks will get offsetting JournalEntry records (DocNumber starting <code>REV-</code>); the originals stay visible for audit.</li>
       <li><strong>&ldquo;Duplicate import blocked.&rdquo;</strong> The same file (or the same <code>transaction_id</code>s) was already imported into this QuickBooks company. Either export a fresh ledger from PCLaw covering only the new period, or delete the prior import in QBO if you really want to re-post.</li>
-      <li><strong>Reversal entries don't say &ldquo;reversal&rdquo; in QBO.</strong> Reversals posted by Cutover have <code>DocNumber</code> starting with <code>REV-</code> and every line description prefixed <strong>REVERSAL</strong>. The QuickBooks Journal report shows them as separate entries alongside the originals; QuickBooks does not visually mark the originals as voided.</li>
+      <li><strong>Reversal entries don't say &ldquo;reversal&rdquo; in QBO.</strong> Reversals posted by {{ app_name }} have <code>DocNumber</code> starting with <code>REV-</code> and every line description prefixed <strong>REVERSAL</strong>. The QuickBooks Journal report shows them as separate entries alongside the originals; QuickBooks does not visually mark the originals as voided.</li>
     </ul>
   </section>
 

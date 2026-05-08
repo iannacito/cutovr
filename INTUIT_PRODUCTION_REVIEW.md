@@ -61,8 +61,8 @@ Intuit production form:
 
 | Env var | Where it shows | Default |
 | --- | --- | --- |
-| `APP_NAME` | Page title, brand mark in header | `Cutover` |
-| `COMPANY_NAME` | Footer copyright | `Cutover` |
+| `APP_NAME` | Page title, brand mark in header | `PCLaw Migrate` |
+| `COMPANY_NAME` | Footer copyright | `PCLaw Migrate` |
 | `SUPPORT_EMAIL` | `/support` &mdash; "Email …" line | `support@your-domain.example` |
 | `SECURITY_EMAIL` | `/support` &mdash; "Reporting a security issue" | `security@your-domain.example` |
 | `PRIVACY_CONTACT_EMAIL` | `/privacy` &mdash; "Contact" | falls back to `SUPPORT_EMAIL` |

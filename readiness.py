@@ -1,4 +1,4 @@
-"""Production go-live readiness checks for Cutover.
+"""Production go-live readiness checks for PCLaw Migrate.
 
 This module produces a structured, secret-free view of "is this deploy
 ready to be turned on for real customers?" suitable for both:
