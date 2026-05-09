@@ -134,6 +134,24 @@ def _security_headers(resp):
         "Permissions-Policy",
         "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
     )
+    # Conservative CSP: app templates do not load any third-party scripts
+    # at runtime (only Google Fonts CSS + font files via <link>). We allow
+    # 'self' for everything plus the two Google Fonts hosts. No inline
+    # scripts; no eval. If a future feature needs an inline <script> the
+    # right move is a nonce, not loosening this header.
+    resp.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; "
+        "font-src 'self' https://fonts.gstatic.com data:; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "form-action 'self' https://appcenter.intuit.com; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "object-src 'none'",
+    )
     if IS_PRODUCTION:
         resp.headers.setdefault(
             "Strict-Transport-Security",
@@ -371,6 +389,33 @@ def _csrf_protect():
 # ---------------------------------------------------------------------------
 # Auth helpers
 # ---------------------------------------------------------------------------
+
+def _is_safe_local_redirect(target):
+    """Return True if `target` is a safe same-origin redirect target.
+
+    Rejects:
+      - empty / None
+      - protocol-relative ("//evil.example/...")
+      - full URLs ("https://evil.example/...")
+      - backslash-prefixed paths ("/\\evil.example") which some browsers
+        normalise to a scheme-relative URL
+      - anything that is not a path beginning with a single '/'
+    """
+    if not target or not isinstance(target, str):
+        return False
+    if len(target) > 512:
+        return False
+    if not target.startswith("/"):
+        return False
+    if target.startswith("//"):
+        return False
+    if target.startswith("/\\"):
+        return False
+    # Reject any embedded CR/LF (header-injection guard) or NUL.
+    if any(ch in target for ch in ("\r", "\n", "\x00")):
+        return False
+    return True
+
 
 def current_user():
     """Return the logged-in user dict (with firm_id) or None."""
@@ -666,7 +711,7 @@ def login():
         session["firm_id"] = user["firm_id"]
         db.audit(action="login", firm_id=user["firm_id"], user_id=user["id"], details=email)
         next_url = request.args.get("next") or request.form.get("next")
-        if next_url and next_url.startswith("/") and not next_url.startswith("//"):
+        if _is_safe_local_redirect(next_url):
             return redirect(next_url)
         return redirect(url_for("dashboard"))
     return render_template("login.html")
@@ -1398,8 +1443,18 @@ def connect_qbo(job_id):
         )
         return redirect(url_for("job_detail", job_id=job_id))
 
+    # Bind the OAuth state to a fresh per-attempt random nonce stored in
+    # the session. The job_id alone is a predictable timestamp string, so
+    # without a nonce an attacker who learns or guesses a victim's job_id
+    # could craft a /oauth/callback?state=<job_id>&code=<their_code> URL
+    # and trick the victim into linking their own QuickBooks company to
+    # the attacker's job. The session-bound nonce defeats that: only a
+    # callback whose state matches the value we just minted (in the same
+    # browser session) is accepted.
+    nonce = secrets.token_urlsafe(32)
     session["pending_job_id"] = job_id
-    auth_url = qbo_auth.get_authorization_url(state=job_id)
+    session["pending_oauth_state"] = f"{job_id}:{nonce}"
+    auth_url = qbo_auth.get_authorization_url(state=session["pending_oauth_state"])
     return redirect(auth_url)
 
 
@@ -1504,7 +1559,37 @@ def oauth_callback():
         )
         return redirect(url_for("dashboard"))
 
-    job_id = session.pop("pending_job_id", state)
+    # Verify the OAuth `state` parameter against the per-session nonce we
+    # minted in /jobs/<id>/connect-qbo. Without this check, the only thing
+    # tying the callback to the user's session is the trailing firm_id
+    # comparison below; a state mismatch should be a hard stop with no
+    # token exchange. We tolerate older sessions (no pending_oauth_state)
+    # by falling back to the previous behavior so an in-flight upgrade
+    # doesn't break a connect that started before the deploy. New connects
+    # always set pending_oauth_state.
+    expected_state = session.pop("pending_oauth_state", None)
+    pending_job_id = session.pop("pending_job_id", None)
+    if expected_state is not None:
+        if not state or not secrets.compare_digest(str(expected_state), str(state)):
+            db.audit(
+                action="oauth_callback_state_mismatch",
+                firm_id=user["firm_id"], user_id=user["id"],
+                target_type="job", target_id=pending_job_id or "",
+            )
+            flash(
+                "QuickBooks connection rejected: the security token from "
+                "Intuit did not match the one this session issued. No data "
+                "was changed. Please open the job and click Connect to "
+                "QuickBooks again." + _support_suffix(),
+                "error",
+            )
+            return redirect(url_for("dashboard"))
+        # state has the form "<job_id>:<nonce>"; trust the prefix here
+        # because we just verified it matches our own session value.
+        job_id = pending_job_id or expected_state.split(":", 1)[0]
+    else:
+        # Legacy fallback: state is the bare job_id.
+        job_id = pending_job_id or state
     job = jobs.get(job_id)
     if not job:
         flash(
@@ -2773,4 +2858,11 @@ def operator_firm_detail(firm_id):
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    # Never enable Werkzeug's debugger by default. The debugger pin is a known
+    # RCE vector if exposed (CVE-2024-34069), and any operator who runs
+    # `python app.py` against a real APP_DB shouldn't be auto-opted-in to it.
+    # Set FLASK_DEBUG=1 explicitly when you want the local debugger.
+    _debug = os.environ.get("FLASK_DEBUG", "0").lower() in ("1", "true", "yes", "on")
+    if _debug and IS_PRODUCTION:
+        raise RuntimeError("FLASK_DEBUG must not be set when APP_ENV=production")
+    app.run(debug=_debug)

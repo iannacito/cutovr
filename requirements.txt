@@ -1,5 +1,15 @@
 Flask==3.0.3
-Werkzeug==3.0.3
-cryptography==42.0.5
-requests==2.31.0
-gunicorn==21.2.0
+# Werkzeug 3.0.3 has CVE-2024-49767 (multipart DoS) and CVE-2024-34069
+# (debugger-pin RCE). 3.0.6 is the smallest bump that fixes both and
+# stays compatible with Flask 3.0.x.
+Werkzeug==3.0.6
+# cryptography 42.0.5 has CVE-2024-26130 (NULL deref in PKCS#12 + a few
+# others fixed across 43.x). 43.0.1 is a small bump that keeps Fernet
+# behavior identical.
+cryptography==43.0.1
+# requests 2.31.0 has CVE-2024-35195 (Session.verify state leak across
+# requests). 2.32.3 patches it.
+requests==2.32.3
+# gunicorn 21.2.0 has CVE-2024-1135 (Transfer-Encoding smuggling) fixed
+# in 22.0.0; bump to the latest stable 23.x.
+gunicorn==23.0.0
