@@ -1,0 +1,258 @@
+{% extends "_base.html" %}
+{% block title %}Preview import &mdash; Job {{ job.id }}{% endblock %}
+{% block content %}
+<section class="detail-page">
+  <a href="{{ url_for('job_detail', job_id=job.id) }}" class="back-link">&larr; Back to job</a>
+
+  <section class="card detail-hero">
+    <div class="flex-between">
+      <div>
+        <p class="eyebrow">Step &middot; Preview import</p>
+        <h1>What would be posted to QuickBooks</h1>
+        <p class="muted" style="margin-top:.25rem;">
+          This is a <strong>dry run</strong>. Nothing has been sent to QuickBooks &mdash;
+          we are only showing you the journal entries we <em>would</em> create
+          if you confirmed the import.
+        </p>
+      </div>
+      <div class="stack-sm" style="text-align:right;">
+        {% if qbo_connection.realm_id %}
+          <span class="badge success large">QuickBooks connected</span>
+          <span class="muted">{{ qbo_connection.company_name or qbo_connection.realm_id }}</span>
+        {% else %}
+          <span class="badge large">QuickBooks not connected</span>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+
+  {% if preview_error %}
+    <section class="card error-panel">
+      <p class="eyebrow" style="color:var(--error);">Preview unavailable</p>
+      <h2 style="margin-top:.25rem;">We could not build the preview yet</h2>
+      <p>{{ preview_error }}</p>
+      {% if not qbo_connection.realm_id %}
+        <p class="note">
+          Tip: connect QuickBooks first &mdash; the preview compares your PCLaw
+          accounts against the chart of accounts in QBO. Connecting does not
+          post anything.
+        </p>
+        <a class="btn btn-primary" href="{{ url_for('job_detail', job_id=job.id) }}">Back to job &amp; connect QuickBooks</a>
+      {% endif %}
+    </section>
+  {% else %}
+
+  <section class="card">
+    <p class="eyebrow">Summary</p>
+    <h2>If you confirmed, this would post:</h2>
+    <dl class="summary-grid">
+      <div><dt>JournalEntry records</dt><dd>{{ preview.journal_entry_count }}</dd></div>
+      <div><dt>Total source transactions</dt><dd>{{ preview.transaction_count_total }}</dd></div>
+      <div><dt>Lines</dt><dd>{{ preview.line_count }}</dd></div>
+      <div><dt>Total debits</dt><dd>${{ preview.total_debits }}</dd></div>
+      <div><dt>Total credits</dt><dd>${{ preview.total_credits }}</dd></div>
+      <div>
+        <dt>Balanced</dt>
+        <dd>
+          {% if preview.balanced %}
+            <span class="badge success">Yes</span>
+          {% else %}
+            <span class="badge error">No</span>
+          {% endif %}
+        </dd>
+      </div>
+      <div><dt>Unique accounts</dt><dd>{{ preview.unique_account_count }}</dd></div>
+      <div>
+        <dt>Mapping mode</dt>
+        <dd><span class="badge">By account {{ preview.mapping_mode }}</span></dd>
+      </div>
+      <div>
+        <dt>Mapped accounts</dt>
+        <dd><span class="badge success">{{ preview.mapped_account_count }}</span></dd>
+      </div>
+      <div>
+        <dt>Unmapped accounts</dt>
+        <dd>
+          {% if preview.unmapped_account_count == 0 %}
+            <span class="badge success">0</span>
+          {% else %}
+            <span class="badge error">{{ preview.unmapped_account_count }}</span>
+            &mdash; <a href="{{ url_for('account_mapping', job_id=job.id) }}">Map accounts</a>
+          {% endif %}
+        </dd>
+      </div>
+      <div>
+        <dt>Would post on confirm?</dt>
+        <dd>
+          {% if preview.would_post %}
+            <span class="badge success">Yes &mdash; safe to import</span>
+          {% else %}
+            <span class="badge error">No &mdash; resolve the items below first</span>
+          {% endif %}
+        </dd>
+      </div>
+    </dl>
+
+    <div class="actions-row" style="margin-top:var(--space-4);">
+      <a class="btn" href="{{ url_for('validation_report_csv', job_id=job.id) }}">
+        Download validation report (CSV)
+      </a>
+      <a class="btn" href="{{ url_for('account_mapping', job_id=job.id) }}">Map accounts</a>
+      <a class="btn btn-primary" href="{{ url_for('job_detail', job_id=job.id) }}#qbo">
+        Back to job
+      </a>
+    </div>
+  </section>
+
+  {% if preview.unmapped_accounts %}
+  <section class="card error-panel">
+    <p class="eyebrow" style="color:var(--error);">Unmapped accounts</p>
+    <h2>These PCLaw accounts have no QuickBooks match yet</h2>
+    <p class="muted">
+      Importing will be blocked until each of these is mapped to a QBO
+      account. Click below to pick a matching QBO account for each.
+    </p>
+    <ul>
+      {% for a in preview.unmapped_accounts %}
+        <li><code>{{ a }}</code></li>
+      {% endfor %}
+    </ul>
+    <a class="btn btn-primary" href="{{ url_for('account_mapping', job_id=job.id) }}">Open the account mapping page</a>
+  </section>
+  {% endif %}
+
+  <section class="card">
+    <p class="eyebrow">Accounts</p>
+    <h2>PCLaw accounts &rarr; QuickBooks accounts</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>PCLaw account</th>
+            <th>Mapped?</th>
+            <th>QBO account</th>
+            <th>QBO id</th>
+            <th>Lines</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for a in preview.accounts %}
+          <tr>
+            <td>{{ a.pclaw_display }}</td>
+            <td>
+              {% if a.mapped %}
+                <span class="badge success">Yes</span>
+              {% else %}
+                <span class="badge error">No</span>
+              {% endif %}
+            </td>
+            <td>{{ a.qbo_account_name or '—' }}</td>
+            <td><code>{{ a.qbo_account_id or '—' }}</code></td>
+            <td>{{ a.line_count }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  {% if preview.customers or preview.vendors %}
+  <section class="card">
+    <p class="eyebrow">Customers &amp; Vendors</p>
+    <h2>Entities that would be looked up or created</h2>
+    <p class="muted">
+      QuickBooks requires a Customer on every Accounts Receivable line and a
+      Vendor on every Accounts Payable line. Any name shown below that is
+      not already in your QBO company will be <strong>created</strong> as
+      part of the import.
+    </p>
+    {% if preview.customers %}
+    <h3 style="margin-top:var(--space-3);">Customers</h3>
+    <ul>
+      {% for c in preview.customers %}
+        <li>{{ c.name }} <span class="muted">&middot; {{ c.lines }} line(s)</span></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    {% if preview.vendors %}
+    <h3>Vendors</h3>
+    <ul>
+      {% for v in preview.vendors %}
+        <li>{{ v.name }} <span class="muted">&middot; {{ v.lines }} line(s)</span></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {% if preview.blocked_transactions %}
+  <section class="card error-panel">
+    <p class="eyebrow" style="color:var(--error);">Blocked transactions</p>
+    <h2>These rows would be rejected by QuickBooks</h2>
+    <p class="muted">
+      Either fix these in your CSV and re-upload, or remove them from the
+      export before retrying.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Transaction</th><th>Lines</th><th>Reasons</th></tr></thead>
+        <tbody>
+          {% for b in preview.blocked_transactions %}
+          <tr>
+            <td><code>{{ b.transaction_id }}</code></td>
+            <td>{{ b.line_count }}</td>
+            <td>{{ b.reasons|join('; ') }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if preview.sample_lines %}
+  <section class="card">
+    <p class="eyebrow">Sample lines</p>
+    <h2>First {{ preview.sample_lines|length }} JournalEntry line(s)</h2>
+    <p class="muted">A small sample so you can sanity-check what would be posted.</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Transaction</th><th>Date</th><th>Account</th>
+            <th>Type</th><th>Amount</th><th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for l in preview.sample_lines %}
+          <tr>
+            <td><code>{{ l.transaction_id }}</code></td>
+            <td>{{ l.date }}</td>
+            <td>{{ l.account }}</td>
+            <td>{{ l.posting_type }}</td>
+            <td>${{ l.amount }}</td>
+            <td class="muted">{{ l.description }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  {% endif %}{# preview_error else #}
+
+  <section class="card">
+    <p class="eyebrow">What happens when I confirm?</p>
+    <h2>Migration steps</h2>
+    <ol>
+      <li><strong>Validate</strong> &mdash; we already parsed your CSV and checked it for balance &amp; required columns.</li>
+      <li><strong>Map accounts</strong> &mdash; pair each PCLaw account with a QuickBooks account.</li>
+      <li><strong>Preview</strong> &mdash; (this page) see exactly what would be posted.</li>
+      <li><strong>Connect QuickBooks</strong> &mdash; authorize the QBO company that should receive the journal entries.</li>
+      <li><strong>Confirm import</strong> &mdash; on production, type <code>IMPORT</code> to post.</li>
+      <li><strong>Reconcile / Reverse</strong> &mdash; download the reconciliation report or post offsetting entries if needed.</li>
+    </ol>
+  </section>
+</section>
+{% endblock %}

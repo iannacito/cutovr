@@ -33,6 +33,12 @@ from qbo_client import QBOClient, QBOError
 from encryption import encrypt_file, decrypt_file, encrypt_token, decrypt_token
 from import_history import ImportHistory, sha256_of_file
 from preflight import build_preflight_summary, friendly_validation_message
+from migration_quality import (
+    build_dry_run_preview,
+    render_validation_csv,
+    build_reconciliation_report,
+    render_reconciliation_csv,
+)
 import qbo_error_hint
 import email_sender
 from rate_limit import RateLimiter, client_ip
@@ -2419,6 +2425,166 @@ def verify_import(job_id):
             "error",
         )
     return redirect(url_for("job_detail", job_id=job_id))
+
+
+def _load_job_gl_rows(job):
+    """Decrypt the job's source CSV and return (rows, fieldnames).
+
+    Returns ``(None, [])`` if the file is not in the GL format. The caller
+    is responsible for telling the user.
+    """
+    encrypted_in = UPLOAD_DIR / job["encrypted_file"]
+    temp_csv = UPLOAD_DIR / f"temp_preview_{job['id']}.csv"
+    decrypt_file(encrypted_in, temp_csv)
+    try:
+        with temp_csv.open("r", newline="", encoding="utf-8-sig") as f:
+            sample = _csv.DictReader(f)
+            fieldnames = sample.fieldnames or []
+        if not is_gl_format(fieldnames):
+            return None, fieldnames
+        rows = load_general_ledger_csv(temp_csv)
+        return rows, fieldnames
+    finally:
+        temp_csv.unlink(missing_ok=True)
+
+
+@app.route("/jobs/<job_id>/preview-import")
+@login_required
+def preview_import(job_id):
+    """Dry-run preview: show exactly what would be posted to QuickBooks.
+
+    Beginner-safe and **non-destructive**: this view never calls a QBO
+    write/create endpoint. It uses the same parsing + mapping logic the
+    importer does, but stops short of POSTing. The user can review the
+    counts, totals, and unmapped accounts here before clicking the real
+    import button on the job detail page.
+    """
+    job, user = _job_or_403(job_id)
+    qbo_conn = _get_qbo_connection(job_id) or {}
+
+    rows, fieldnames = (None, [])
+    qbo_accounts = {"QueryResponse": {"Account": []}}
+    preview = None
+    preview_error = None
+    saved_mappings = []
+
+    try:
+        rows, fieldnames = _load_job_gl_rows(job)
+    except ValueError as e:
+        preview_error = str(e)
+    except FileNotFoundError:
+        preview_error = "The uploaded ledger file could not be found on disk."
+    except Exception as e:  # noqa: BLE001
+        preview_error = f"Could not read the uploaded ledger: {e}"
+
+    if rows is None and not preview_error:
+        preview_error = (
+            "This CSV is not in the General Ledger format expected for QBO import. "
+            "Re-upload with columns: " + ", ".join(GL_REQUIRED_COLUMNS) + "."
+        )
+
+    if rows is not None and qbo_conn:
+        # READ-ONLY: get_accounts is a SELECT against the QBO query API. It
+        # does NOT mutate anything in the customer's QuickBooks company.
+        try:
+            qbo, _conn = _get_qbo_client(job_id, user)
+            qbo_accounts = qbo.get_accounts()
+            saved_mappings = db.list_account_mappings(user["firm_id"], qbo_conn["realm_id"])
+        except QBOAuthExpired:
+            preview_error = (
+                "QuickBooks connection expired while loading the chart of accounts. "
+                "Reconnect to QuickBooks and try again."
+            )
+        except Exception as e:  # noqa: BLE001
+            preview_error = f"Could not query QuickBooks chart of accounts: {e}"
+
+    if rows is not None and preview_error is None:
+        preview = build_dry_run_preview(rows, qbo_accounts, saved_mappings)
+
+    _audit("import_preview", target_type="job", target_id=job_id,
+           details=(f"je={preview['journal_entry_count']} unmapped={preview['unmapped_account_count']}"
+                    if preview else preview_error or "no preview"))
+
+    return render_template(
+        "preview-import.html",
+        job=job,
+        qbo_connection=qbo_conn,
+        preview=preview,
+        preview_error=preview_error,
+        qbo_real_import=QBO_REAL_IMPORT,
+    )
+
+
+@app.route("/jobs/<job_id>/validation-report.csv")
+@login_required
+def validation_report_csv(job_id):
+    """Download a per-job validation report as CSV.
+
+    Auth + firm scoping enforced via ``_job_or_403``. Every cell is sent
+    through ``csv_safety.sanitize_csv_cell`` so a malicious description
+    field cannot turn the report into a spreadsheet formula.
+    """
+    job, user = _job_or_403(job_id)
+
+    preflight = job.get("preflight") or {}
+    qbo_conn = _get_qbo_connection(job_id)
+    preview = None
+
+    # Best-effort: include the mapping preview when we can talk to QBO,
+    # but never let that fail the download. The validation report is the
+    # one thing the user should be able to grab even when QBO is down.
+    if qbo_conn:
+        try:
+            rows, _fn = _load_job_gl_rows(job)
+            if rows is not None:
+                qbo, _conn = _get_qbo_client(job_id, user)
+                qbo_accounts = qbo.get_accounts()
+                saved = db.list_account_mappings(user["firm_id"], qbo_conn["realm_id"])
+                preview = build_dry_run_preview(rows, qbo_accounts, saved)
+        except Exception:  # noqa: BLE001
+            preview = None
+
+    body = render_validation_csv(job, preflight, preview)
+    _audit("validation_report_download", target_type="job", target_id=job_id)
+    filename = f"validation-{job_id}.csv"
+    return Response(
+        body,
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@app.route("/jobs/<job_id>/reconciliation-report.csv")
+@login_required
+def reconciliation_report_csv(job_id):
+    """Download a post-import reconciliation report as CSV.
+
+    Returns 404 if no successful import exists for this job — we don't
+    want to hand out an empty report and confuse the user.
+    """
+    job, _user = _job_or_403(job_id)
+    import_rec = history.get_latest_completed_import_for_job(job_id)
+    if not import_rec:
+        flash(
+            "No completed import yet for this job — run the import first, "
+            "then download the reconciliation report.",
+            "info",
+        )
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    reversal = history.get_reversal_for_import(import_rec["id"])
+    report = build_reconciliation_report(
+        job, import_rec, verification=job.get("verification"), reversal=reversal,
+    )
+    body = render_reconciliation_csv(report)
+    _audit("reconciliation_report_download", target_type="job", target_id=job_id,
+           details=f"import_id={import_rec['id']}")
+    filename = f"reconciliation-{job_id}.csv"
+    return Response(
+        body,
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @app.route("/jobs/<job_id>/account-mapping", methods=["GET", "POST"])
