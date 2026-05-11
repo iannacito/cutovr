@@ -59,6 +59,61 @@
     </div>
   </section>
 
+  {# Beginner-friendly migration sequence. Each step shows where the user is. #}
+  {% set step_validated = preflight and not preflight.missing_required_columns and preflight.balanced %}
+  {% set step_mapped = unmapped_count == 0 %}
+  {% set step_connected = job.qbo_connected %}
+  {% set step_imported = job.qbo_results %}
+  <section class="card" aria-label="Migration sequence">
+    <p class="eyebrow">Migration sequence</p>
+    <h2>From validate to reconcile</h2>
+    <ol class="migration-steps">
+      <li>
+        <strong>1. Validate</strong>
+        {% if step_validated %}<span class="badge success">Done</span>{% else %}<span class="badge">Pending</span>{% endif %}
+        <p class="muted">We checked your CSV for required columns and balance.</p>
+      </li>
+      <li>
+        <strong>2. Map accounts</strong>
+        {% if step_mapped %}<span class="badge success">Done</span>{% else %}<span class="badge warn">{{ unmapped_count }} unmapped</span>{% endif %}
+        <p class="muted">
+          Pair each PCLaw account with a QuickBooks account.
+          <a href="{{ url_for('account_mapping', job_id=job.id) }}">Open mapping</a>.
+        </p>
+      </li>
+      <li>
+        <strong>3. Preview import</strong>
+        <p class="muted">
+          See exactly what would be posted &mdash; nothing is sent to QBO.
+          <a class="btn btn-primary" style="margin-top:.4rem;display:inline-block;" href="{{ url_for('preview_import', job_id=job.id) }}">Preview import</a>
+          <a class="btn" style="margin-top:.4rem;display:inline-block;" href="{{ url_for('validation_report_csv', job_id=job.id) }}">Download validation report (CSV)</a>
+        </p>
+      </li>
+      <li>
+        <strong>4. Connect QuickBooks</strong>
+        {% if step_connected %}<span class="badge success">Connected</span>{% else %}<span class="badge">Not connected</span>{% endif %}
+      </li>
+      <li>
+        <strong>5. Confirm import</strong>
+        {% if step_imported %}<span class="badge success">Posted</span>{% else %}<span class="badge">Pending</span>{% endif %}
+        <p class="muted">
+          {% if qbo_env_status == 'production' %}
+            You will be asked to type <code>IMPORT</code> before anything is posted.
+          {% else %}
+            Sandbox mode: journal entries post to a test QuickBooks company only.
+          {% endif %}
+        </p>
+      </li>
+      <li>
+        <strong>6. Reconcile / Reverse</strong>
+        {% if step_imported %}
+          <a class="btn" style="margin-top:.4rem;display:inline-block;" href="{{ url_for('reconciliation_report_csv', job_id=job.id) }}">Download reconciliation report (CSV)</a>
+        {% endif %}
+        <p class="muted">After import, download the receipt or post offsetting reversals.</p>
+      </li>
+    </ol>
+  </section>
+
   {% if preflight %}
   <section class="card" id="preflight">
     <p class="eyebrow">Import preflight</p>
@@ -339,6 +394,11 @@
       <div><dt>Source credit total</dt><dd>${{ job.import_summary.source_credit_total }}</dd></div>
       <div><dt>Balanced</dt><dd>{{ "Yes" if job.import_summary.balanced else "No" }}</dd></div>
     </dl>
+    <div class="actions-row" style="margin-top:var(--space-3);">
+      <a class="btn" href="{{ url_for('reconciliation_report_csv', job_id=job.id) }}">
+        Download reconciliation report (CSV)
+      </a>
+    </div>
     {% if job.qbo_results %}
       <details style="margin-top:var(--space-4);">
         <summary class="muted" style="cursor:pointer;">Show created QuickBooks JournalEntry IDs ({{ job.qbo_results|length }})</summary>
