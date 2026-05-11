@@ -42,6 +42,7 @@ status:
 | Item | Status | Notes |
 | --- | --- | --- |
 | HTTPS termination at Render | ✅ | Verified by `/readiness` checks. |
+| Trusted-proxy / `X-Forwarded-*` handling | ✅ | `werkzeug.middleware.proxy_fix.ProxyFix` with 1 trusted hop (Render edge). Overridable via `TRUSTED_PROXY_HOPS`. See `SECURITY_HARDENING_BATCH2.md` §2. |
 | HSTS in production | ✅ | Added in this branch (`max-age=31536000; includeSubDomains`). |
 | Strict-Transport-Security preload | 🟡 | After 30 days of stable HSTS, submit to <https://hstspreload.org>. |
 | `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy` | ✅ | Added in this branch. |
@@ -57,7 +58,7 @@ status:
 | Upload extension allowlist (`.csv` only) | ✅ | Added in this branch. |
 | Per-file SHA-256 fingerprinting + duplicate-protection | ✅ | `import_history` already blocks the same file content into the same realm. |
 | Anti-malware scan on uploads (e.g. ClamAV on Render disk) | 🟠 | Today the file is encrypted at rest immediately, but it is parsed by the app first. Add a scan step before parsing. |
-| Reject CSV bombs / billion-laughs / formula injection | 🟡 | Strip cells starting with `=`, `+`, `-`, `@` when round-tripping to QBO descriptions. Today our pipeline only writes numeric/date/string fields, but defense-in-depth. |
+| Reject CSV bombs / billion-laughs / formula injection | ✅ | `csv_safety.sanitize_csv_cell` prefixes a tick on `=`, `+`, `-`, `@`, TAB, CR. Wired into `pclaw_parser.export_qbo_csv`. See `SECURITY_HARDENING_BATCH2.md` §3. |
 | Friendly errors instead of stack traces on every user-facing route | 🟡 | The mapping route (this branch) is the model. Audit `app.py` for the remaining `raise`s reachable from a request. |
 
 ## Data protection
@@ -89,7 +90,10 @@ status:
 | --- | --- | --- |
 | Per-firm audit log of state-changing actions | ✅ | `db.audit(...)` rows include actor, target, and details. |
 | `intuit_tid` capture on every QBO error | ✅ | Surfaced to the user and stored in the audit row for support. |
-| No secret leakage into logs | ✅ | Tokens are redacted; access tokens never log. Add a periodic `grep` audit. |
+| No secret leakage into logs | ✅ | Tokens are redacted; access tokens never log. Audit `details` are now also scrubbed by `_sanitize_audit_details` (regex strips `access_token=`, `refresh_token=`, `Authorization: Bearer …`, etc.) and truncated to 500 chars. See `SECURITY_HARDENING_BATCH2.md` §5. |
+| Email-PII minimization in audit log | ✅ | Login / signup audit rows store `a***@example.com` instead of the full address; `user_id` column remains canonical. See `SECURITY_HARDENING_BATCH2.md` §5. |
+| Unpredictable internal IDs (jobs) | ✅ | `job_id` now includes 96 bits of `secrets.token_urlsafe(12)` entropy; tenancy still enforced by `_job_or_403`. See `SECURITY_HARDENING_BATCH2.md` §1. |
+| SMTP-failure visibility | ✅ | `password_reset_email_send_failed` + `password_reset_smtp_missing` audit rows; structured WARN log lines for centralized log shipping. No token / recipient / credential leakage. See `SECURITY_HARDENING_BATCH2.md` §4. |
 | Centralized log shipping (e.g. Logtail, BetterStack) | 🟡 | Render captures stdout but lacks long-term retention; ship to a log store with 90-day retention before SOC 2. |
 | Per-route latency + error metrics | 🟠 | Add Prometheus-format `/metrics` (auth-gated) or send to OpenTelemetry. |
 | Alerting on QBO error spikes / login-failure spikes | 🟠 | Trigger PagerDuty / email when the audit log shows >N failures in 5 minutes. |
