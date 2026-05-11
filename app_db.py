@@ -237,6 +237,15 @@ class AppDB:
         add_col("jobs", "last_import_id INTEGER")
         add_col("jobs", "unmapped_accounts_json TEXT")
         add_col("jobs", "last_error_json TEXT")
+        # Multi-report support: which PCLaw report this job represents
+        # (general_ledger | chart_of_accounts | trial_balance | trust_listing).
+        # Older rows default to general_ledger so backward compatibility
+        # is preserved at read time.
+        add_col("jobs", "report_type TEXT")
+        # The job-detail preflight panel reads a per-report preflight dict
+        # whose shape varies by report_type. Stored as JSON TEXT so the
+        # rest of the schema stays flat.
+        add_col("jobs", "preflight_json TEXT")
 
         # qbo_connections additions for encrypted token persistence
         add_col("qbo_connections", "legal_name TEXT")
@@ -455,6 +464,14 @@ class AppDB:
         if "qbo_connected" in job_dict:
             fields.append("qbo_connected")
             values.append(1 if job_dict["qbo_connected"] else 0)
+        if "report_type" in job_dict:
+            fields.append("report_type")
+            values.append(job_dict["report_type"])
+        if "preflight" in job_dict:
+            fields.append("preflight_json")
+            values.append(
+                json.dumps(job_dict["preflight"]) if job_dict["preflight"] is not None else None
+            )
 
         set_clause = ", ".join(f"{f} = ?" for f in fields)
         values.append(job_id)
@@ -498,6 +515,9 @@ class AppDB:
             "created_at": row["created_at"],
             "qbo_connected": bool(row["qbo_connected"]) if row["qbo_connected"] is not None else False,
         }
+        # report_type defaults to general_ledger for legacy rows.
+        rt = row["report_type"] if "report_type" in row.keys() else None
+        out["report_type"] = rt or "general_ledger"
         # decode JSON sub-objects
         for src, dst in [
             ("summary_json", "summary"),
@@ -506,6 +526,7 @@ class AppDB:
             ("verification_json", "verification"),
             ("unmapped_accounts_json", "unmapped_accounts"),
             ("last_error_json", "last_error"),
+            ("preflight_json", "preflight"),
         ]:
             v = row[src] if src in row.keys() else None
             if v:

@@ -39,6 +39,24 @@ from migration_quality import (
     build_reconciliation_report,
     render_reconciliation_csv,
 )
+from report_types import (
+    REPORT_GENERAL_LEDGER,
+    REPORT_CHART_OF_ACCOUNTS,
+    REPORT_TRIAL_BALANCE,
+    REPORT_TRUST_LISTING,
+    REPORT_TYPES,
+    REPORT_LABELS,
+    REPORT_QBO_BEHAVIOR,
+    is_valid_report_type,
+    detect_report_type,
+    parse_chart_of_accounts,
+    parse_trial_balance,
+    parse_trust_listing,
+    build_coa_preflight,
+    build_trial_balance_preflight,
+    build_trust_listing_preflight,
+    build_coa_dry_run_preview,
+)
 import qbo_error_hint
 import email_sender
 from rate_limit import RateLimiter, client_ip
@@ -1312,6 +1330,45 @@ def onboarding_sample_csv():
     )
 
 
+# Sample-download routes for the non-GL reports. These reuse the bundled
+# demo data under test_data/ so the file customers download matches what
+# the smoke-test suite exercises. They are public because the bundled
+# files are obviously-fake demo data; switching to login_required would
+# block prospects from previewing the format before signup.
+_REPORT_SAMPLE_FILES = {
+    "chart_of_accounts": ("test_data/01_chart_of_accounts.csv", "pclaw_qbo_sample_chart_of_accounts.csv"),
+    "trial_balance": ("test_data/03_trial_balance.csv", "pclaw_qbo_sample_trial_balance.csv"),
+    "trust_listing": ("test_data/05_trust_listing.csv", "pclaw_qbo_sample_trust_listing.csv"),
+}
+
+
+@app.route("/onboarding/sample/<report_type>.csv")
+def onboarding_sample_report_csv(report_type):
+    """Download a sample CSV for one of the supported report types.
+
+    Only the report types listed in _REPORT_SAMPLE_FILES are served. Any
+    other value returns 404 so an attacker can't read arbitrary files via
+    this route.
+    """
+    entry = _REPORT_SAMPLE_FILES.get(report_type)
+    if not entry:
+        abort(404)
+    rel_path, filename = entry
+    sample_path = BASE_DIR / rel_path
+    try:
+        body = sample_path.read_text(encoding="utf-8")
+    except OSError:
+        abort(404)
+    return Response(
+        body,
+        mimetype="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 @app.route("/favicon.ico")
 def favicon_ico():
     """Serve the SVG favicon at /favicon.ico for legacy clients that
@@ -1392,6 +1449,10 @@ def upload():
     company = request.form.get("company_name", "").strip()
     user_email = request.form.get("email", "").strip() or user["email"]
     file = request.files.get("ledger_file")
+    # report_type is optional for backward compatibility. Missing / blank /
+    # "auto" all mean "detect from headers (and fall back to GL behavior)".
+    raw_report_type = (request.form.get("report_type") or "").strip().lower()
+    user_picked_report_type = raw_report_type if is_valid_report_type(raw_report_type) else None
 
     if not company or not file:
         flash("Company name and PCLaw export file are required.", "error")
@@ -1441,6 +1502,11 @@ def upload():
         "created_at": datetime.utcnow().isoformat(),
         "summary": {},
         "qbo_connected": False,
+        # report_type is filled in below once headers are inspected. We
+        # write it here so the row exists if parsing fails before the
+        # type is known.
+        "report_type": user_picked_report_type or REPORT_GENERAL_LEDGER,
+        "report_type_user_picked": user_picked_report_type,
     }
     db.upsert_job(
         job_id=job_id, firm_id=user["firm_id"], user_id=user["id"],
@@ -1456,10 +1522,10 @@ def upload():
     decrypt_file(encrypted_path, temp_path)
 
     try:
-        # The simple flat parser (Date/Account/Description/Debit/Credit) is
-        # used for the legacy CSV format. The richer PCLaw GL format with
-        # transaction_id is handled directly by the import pipeline, so we
-        # don't need to convert it to the flat QBO export here.
+        # Read headers up-front so we can route to the right parser. The
+        # legacy GL path (transaction_id + Date/Account/Debit/Credit) is
+        # the default when no report_type is supplied and headers look
+        # like a GL — that keeps existing tests / customers unchanged.
         with temp_path.open("r", newline="", encoding="utf-8-sig") as _f:
             _reader = _csv.DictReader(_f)
             _fieldnames = list(_reader.fieldnames or [])
@@ -1469,13 +1535,34 @@ def upload():
                 1 for _ in _csv.DictReader(temp_path.open("r", newline="", encoding="utf-8-sig"))
             )
 
-        if _is_gl:
+        # Decide the effective report type. Explicit user pick always wins
+        # so a firm can force a (e.g.) Trust Listing parse on an unusual
+        # export. Otherwise we auto-detect: if it looks like a GL, behave
+        # exactly like the pre-multi-report code path.
+        detected = detect_report_type(_fieldnames)
+        if user_picked_report_type:
+            effective_report_type = user_picked_report_type
+        elif _is_gl:
+            effective_report_type = REPORT_GENERAL_LEDGER
+        elif detected:
+            effective_report_type = detected
+        else:
+            effective_report_type = REPORT_GENERAL_LEDGER
+        jobs[job_id]["report_type"] = effective_report_type
+        jobs[job_id]["report_type_detected"] = detected
+        jobs[job_id]["report_type_label"] = REPORT_LABELS[effective_report_type]
+        jobs[job_id]["qbo_behavior"] = REPORT_QBO_BEHAVIOR[effective_report_type]
+
+        if effective_report_type == REPORT_GENERAL_LEDGER and _is_gl:
             preflight = build_preflight_summary(_gl_rows, _fieldnames)
+            preflight["report_type"] = REPORT_GENERAL_LEDGER
+            preflight["report_label"] = REPORT_LABELS[REPORT_GENERAL_LEDGER]
             jobs[job_id]["status"] = "Ready for QBO connection"
             jobs[job_id]["summary"] = {
                 "row_count": _row_count,
                 "format": "GL (transaction_id)",
                 "balanced": preflight["balanced"],
+                "report_type": REPORT_GENERAL_LEDGER,
             }
             jobs[job_id]["preflight"] = preflight
             if preflight["ready"]:
@@ -1491,7 +1578,74 @@ def upload():
                     "QuickBooks.",
                     "error",
                 )
+        elif effective_report_type == REPORT_CHART_OF_ACCOUNTS:
+            coa_rows, _fn, missing = parse_chart_of_accounts(temp_path)
+            preflight = build_coa_preflight(coa_rows, _fn, missing)
+            jobs[job_id]["status"] = (
+                "Chart of Accounts ready for QBO preview"
+                if preflight["ready"]
+                else "Chart of Accounts uploaded with warnings"
+            )
+            jobs[job_id]["summary"] = {
+                "row_count": preflight["account_count"],
+                "format": REPORT_LABELS[REPORT_CHART_OF_ACCOUNTS],
+                "report_type": REPORT_CHART_OF_ACCOUNTS,
+            }
+            jobs[job_id]["preflight"] = preflight
+            # Cache the parsed COA rows on the job so the dry-run preview
+            # route can re-use them without re-decrypting the upload.
+            jobs[job_id]["parsed_coa"] = coa_rows
+            flash(
+                "Chart of Accounts file accepted. Connect QuickBooks to "
+                "see which accounts already exist and which would be "
+                "created. No QBO writes happen until you confirm.",
+                "success" if preflight["ready"] else "error",
+            )
+        elif effective_report_type == REPORT_TRIAL_BALANCE:
+            tb_rows, _fn, missing = parse_trial_balance(temp_path)
+            preflight = build_trial_balance_preflight(tb_rows, _fn, missing)
+            jobs[job_id]["status"] = (
+                "Trial Balance validated"
+                if preflight["ready"]
+                else "Trial Balance uploaded with warnings"
+            )
+            jobs[job_id]["summary"] = {
+                "row_count": preflight["account_count"],
+                "format": REPORT_LABELS[REPORT_TRIAL_BALANCE],
+                "report_type": REPORT_TRIAL_BALANCE,
+                "balanced": preflight["balanced"],
+            }
+            jobs[job_id]["preflight"] = preflight
+            jobs[job_id]["parsed_trial_balance"] = tb_rows
+            flash(
+                "Trial Balance accepted. This report is parsed for "
+                "validation and reconciliation only — no QuickBooks "
+                "writes are performed for Trial Balance uploads.",
+                "success" if preflight["ready"] else "error",
+            )
+        elif effective_report_type == REPORT_TRUST_LISTING:
+            trust_rows, _fn, missing = parse_trust_listing(temp_path)
+            preflight = build_trust_listing_preflight(trust_rows, _fn, missing)
+            jobs[job_id]["status"] = (
+                "Trust Listing validated"
+                if preflight["ready"]
+                else "Trust Listing uploaded with warnings"
+            )
+            jobs[job_id]["summary"] = {
+                "row_count": preflight["row_count"],
+                "format": REPORT_LABELS[REPORT_TRUST_LISTING],
+                "report_type": REPORT_TRUST_LISTING,
+            }
+            jobs[job_id]["preflight"] = preflight
+            jobs[job_id]["parsed_trust_listing"] = trust_rows
+            flash(
+                "Trust Listing accepted. This report is parsed for "
+                "validation and reconciliation only — no QuickBooks "
+                "writes are performed for Trust Listing uploads.",
+                "success" if preflight["ready"] else "error",
+            )
         else:
+            # Legacy "flat CSV" path: same behavior as before multi-report.
             rows = parse_pclaw_csv(temp_path)
             out_path = OUTPUT_DIR / f"{fs_prefix}_qbo_import.csv"
             summary = export_qbo_csv(rows, out_path)
@@ -1541,6 +1695,7 @@ def job_detail(job_id):
         "production" if (QBO_ENVIRONMENT or "").lower() == "production" else "sandbox"
     )
 
+    report_type = job.get("report_type") or REPORT_GENERAL_LEDGER
     return render_template(
         "job-detail.html",
         job=job,
@@ -1552,7 +1707,101 @@ def job_detail(job_id):
         unmapped_count=unmapped_count,
         qbo_connection_status=qbo_connection_status,
         qbo_env_status=qbo_env_status,
+        report_type=report_type,
+        report_label=REPORT_LABELS.get(report_type, REPORT_LABELS[REPORT_GENERAL_LEDGER]),
+        qbo_behavior=REPORT_QBO_BEHAVIOR.get(report_type, "importable"),
     )
+
+
+@app.route("/jobs/<job_id>/coa-preview")
+@login_required
+def coa_preview(job_id):
+    """Render a non-destructive Chart of Accounts dry-run preview.
+
+    Compares the parsed COA rows against the connected QuickBooks
+    company's Account list and shows which accounts already exist
+    (matched on AcctNum / Name) and which would be created. No QBO
+    write endpoint is called.
+
+    Available only for jobs uploaded as report_type=chart_of_accounts.
+    Other report types redirect back to the job detail with a flash —
+    GL has its own mapping/import flow, and Trial Balance / Trust
+    Listing are read-only.
+    """
+    job, user = _job_or_403(job_id)
+    if (job.get("report_type") or REPORT_GENERAL_LEDGER) != REPORT_CHART_OF_ACCOUNTS:
+        flash(
+            "The Chart of Accounts preview is only available for jobs "
+            "uploaded as a Chart of Accounts report.",
+            "info",
+        )
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    coa_rows = job.get("parsed_coa")
+    if not coa_rows:
+        # Re-parse from the encrypted upload when the in-memory cache lost
+        # it (job rehydrated from DB).
+        coa_rows = _reparse_report_rows(job, REPORT_CHART_OF_ACCOUNTS)
+
+    qbo, qbo_conn = _get_qbo_client(job_id, user)
+    preview = None
+    qbo_error = None
+    if not qbo:
+        qbo_error = (
+            "Connect QuickBooks first to run the Chart of Accounts preview. "
+            "Until then, the parsed COA is shown without any QBO comparison."
+        )
+        qbo_accounts = {"QueryResponse": {"Account": []}}
+    else:
+        try:
+            qbo_accounts = qbo.get_accounts()
+        except Exception as exc:  # noqa: BLE001
+            qbo_error = (
+                "Could not fetch the QuickBooks Chart of Accounts. "
+                "The COA preview will retry on next page load."
+            )
+            qbo_accounts = {"QueryResponse": {"Account": []}}
+            _audit(
+                "coa_preview_qbo_query_failed",
+                target_type="job", target_id=job_id, details=str(exc)[:200],
+            )
+    preview = build_coa_dry_run_preview(coa_rows or [], qbo_accounts)
+    _audit("coa_preview_view", target_type="job", target_id=job_id,
+           details=f"matched={preview['matched_count']} would_create={preview['would_create_count']}")
+    return render_template(
+        "coa-preview.html",
+        job=job,
+        preview=preview,
+        qbo_error=qbo_error,
+        qbo_connection=qbo_conn or {},
+        report_label=REPORT_LABELS[REPORT_CHART_OF_ACCOUNTS],
+    )
+
+
+def _reparse_report_rows(job: dict, report_type: str):
+    """Re-decrypt the upload and re-run the parser. Returns [] on error."""
+    enc_name = job.get("encrypted_file")
+    if not enc_name:
+        return []
+    enc_path = UPLOAD_DIR / enc_name
+    if not enc_path.exists():
+        return []
+    temp_path = UPLOAD_DIR / f"reparse_{secrets.token_urlsafe(8)}.csv"
+    try:
+        decrypt_file(enc_path, temp_path)
+        if report_type == REPORT_CHART_OF_ACCOUNTS:
+            rows, _fn, _missing = parse_chart_of_accounts(temp_path)
+        elif report_type == REPORT_TRIAL_BALANCE:
+            rows, _fn, _missing = parse_trial_balance(temp_path)
+        elif report_type == REPORT_TRUST_LISTING:
+            rows, _fn, _missing = parse_trust_listing(temp_path)
+        else:
+            rows = []
+        return rows
+    except Exception:  # noqa: BLE001
+        return []
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 @app.route("/jobs/<job_id>/connect-qbo")
@@ -2047,6 +2296,25 @@ def disconnect_qbo(job_id):
 def import_to_qbo(job_id):
     job, _user = _job_or_403(job_id)
     qbo_conn = _get_qbo_connection(job_id)
+
+    # Multi-report safety gate. Trial Balance and Trust Listing are
+    # validation/reconciliation artifacts and must never auto-post to QBO
+    # from this route. Chart of Accounts uses its own /coa-preview flow.
+    # We deliberately fail closed here so a future UI bug that surfaces
+    # the GL "Import to QBO" button on a non-GL job cannot post anything.
+    report_type = job.get("report_type") or REPORT_GENERAL_LEDGER
+    if report_type != REPORT_GENERAL_LEDGER:
+        flash(
+            f"Import to QuickBooks is not available for {REPORT_LABELS.get(report_type, report_type)}. "
+            "This report type is parsed for validation and reconciliation only.",
+            "error",
+        )
+        _audit(
+            "import_blocked_report_type",
+            target_type="job", target_id=job_id,
+            details=f"report_type={report_type}",
+        )
+        return redirect(url_for("job_detail", job_id=job_id))
 
     if not qbo_conn:
         flash("QBO connection not found. Connect to QuickBooks first.", "error")

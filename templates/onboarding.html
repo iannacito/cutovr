@@ -41,6 +41,49 @@
     </ul>
   </div>
 
+  <section class="card" style="margin-top:var(--space-6);" id="report-types">
+    <h2>Supported PCLaw report types</h2>
+    <p class="muted">
+      This build supports four PCLaw report exports. Only the General
+      Ledger posts journal entries to QuickBooks Online; the others are
+      parsed for validation, preview, or reconciliation. Pick the
+      matching report type on the upload form, or leave it on
+      &ldquo;Auto-detect&rdquo;.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Report</th><th>QBO behavior</th><th>Sample</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>General Ledger</strong></td>
+            <td><span class="badge success">Importable</span> Each PCLaw transaction posts as one QBO JournalEntry after confirmation.</td>
+            <td><a href="{{ url_for('onboarding_sample_csv') }}">Sample CSV</a></td>
+          </tr>
+          <tr>
+            <td><strong>Chart of Accounts</strong></td>
+            <td><span class="badge warn">Preview only</span> We compare your accounts against QBO and show which match and which would be created. <strong>No accounts are created without explicit confirmation.</strong></td>
+            <td><a href="{{ url_for('onboarding_sample_report_csv', report_type='chart_of_accounts') }}">Sample CSV</a></td>
+          </tr>
+          <tr>
+            <td><strong>Trial Balance</strong></td>
+            <td><span class="badge">Validation only</span> Parsed, totaled, and flagged if debits do not equal credits. Used to reconcile a posted GL import. <strong>Never auto-posted to QBO.</strong></td>
+            <td><a href="{{ url_for('onboarding_sample_report_csv', report_type='trial_balance') }}">Sample CSV</a></td>
+          </tr>
+          <tr>
+            <td><strong>Trust Listing</strong></td>
+            <td><span class="badge">Validation only</span> Parsed by client / matter with trust totals per bank account. Used to reconcile against QBO trust liability / trust bank balances. <strong>Never auto-posted to QBO.</strong></td>
+            <td><a href="{{ url_for('onboarding_sample_report_csv', report_type='trust_listing') }}">Sample CSV</a></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">
+      Read <code>MULTI_REPORT_SUPPORT.md</code> in the repository for the
+      full column-by-column reference and what each preflight check is
+      looking for.
+    </p>
+  </section>
+
   <section class="card" style="margin-top:var(--space-6);">
     <h2>The full workflow</h2>
     <ol class="secure-list" style="counter-reset:steps;">

@@ -45,7 +45,7 @@
   <section class="card detail-hero">
     <div class="flex-between">
       <div>
-        <p class="eyebrow">Job {{ job.id }}</p>
+        <p class="eyebrow">Job {{ job.id }} &middot; {{ report_label or 'General Ledger' }}</p>
         <h1>{{ job.company }}</h1>
         <p class="muted" style="margin-top:.25rem;">Status &middot; {{ job.status }}</p>
       </div>
@@ -55,9 +55,58 @@
         {% else %}
           <span class="badge large">QuickBooks not connected</span>
         {% endif %}
+        {% if qbo_behavior == 'preview' %}
+          <span class="badge warn" title="Chart of Accounts: dry-run preview only">QBO preview only</span>
+        {% elif qbo_behavior == 'readonly' %}
+          <span class="badge" title="Validation / reconciliation only — never auto-posted">Read-only report</span>
+        {% endif %}
       </div>
     </div>
   </section>
+
+  {% if report_type and report_type != 'general_ledger' %}
+  <section class="card" aria-label="Report type behavior">
+    <p class="eyebrow">{{ report_label }}</p>
+    {% if report_type == 'chart_of_accounts' %}
+      <h2>Chart of Accounts &mdash; preview only</h2>
+      <p>
+        This job is a Chart of Accounts export. We parse the accounts in
+        your file and (once QuickBooks is connected) show a side-by-side
+        preview of which accounts already exist in QBO and which would
+        be created. <strong>No accounts are written to QuickBooks until
+        you explicitly confirm</strong> on the preview page.
+      </p>
+      <p style="margin-top:var(--space-3);">
+        <a class="btn btn-primary" href="{{ url_for('coa_preview', job_id=job.id) }}">Open Chart of Accounts preview</a>
+        <a class="btn" href="{{ url_for('validation_report_csv', job_id=job.id) }}">Download validation report (CSV)</a>
+      </p>
+    {% elif report_type == 'trial_balance' %}
+      <h2>Trial Balance &mdash; validation only</h2>
+      <p>
+        This job is a Trial Balance export. We parse the report, total
+        the debit / credit columns, and flag any imbalance. <strong>No
+        journal entries or accounts are posted to QuickBooks for Trial
+        Balance uploads</strong> &mdash; this report is parsed for
+        reconciliation against a posted General Ledger import.
+      </p>
+      <p style="margin-top:var(--space-3);">
+        <a class="btn" href="{{ url_for('validation_report_csv', job_id=job.id) }}">Download validation report (CSV)</a>
+      </p>
+    {% elif report_type == 'trust_listing' %}
+      <h2>Trust Listing &mdash; validation only</h2>
+      <p>
+        This job is a Trust Listing export. We parse the client / matter
+        rows and total the trust balance per bank account. <strong>No
+        trust transactions are posted to QuickBooks for Trust Listing
+        uploads</strong> &mdash; this report is parsed for reconciliation
+        against the trust liability / trust bank balances in QBO.
+      </p>
+      <p style="margin-top:var(--space-3);">
+        <a class="btn" href="{{ url_for('validation_report_csv', job_id=job.id) }}">Download validation report (CSV)</a>
+      </p>
+    {% endif %}
+  </section>
+  {% endif %}
 
   {# Beginner-friendly migration sequence. Each step shows where the user is. #}
   {% set step_validated = preflight and not preflight.missing_required_columns and preflight.balanced %}
@@ -114,7 +163,89 @@
     </ol>
   </section>
 
-  {% if preflight %}
+  {% if preflight and report_type and report_type != 'general_ledger' %}
+  <section class="card" id="preflight">
+    <p class="eyebrow">{{ report_label }} preflight</p>
+    <h2>What we found in your CSV</h2>
+    <dl class="summary-grid">
+      {% if report_type == 'chart_of_accounts' %}
+        <div><dt>Accounts in file</dt><dd>{{ preflight.account_count }}</dd></div>
+        <div><dt>Rows missing name</dt><dd>{{ preflight.rows_missing_name }}</dd></div>
+        <div><dt>Rows missing type</dt><dd>{{ preflight.rows_missing_type }}</dd></div>
+        <div><dt>Inactive accounts</dt><dd>{{ preflight.inactive_account_count }}</dd></div>
+        <div>
+          <dt>Duplicate account numbers</dt>
+          <dd>
+            {% if preflight.duplicate_account_numbers %}
+              <span class="badge error">{{ preflight.duplicate_account_numbers|join(', ') }}</span>
+            {% else %}
+              <span class="badge success">None</span>
+            {% endif %}
+          </dd>
+        </div>
+      {% elif report_type == 'trial_balance' %}
+        <div><dt>Accounts in file</dt><dd>{{ preflight.account_count }}</dd></div>
+        <div><dt>Total debits</dt><dd>${{ preflight.total_debit }}</dd></div>
+        <div><dt>Total credits</dt><dd>${{ preflight.total_credit }}</dd></div>
+        <div>
+          <dt>Balanced</dt>
+          <dd>
+            {% if preflight.balanced %}
+              <span class="badge success">Yes</span>
+            {% else %}
+              <span class="badge error">No &mdash; off by ${{ preflight.out_of_balance_amount }}</span>
+            {% endif %}
+          </dd>
+        </div>
+        <div><dt>Rows missing account</dt><dd>{{ preflight.rows_missing_account }}</dd></div>
+      {% elif report_type == 'trust_listing' %}
+        <div><dt>Rows in file</dt><dd>{{ preflight.row_count }}</dd></div>
+        <div><dt>Distinct clients</dt><dd>{{ preflight.client_count }}</dd></div>
+        <div><dt>Distinct matters</dt><dd>{{ preflight.matter_count }}</dd></div>
+        <div><dt>Total trust balance</dt><dd>${{ preflight.total_trust_balance }}</dd></div>
+        <div>
+          <dt>Negative balances</dt>
+          <dd>
+            {% if preflight.negative_balance_count %}
+              <span class="badge error">{{ preflight.negative_balance_count }}</span>
+            {% else %}
+              <span class="badge success">0</span>
+            {% endif %}
+          </dd>
+        </div>
+        <div><dt>Rows missing identifier</dt><dd>{{ preflight.rows_missing_identifier }}</dd></div>
+      {% endif %}
+      <div>
+        <dt>Missing required columns</dt>
+        <dd>
+          {% if preflight.missing_required_columns %}
+            <span class="badge error">{{ preflight.missing_required_columns|join(', ') }}</span>
+          {% else %}
+            <span class="badge success">None</span>
+          {% endif %}
+        </dd>
+      </div>
+    </dl>
+    {% if not preflight.ready %}
+      <p class="flash error" style="margin-top:var(--space-4);">
+        Review the warnings above. {{ report_label }} uploads are parsed for
+        validation only &mdash; nothing is posted to QuickBooks Online from
+        this job.
+      </p>
+    {% else %}
+      <p class="note" style="margin-top:var(--space-4);">
+        {{ report_label }} parsed successfully. Use the validation report
+        as your reconciliation reference.
+        {% if report_type == 'chart_of_accounts' %}
+          Open the QBO preview to see which accounts already exist and which
+          would be created.
+        {% endif %}
+      </p>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {% if preflight and (not report_type or report_type == 'general_ledger') %}
   <section class="card" id="preflight">
     <p class="eyebrow">Import preflight</p>
     <h2>What we found in your CSV</h2>

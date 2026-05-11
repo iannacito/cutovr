@@ -11,10 +11,12 @@
     </h1>
     <p class="landing-hero__lede">
       {{ app_name }} is a guided, self-serve migration tool for law firms.
-      It takes the accounting data you already export from PCLaw &mdash;
-      general ledger, chart of accounts, trial balance, bank balances,
-      trust listings, client &amp; matter A/R, vendor A/P &mdash; validates
-      it, maps it to your QuickBooks Online accounts, and posts it for you.
+      Today it posts your <strong>General Ledger</strong> from PCLaw to
+      QuickBooks Online as journal entries, with mapping, preview, and
+      one-click reversal. It also parses your <strong>Chart of Accounts,
+      Trial Balance, and Trust Listing</strong> exports for preview and
+      reconciliation against the posted books &mdash; those reports stay
+      read-only on QuickBooks until you confirm any changes by hand.
       Most supported migrations finish in under an hour.
     </p>
     <div class="landing-hero__ctas">
@@ -44,31 +46,31 @@
     <div class="landing-coverage">
       <article class="landing-coverage__item">
         <h3>General Ledger</h3>
-        <p>Posted journal activity for the period you choose, mapped onto your QuickBooks chart.</p>
+        <p><strong>Importable.</strong> Posted journal activity for the period you choose, mapped onto your QuickBooks chart and written as JournalEntry records after explicit confirmation.</p>
       </article>
       <article class="landing-coverage__item">
         <h3>Chart of Accounts</h3>
-        <p>Reconcile PCLaw account numbers and names against your QuickBooks chart before any posting.</p>
+        <p><strong>Preview only.</strong> Parsed and compared against your QBO chart to show matches and would-be-creates side-by-side. No QBO accounts are created automatically.</p>
       </article>
       <article class="landing-coverage__item">
         <h3>Trial Balance</h3>
-        <p>Use trial-balance figures to verify the migrated books tie out to the period you closed in PCLaw.</p>
+        <p><strong>Validation only.</strong> Parsed, totaled, and flagged if debits do not equal credits. Used to reconcile a posted GL import &mdash; never auto-posted to QuickBooks.</p>
       </article>
       <article class="landing-coverage__item">
         <h3>Bank balances</h3>
-        <p>Operating and trust bank balances brought across with the supporting journal lines, where the workflow supports it.</p>
+        <p>Used to spot-check operating and trust bank totals during reconciliation. Posting bank journal lines is part of the General Ledger import.</p>
       </article>
       <article class="landing-coverage__item">
         <h3>Trust listings</h3>
-        <p>Per-client trust ledger detail preserved, with trust liability mapped to the matching QuickBooks account.</p>
+        <p><strong>Validation only.</strong> Parsed by client / matter with trust totals per bank account, for reconciliation against QBO trust liability and trust bank balances. Never auto-posted to QuickBooks.</p>
       </article>
       <article class="landing-coverage__item">
         <h3>Client &amp; matter A/R</h3>
-        <p>Open client receivables come across so collections continue uninterrupted in QuickBooks.</p>
+        <p>Customer entities are auto-created in QuickBooks when a GL row posts to Accounts Receivable. Dedicated A/R aging import is on the roadmap.</p>
       </article>
       <article class="landing-coverage__item">
         <h3>Vendor A/P</h3>
-        <p>Open vendor payables, with vendor records auto-created in QuickBooks when they're not already there.</p>
+        <p>Vendor entities are auto-created in QuickBooks when a GL row posts to Accounts Payable. Dedicated A/P aging import is on the roadmap.</p>
       </article>
       <article class="landing-coverage__item">
         <h3>Cutover reconciliation</h3>
