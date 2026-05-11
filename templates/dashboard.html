@@ -81,9 +81,22 @@
           <input type="email" name="email" placeholder="ops@firm.com">
         </label>
         <label>
-          <span>PCLaw general ledger CSV</span>
+          <span>Report type</span>
+          <select name="report_type">
+            <option value="">Auto-detect from CSV headers</option>
+            <option value="general_ledger">General Ledger &mdash; importable to QuickBooks</option>
+            <option value="chart_of_accounts">Chart of Accounts &mdash; preview only</option>
+            <option value="trial_balance">Trial Balance &mdash; validation only</option>
+            <option value="trust_listing">Trust Listing &mdash; validation only</option>
+          </select>
+        </label>
+        <label>
+          <span>PCLaw export CSV</span>
           <input type="file" name="ledger_file" accept=".csv" required>
         </label>
+        <p class="muted" style="font-size:.9rem;margin:.25rem 0 var(--space-3);">
+          Only General Ledger uploads post journal entries to QuickBooks. Chart of Accounts shows a dry-run preview; Trial Balance and Trust Listing are parsed for validation and reconciliation only.
+        </p>
         <div class="actions-row" style="margin-top:var(--space-4);">
           <button class="btn btn-primary" type="submit">Upload &amp; encrypt</button>
         </div>

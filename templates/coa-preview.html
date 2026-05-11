@@ -1,0 +1,154 @@
+{% extends "_base.html" %}
+{% block title %}Chart of Accounts preview &mdash; {{ job.company }}{% endblock %}
+{% block content %}
+<section class="detail-page">
+  <a href="{{ url_for('job_detail', job_id=job.id) }}" class="back-link">&larr; Back to job</a>
+
+  <section class="card detail-hero">
+    <p class="eyebrow">Job {{ job.id }} &middot; Chart of Accounts preview</p>
+    <h1>{{ job.company }}</h1>
+    <p class="muted">
+      Dry-run only. Nothing on this page is written to QuickBooks Online.
+      Use the counts below to confirm the export looks right before
+      contacting support for the manual COA import step.
+    </p>
+  </section>
+
+  {% if qbo_error %}
+    <div class="flash error">{{ qbo_error }}</div>
+  {% endif %}
+
+  <section class="card">
+    <p class="eyebrow">Summary</p>
+    <dl class="summary-grid">
+      <div><dt>Accounts in your file</dt><dd>{{ preview.coa_row_count }}</dd></div>
+      <div><dt>QBO accounts queried</dt><dd>{{ preview.qbo_account_count }}</dd></div>
+      <div>
+        <dt>Matched</dt>
+        <dd><span class="badge success">{{ preview.matched_count }}</span></dd>
+      </div>
+      <div>
+        <dt>Would be created</dt>
+        <dd>
+          {% if preview.would_create_count %}
+            <span class="badge warn">{{ preview.would_create_count }}</span>
+          {% else %}
+            <span class="badge success">0</span>
+          {% endif %}
+        </dd>
+      </div>
+      <div>
+        <dt>Soft conflicts</dt>
+        <dd>
+          {% if preview.conflict_count %}
+            <span class="badge error">{{ preview.conflict_count }}</span>
+          {% else %}
+            <span class="badge success">0</span>
+          {% endif %}
+        </dd>
+      </div>
+    </dl>
+    <p class="note" style="margin-top:var(--space-4);">
+      <strong>No QBO writes are performed from this page.</strong> Chart of
+      Accounts creation in QuickBooks is handled outside the automated
+      import flow in this build. After reviewing this preview, contact
+      support to coordinate manual COA setup or hand-off the
+      &ldquo;would be created&rdquo; list to your accountant.
+    </p>
+  </section>
+
+  {% if preview.matched %}
+  <section class="card">
+    <p class="eyebrow">Matched accounts</p>
+    <h2>{{ preview.matched_count }} accounts already in QuickBooks</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>PCLaw #</th>
+            <th>PCLaw name</th>
+            <th>QBO id</th>
+            <th>QBO name</th>
+            <th>QBO type</th>
+            <th>Match</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for a in preview.matched %}
+          <tr>
+            <td><code>{{ a.account_number }}</code></td>
+            <td>{{ a.account_name }}</td>
+            <td><code>{{ a.qbo_account_id }}</code></td>
+            <td>{{ a.qbo_account_name }}</td>
+            <td>{{ a.qbo_account_type or '' }}</td>
+            <td><span class="badge success">{{ a.match_basis }}</span></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if preview.would_create %}
+  <section class="card">
+    <p class="eyebrow">Not in QuickBooks yet</p>
+    <h2>{{ preview.would_create_count }} accounts would need to be created</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Account #</th>
+            <th>Name</th>
+            <th>Type</th>
+            <th>Detail type</th>
+            <th>Active</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for a in preview.would_create %}
+          <tr>
+            <td><code>{{ a.account_number }}</code></td>
+            <td>{{ a.account_name }}</td>
+            <td>{{ a.account_type or '' }}</td>
+            <td>{{ a.detail_type or '' }}</td>
+            <td>{{ 'Yes' if a.active else 'No' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if preview.conflicts %}
+  <section class="card error-panel">
+    <p class="eyebrow" style="color:var(--error);">Soft conflicts</p>
+    <h2>{{ preview.conflict_count }} accounts with mismatched numbers</h2>
+    <p>
+      These accounts match QBO on name but the PCLaw account number does
+      not match the QBO AcctNum. Verify which number is correct before
+      relying on number-based mappings elsewhere in the migration.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>PCLaw #</th><th>PCLaw name</th><th>QBO #</th><th>QBO name</th><th>Issue</th></tr>
+        </thead>
+        <tbody>
+        {% for a in preview.conflicts %}
+          <tr>
+            <td><code>{{ a.account_number }}</code></td>
+            <td>{{ a.account_name }}</td>
+            <td><code>{{ a.qbo_acct_num }}</code></td>
+            <td>{{ a.qbo_account_name }}</td>
+            <td>{{ a.reason }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+</section>
+{% endblock %}

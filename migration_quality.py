@@ -208,6 +208,11 @@ def render_validation_csv(job: dict, preflight: dict, preview: Optional[dict] = 
     accountant. It deliberately keeps the row layout simple so opening
     the file in any spreadsheet renders cleanly. All cells are
     sanitized through ``csv_safety``.
+
+    The body adapts to the job's report_type. GL jobs render the classic
+    Transactions/Lines/Debits/Credits block; COA / Trial Balance / Trust
+    Listing jobs render report-specific counts so the same download
+    works as the system-of-record for any supported report.
     """
     output = StringIO()
     writer = csv.writer(output)
@@ -228,16 +233,69 @@ def render_validation_csv(job: dict, preflight: dict, preview: Optional[dict] = 
     write("Format detected", summary.get("format"))
     write("Rows parsed", summary.get("row_count"))
 
+    report_type = (
+        preflight.get("report_type")
+        or summary.get("report_type")
+        or job.get("report_type")
+        or "general_ledger"
+    )
+    write("Report type", report_type)
+    write("Report label", preflight.get("report_label") or summary.get("format") or "General Ledger")
+
     write("--- Preflight ---", "")
-    write("Transactions", preflight.get("transaction_count"))
-    write("Lines", preflight.get("line_count"))
-    write("Total debits", preflight.get("total_debits"))
-    write("Total credits", preflight.get("total_credits"))
-    write("Balanced", "Yes" if preflight.get("balanced") else "No")
-    write("Unique accounts", preflight.get("unique_account_count"))
-    write("Missing required columns", ", ".join(preflight.get("missing_required_columns") or []) or "None")
-    write("Rows missing account", preflight.get("rows_missing_account"))
-    write("Rows missing date", preflight.get("rows_missing_date"))
+    if report_type == "chart_of_accounts":
+        write("Accounts in file", preflight.get("account_count"))
+        write("Rows missing name", preflight.get("rows_missing_name"))
+        write("Rows missing type", preflight.get("rows_missing_type"))
+        write("Inactive accounts", preflight.get("inactive_account_count"))
+        write(
+            "Duplicate account numbers",
+            ", ".join(preflight.get("duplicate_account_numbers") or []) or "None",
+        )
+        for t, count in (preflight.get("type_counts") or []):
+            write(f"  type: {t}", count)
+        write(
+            "Missing required columns",
+            ", ".join(preflight.get("missing_required_columns") or []) or "None",
+        )
+    elif report_type == "trial_balance":
+        write("Accounts in file", preflight.get("account_count"))
+        write("Unique accounts", preflight.get("unique_account_count"))
+        write("Total debits", preflight.get("total_debit"))
+        write("Total credits", preflight.get("total_credit"))
+        write("Balanced", "Yes" if preflight.get("balanced") else "No")
+        write("Out-of-balance amount", preflight.get("out_of_balance_amount"))
+        write("Rows missing account", preflight.get("rows_missing_account"))
+        write(
+            "Missing required columns",
+            ", ".join(preflight.get("missing_required_columns") or []) or "None",
+        )
+    elif report_type == "trust_listing":
+        write("Rows in file", preflight.get("row_count"))
+        write("Distinct clients", preflight.get("client_count"))
+        write("Distinct matters", preflight.get("matter_count"))
+        write("Total trust balance", preflight.get("total_trust_balance"))
+        write("Negative balances", preflight.get("negative_balance_count"))
+        write("Rows missing identifier", preflight.get("rows_missing_identifier"))
+        for bank, count in (preflight.get("trust_bank_accounts") or []):
+            write(f"  trust bank: {bank}", count)
+        write(
+            "Missing required columns",
+            ", ".join(preflight.get("missing_required_columns") or []) or "None",
+        )
+    else:
+        write("Transactions", preflight.get("transaction_count"))
+        write("Lines", preflight.get("line_count"))
+        write("Total debits", preflight.get("total_debits"))
+        write("Total credits", preflight.get("total_credits"))
+        write("Balanced", "Yes" if preflight.get("balanced") else "No")
+        write("Unique accounts", preflight.get("unique_account_count"))
+        write(
+            "Missing required columns",
+            ", ".join(preflight.get("missing_required_columns") or []) or "None",
+        )
+        write("Rows missing account", preflight.get("rows_missing_account"))
+        write("Rows missing date", preflight.get("rows_missing_date"))
 
     if preview is not None:
         write("--- Mapping preview ---", "")
