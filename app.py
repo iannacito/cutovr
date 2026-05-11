@@ -7,6 +7,7 @@ from functools import wraps
 import os, secrets
 import hashlib
 import logging
+import re
 import requests
 
 from app_db import AppDB
@@ -46,6 +47,49 @@ app = Flask(__name__)
 # HTTPS. Set APP_ENV=production on Render.
 APP_ENV = os.environ.get("APP_ENV", "local").lower()
 IS_PRODUCTION = APP_ENV not in ("local", "dev", "development", "test")
+
+# ---------------------------------------------------------------------------
+# Trusted-proxy handling (Render, and any other reverse-proxy deploy).
+#
+# Render terminates TLS at its edge load balancer and forwards plaintext
+# HTTP to the app, setting `X-Forwarded-Proto: https` and `X-Forwarded-Host:
+# <user-facing-host>`. Without ProxyFix, `request.scheme` returns "http" and
+# `url_for(..., _external=True)` builds links like
+# http://app:5000/reset-password/... which:
+#
+#   * break Intuit's redirect-URI exact-match check on OAuth callbacks
+#   * email password-reset links that don't enforce HTTPS
+#   * cause `Secure` cookies to be skipped on what we *think* is HTTP
+#
+# Werkzeug ships a hardened `ProxyFix` middleware that consumes exactly N
+# forwarded hops worth of headers. We only trust ONE hop — Render's edge.
+# That blocks an attacker from spoofing arbitrary X-Forwarded-* headers by
+# tunnelling through our own app: only the outermost proxy's value wins.
+#
+# Operators on platforms that put more than one trusted proxy in front of
+# the app (e.g. CloudFront -> ALB -> app = 2 hops) can override the count
+# via TRUSTED_PROXY_HOPS, but the safer default is 1.
+#
+# Local dev (APP_ENV=local) skips ProxyFix entirely so direct
+# http://localhost:5000 testing isn't tricked by stray Forwarded headers.
+# ---------------------------------------------------------------------------
+try:
+    _trusted_proxy_hops = int(os.environ.get("TRUSTED_PROXY_HOPS", "1"))
+except ValueError:
+    _trusted_proxy_hops = 1
+_trusted_proxy_hops = max(0, _trusted_proxy_hops)
+
+if IS_PRODUCTION and _trusted_proxy_hops > 0:
+    from werkzeug.middleware.proxy_fix import ProxyFix
+
+    app.wsgi_app = ProxyFix(
+        app.wsgi_app,
+        x_for=_trusted_proxy_hops,
+        x_proto=_trusted_proxy_hops,
+        x_host=_trusted_proxy_hops,
+        x_port=0,
+        x_prefix=0,
+    )
 
 # SECRET_KEY is the conventional Flask name; APP_SECRET is kept as a fallback
 # for backward compatibility with previous versions of this app.
@@ -609,11 +653,67 @@ def _get_qbo_client(job_id, user):
     return qbo, qbo_conn
 
 
+def _redact_email_for_audit(email: str) -> str:
+    """Return a privacy-preserving rendering of an email for audit logs.
+
+    A SOC2 reviewer or law-firm DPO who reads the audit table should be
+    able to correlate rows to a user (for support / forensics) without
+    seeing the full personal email address everywhere. We keep the first
+    character of the local-part plus the full domain, e.g.
+    ``alice@acme.test`` -> ``a***@acme.test``. The user_id column still
+    points at the canonical row, so reduced detail loses no support
+    value.
+    """
+    if not email or "@" not in email:
+        return ""
+    local, _, domain = email.partition("@")
+    if not local:
+        return f"@{domain}"
+    if len(local) <= 1:
+        return f"{local}***@{domain}"
+    return f"{local[0]}***@{domain}"
+
+
+_AUDIT_DETAILS_MAX_LEN = 500
+_SECRETY_TOKEN_RE = re.compile(
+    r"\b(?:access_token|refresh_token|client_secret|authorization|"
+    r"bearer|password|api[_-]?key)\b[\s:=]*['\"]?[\w\-\.~+/=]+",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_audit_details(details):
+    """Scrub obvious token / credential strings out of an audit detail.
+
+    QBOError / requests exception strings can pull in chunks of the
+    upstream response body. We do not want raw access tokens, refresh
+    tokens, or `Authorization: Bearer ...` headers in the audit log even
+    by accident — the audit table is read by support and is the most
+    likely place to grep for incidents, so it should be free of credential
+    material. We also truncate to `_AUDIT_DETAILS_MAX_LEN` so a 4KB QBO
+    response body doesn't bloat the row.
+
+    Returns the cleaned string (or the original value when it isn't a
+    plain string).
+    """
+    if details is None:
+        return None
+    if not isinstance(details, str):
+        return details
+    cleaned = _SECRETY_TOKEN_RE.sub("[redacted]", details)
+    if len(cleaned) > _AUDIT_DETAILS_MAX_LEN:
+        cleaned = cleaned[:_AUDIT_DETAILS_MAX_LEN] + "…(truncated)"
+    return cleaned
+
+
 def _audit_details_with_tid(details, intuit_tid):
     """Append the Intuit transaction id to an audit detail string, when one
     is present. The tid is opaque (no token / secret material), so it's
-    safe to include alongside the existing detail text.
+    safe to include alongside the existing detail text. The detail text
+    itself is sanitized so raw QBO response bodies cannot smuggle a token
+    into the audit log.
     """
+    details = _sanitize_audit_details(details)
     if not intuit_tid:
         return details
     if not details:
@@ -629,7 +729,7 @@ def _audit(action, target_type=None, target_id=None, details=None):
         user_id=user["id"] if user else None,
         target_type=target_type,
         target_id=target_id,
-        details=details,
+        details=_sanitize_audit_details(details),
     )
 
 
@@ -664,7 +764,8 @@ def signup():
         session["user_id"] = user_id
         session["firm_id"] = firm_id
         db.audit(action="signup", firm_id=firm_id, user_id=user_id,
-                 target_type="firm", target_id=str(firm_id), details=email)
+                 target_type="firm", target_id=str(firm_id),
+                 details=_redact_email_for_audit(email))
         flash(f"Welcome to {firm_name}!", "success")
         return redirect(url_for("dashboard"))
     return render_template("signup.html")
@@ -703,13 +804,15 @@ def login():
 
         user = db.authenticate(email, password)
         if not user:
-            db.audit(action="login_failed", details=email)
+            db.audit(action="login_failed",
+                     details=_redact_email_for_audit(email))
             flash("Invalid email or password.", "error")
             return render_template("login.html", email=email)
         session.clear()
         session["user_id"] = user["id"]
         session["firm_id"] = user["firm_id"]
-        db.audit(action="login", firm_id=user["firm_id"], user_id=user["id"], details=email)
+        db.audit(action="login", firm_id=user["firm_id"], user_id=user["id"],
+                 details=_redact_email_for_audit(email))
         next_url = request.args.get("next") or request.form.get("next")
         if _is_safe_local_redirect(next_url):
             return redirect(next_url)
@@ -757,8 +860,10 @@ def _send_reset_email(user: dict, reset_url: str) -> bool:
 
     In non-production we log the URL so a developer running locally can copy
     it from the console. In production we never log the URL — instead we
-    record an audit warning that SMTP is not configured so the operator can
-    notice. The token itself NEVER appears in the user-facing response.
+    record an audit warning that SMTP is not configured or delivery failed
+    so the operator can notice. The token itself NEVER appears in the
+    user-facing response, and we never log the email body or recipient
+    address beyond what is strictly needed for operator triage.
     """
     subject = f"Reset your {branding.context().get('app_name', 'Cutover')} password"
     body_text = (
@@ -772,7 +877,28 @@ def _send_reset_email(user: dict, reset_url: str) -> bool:
         ok = email_sender.send_email(
             to=user["email"], subject=subject, body_text=body_text
         )
-        return bool(ok)
+        if ok:
+            return True
+        # SMTP is configured but delivery failed (transport, auth, or
+        # rejected). Surface to operators via the audit log + a structured
+        # log line so an alert can fire. We do NOT include the token URL,
+        # the recipient address, or any SMTP credential material — only
+        # the non-secret connection metadata from email_sender.smtp_status().
+        status = email_sender.smtp_status()
+        _pwreset_log.warning(
+            "password_reset_email_delivery_failed host=%s port=%s",
+            status.get("host"), status.get("port"),
+        )
+        db.audit(
+            action="password_reset_email_send_failed",
+            firm_id=user.get("firm_id"),
+            user_id=user.get("id"),
+            details=(
+                f"smtp_host={status.get('host')} smtp_port={status.get('port')} "
+                "delivery_failed=yes"
+            ),
+        )
+        return False
     if not IS_PRODUCTION:
         # Dev convenience: print to the same stdout the rest of the app
         # uses. Production never reaches this branch.
@@ -783,7 +909,12 @@ def _send_reset_email(user: dict, reset_url: str) -> bool:
     else:
         # Production with no SMTP: record an operator-visible warning so
         # someone notices the misconfiguration. Do NOT include the URL or
-        # token, only the fact that we couldn't send.
+        # token, only the fact that we couldn't send. Also emit a structured
+        # log line so external log shipping picks it up immediately even if
+        # the operator hasn't opened the audit panel.
+        _pwreset_log.warning(
+            "password_reset_smtp_not_configured app_env=%s", APP_ENV,
+        )
         db.audit(
             action="password_reset_smtp_missing",
             firm_id=user.get("firm_id"),
@@ -1272,13 +1403,22 @@ def upload():
         )
         return redirect(url_for("dashboard"))
     timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-    job_id = f"job_{timestamp}"
+    # Job IDs include 64 bits of cryptographic entropy so they cannot be
+    # guessed by an attacker who knows the upload time. Tenancy is enforced
+    # in `_job_or_403` (which 404s on cross-firm access), but unpredictable
+    # IDs are defense-in-depth against bugs in route guards and accidental
+    # leakage via referer headers / browser history. Filesystem paths still
+    # use the timestamp prefix for human-readable sorting, and the job_id
+    # is also embedded so two simultaneous uploads can't collide.
+    job_suffix = secrets.token_urlsafe(12)
+    job_id = f"job_{timestamp}_{job_suffix}"
+    fs_prefix = f"{timestamp}_{job_suffix}"
 
     # Save and encrypt uploaded file
-    upload_path = UPLOAD_DIR / f"{timestamp}_{safe_name}"
+    upload_path = UPLOAD_DIR / f"{fs_prefix}_{safe_name}"
     file.save(upload_path)
     file_sha256 = sha256_of_file(upload_path)
-    encrypted_path = UPLOAD_DIR / f"{timestamp}_{safe_name}.enc"
+    encrypted_path = UPLOAD_DIR / f"{fs_prefix}_{safe_name}.enc"
     encrypt_file(upload_path, encrypted_path)
     upload_path.unlink()  # remove unencrypted file
 
@@ -1288,7 +1428,7 @@ def upload():
         "user_id": user["id"],
         "company": company,
         "email": user_email,
-        "source_file": f"{timestamp}_{safe_name}",
+        "source_file": f"{fs_prefix}_{safe_name}",
         "encrypted_file": encrypted_path.name,
         "file_sha256": file_sha256,
         "status": "File uploaded (encrypted)",
@@ -1298,7 +1438,7 @@ def upload():
     }
     db.upsert_job(
         job_id=job_id, firm_id=user["firm_id"], user_id=user["id"],
-        company=company, source_file=f"{timestamp}_{safe_name}",
+        company=company, source_file=f"{fs_prefix}_{safe_name}",
         encrypted_file=encrypted_path.name, file_sha256=file_sha256,
         status="File uploaded (encrypted)",
     )
@@ -1306,7 +1446,7 @@ def upload():
            details=f"{company} / {safe_name}")
 
     # Decrypt for processing
-    temp_path = UPLOAD_DIR / f"{timestamp}_temp.csv"
+    temp_path = UPLOAD_DIR / f"{fs_prefix}_temp.csv"
     decrypt_file(encrypted_path, temp_path)
 
     try:
@@ -1347,16 +1487,16 @@ def upload():
                 )
         else:
             rows = parse_pclaw_csv(temp_path)
-            out_path = OUTPUT_DIR / f"{timestamp}_qbo_import.csv"
+            out_path = OUTPUT_DIR / f"{fs_prefix}_qbo_import.csv"
             summary = export_qbo_csv(rows, out_path)
 
-            encrypted_out = OUTPUT_DIR / f"{timestamp}_qbo_import.csv.enc"
+            encrypted_out = OUTPUT_DIR / f"{fs_prefix}_qbo_import.csv.enc"
             encrypt_file(out_path, encrypted_out)
             out_path.unlink()
 
             jobs[job_id]["status"] = "Ready for QBO connection"
             jobs[job_id]["summary"] = summary
-            jobs[job_id]["output_file"] = f"{timestamp}_qbo_import.csv"
+            jobs[job_id]["output_file"] = f"{fs_prefix}_qbo_import.csv"
             jobs[job_id]["encrypted_output"] = encrypted_out.name
 
             flash("Migration package prepared successfully. Connect to QuickBooks to complete.", "success")

@@ -2,6 +2,8 @@ from pathlib import Path
 import csv
 from decimal import Decimal
 
+from csv_safety import sanitize_csv_cell
+
 REQUIRED_COLUMNS = ["Date", "Account", "Description", "Debit", "Credit"]
 
 def _clean_money(value):
@@ -49,13 +51,18 @@ def export_qbo_csv(rows, output_path):
         )
         writer.writeheader()
         for idx, row in enumerate(rows, start=1):
+            # CSV formula-injection defense: PCLaw memo / account text is
+            # user-controlled. If a cell begins with `=`, `+`, `-`, `@`,
+            # or a tab/CR, Excel / Sheets will treat it as a formula.
+            # Prepending a tick neutralizes that without altering the
+            # text the recipient sees on screen. See csv_safety.py.
             writer.writerow(
                 {
                     "JournalNo": idx,
-                    "TxnDate": row["txn_date"],
-                    "Account": row["account"],
-                    "Memo": row["memo"],
-                    "Amount": row["amount"],
+                    "TxnDate": sanitize_csv_cell(row["txn_date"]),
+                    "Account": sanitize_csv_cell(row["account"]),
+                    "Memo": sanitize_csv_cell(row["memo"]),
+                    "Amount": sanitize_csv_cell(row["amount"]),
                 }
             )
 
