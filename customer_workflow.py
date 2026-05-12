@@ -71,9 +71,9 @@ STAGE_STATUS_UPCOMING = "upcoming"
 # Pair these with the original term wherever a customer might see it so
 # the technical word stays accurate but isn't intimidating.
 FRIENDLY_TERMS: Dict[str, str] = {
-    "Chart of Accounts": "the list of accounts your firm uses",
-    "Opening Trial Balance": "starting balances on the day you switch over",
-    "General Ledger": "your firm's transaction history",
+    "Chart of Accounts": "your firm's account list",
+    "Opening Trial Balance": "starting balances on switchover day",
+    "General Ledger": "your transaction history",
     "Ending Trial Balance": "the final balance check after import",
     "Trust Listing": "client trust balances",
     "A/R": "money clients owe you (accounts receivable)",
@@ -130,30 +130,30 @@ class WorkflowStage:
 # complete. A stage is "current" if it is the first non-complete stage.
 _STAGE_BUNDLES = [
     (STAGE_SETUP,     "Set up your migration",  "Setup",
-     "Tell us your cutover date, country, and accounting basis.",
+     "A few dates and choices so we can plan the rest of the move.",
      [STEP_CUTOVER_SETUP],
      ["Cutover"]),
     (STAGE_UPLOAD,    "Upload your reports",     "Upload",
-     "Send the PCLaw exports — chart of accounts, trial balance, "
-     "general ledger, trust listing.",
+     "Send your PCLaw exports — your account list, starting balances, "
+     "transaction history, and client trust balances.",
      [STEP_COA_UPLOAD, STEP_OPENING_TB, STEP_GL_UPLOAD],
      ["Chart of Accounts", "Opening Trial Balance",
       "General Ledger", "Trust Listing"]),
-    (STAGE_MATCH,     "Connect & match accounts", "Match",
-     "Connect QuickBooks Online and match each PCLaw account to a "
-     "QuickBooks account.",
+    (STAGE_MATCH,     "Connect QuickBooks & match accounts", "Match",
+     "Link your QuickBooks Online company and pair each PCLaw account "
+     "to the right QuickBooks account.",
      [STEP_QBO_CONNECT, STEP_ACCOUNT_MAPPING],
      []),
     (STAGE_REVIEW,    "Review before posting",    "Review",
-     "Preview the journal entries we'd post — nothing reaches QuickBooks yet.",
+     "See exactly what will post. Nothing reaches QuickBooks yet.",
      [STEP_DRY_RUN],
      ["Journal Entry"]),
-    (STAGE_IMPORT,    "Import to QuickBooks",    "Import",
-     "Post the journal entries to your QuickBooks Online company.",
+    (STAGE_IMPORT,    "Send to QuickBooks",      "Import",
+     "Post the records to your QuickBooks Online company.",
      [STEP_PROD_IMPORT],
      []),
-    (STAGE_RECONCILE, "Reconcile & finish",      "Reconcile",
-     "Run the final balance check and download the audit report.",
+    (STAGE_RECONCILE, "Final balance check",     "Reconcile",
+     "Confirm everything matches and save the audit report.",
      [STEP_RECONCILIATION, STEP_ENDING_TB],
      ["Ending Trial Balance"]),
 ]
@@ -210,21 +210,19 @@ def _stage_cta(
             return fallback
 
     if stage_key == STAGE_SETUP:
-        return ("Set up your cutover", u("cutover_setup", "/cutover"))
+        return ("Start setup", u("cutover_setup", "/cutover"))
     if stage_key == STAGE_UPLOAD:
         if has_jobs:
             return ("Upload another report", u("dashboard", "/dashboard") + "#intake")
-        return ("Upload your first report", u("dashboard", "/dashboard") + "#intake")
+        return ("Upload your reports", u("dashboard", "/dashboard") + "#intake")
     if stage_key == STAGE_MATCH:
-        # Account mapping is per-job; route from the dashboard so a
-        # customer who hasn't picked a job yet still has somewhere to go.
-        return ("Open the migration checklist", u("migration_checklist", "/migration-checklist"))
+        return ("Open the checklist", u("migration_checklist", "/migration-checklist"))
     if stage_key == STAGE_REVIEW:
         return ("Review on the checklist", u("migration_checklist", "/migration-checklist"))
     if stage_key == STAGE_IMPORT:
-        return ("Open the migration checklist", u("migration_checklist", "/migration-checklist"))
+        return ("Open the checklist", u("migration_checklist", "/migration-checklist"))
     if stage_key == STAGE_RECONCILE:
-        return ("Open the migration checklist", u("migration_checklist", "/migration-checklist"))
+        return ("Open the checklist", u("migration_checklist", "/migration-checklist"))
     return ("", "")
 
 

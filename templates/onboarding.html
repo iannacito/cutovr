@@ -2,250 +2,166 @@
 {% block title %}Onboarding &mdash; {{ app_name }}{% endblock %}
 {% block content %}
 <section class="page page--prose">
-  <p class="eyebrow">Welcome</p>
-  <h1 class="display">Onboarding &amp; <em>import prep</em></h1>
-  <p class="muted">
-    A short, plain-English walkthrough for law-firm staff: how to move a
-    PCLaw general ledger into QuickBooks Online with this app, what to
-    check at each step, and how to roll it back if something looks wrong
-    in QuickBooks.
-  </p>
+  <header class="hero">
+    <p class="eyebrow">Onboarding</p>
+    <h1 class="display">A quiet, careful path off PCLaw.</h1>
+    <p class="muted">
+      A plain-English walkthrough for law-firm staff. How to move PCLaw
+      transaction history into QuickBooks Online, what to check at each
+      step, and how to roll it back if something looks wrong.
+    </p>
+  </header>
 
   {% if user %}
-  <div class="card" style="margin-top:var(--space-6);">
-    <h3>Start here: cutover setup</h3>
-    <p>
-      Before uploading any data, fill out the cutover setup screen with
-      your cutover date, opening balance date, GL period, country, and
-      accounting basis. The rest of the app uses these to make sensible
-      defaults and to drive the migration checklist.
-    </p>
-    <p style="margin-top:var(--space-3);">
-      <a class="btn btn-primary" href="{{ url_for('cutover_setup') }}">Open cutover setup &rarr;</a>
-      <a class="btn" href="{{ url_for('migration_checklist') }}">View migration checklist</a>
-    </p>
+  <div class="next-card">
+    <div class="next-card__body">
+      <p class="eyebrow">Start here</p>
+      <h3>Migration setup</h3>
+      <p>Tell us your switchover date, period, country, and accounting basis. We use these everywhere else.</p>
+    </div>
+    <div class="next-card__actions">
+      <a class="btn btn-primary btn-lg" href="{{ url_for('cutover_setup') }}">Open setup &rarr;</a>
+      <a class="btn" href="{{ url_for('migration_checklist') }}">Checklist</a>
+    </div>
   </div>
   {% endif %}
 
-  <div class="card warning-panel" style="margin-top:var(--space-6);">
-    <h3>Before you start &mdash; private beta guidance</h3>
-    <ul class="secure-list">
+  <section style="margin-top:var(--space-10);">
+    <h2>Before your first real run <small class="muted">(private beta guidance)</small></h2>
+    <ul class="secure-list" style="margin-top:var(--space-4);">
       <li>
-        <strong>Do not upload a full client ledger on your first run.</strong>
-        Export a small slice of the GL covering one or two transactions
-        and confirm it lands correctly in QuickBooks before sending the
-        full file.
+        <strong>Don&rsquo;t upload a full client ledger on your first run.</strong>
+        Export a small slice of the transaction history (one or two transactions) and confirm it lands correctly in QuickBooks first.
       </li>
       <li>
-        <strong>Always review the mapped accounts</strong> on the
-        <em>Map accounts</em> screen before posting. A wrong mapping
-        will post real journal entries to the wrong QuickBooks account,
-        which has to be reversed afterwards.
+        <strong>Review the Map accounts screen before sending.</strong>
+        A wrong match sends records to the wrong QuickBooks account and has to be reversed.
       </li>
       <li>
-        <strong>Production mode posts to the real QuickBooks company.</strong>
-        You will be asked to type <code>IMPORT</code> to confirm. Read
-        the company name on screen carefully &mdash; that's the QBO
-        company that will receive the journal entries.
+        <strong>Production sends to the real QuickBooks company.</strong>
+        We&rsquo;ll ask you to type <code>IMPORT</code> to confirm &mdash; double-check the company name on screen.
       </li>
       <li>
         <strong>Reversal is one-click but not invisible.</strong>
-        QuickBooks shows reversed journal entries as new
-        <code>REV-&hellip;</code> entries. The original lines stay in the
-        Journal report; QuickBooks does not visually mark them as voided.
+        QuickBooks shows reversed entries as new <code>REV-&hellip;</code> records alongside the originals.
       </li>
     </ul>
-  </div>
-
-  <section class="card" style="margin-top:var(--space-6);" id="report-types">
-    <h2>Supported PCLaw report types</h2>
-    <p class="muted">
-      This build supports four PCLaw report exports. Only the General
-      Ledger posts journal entries to QuickBooks Online; the others are
-      parsed for validation, preview, or reconciliation. Pick the
-      matching report type on the upload form, or leave it on
-      &ldquo;Auto-detect&rdquo;.
-    </p>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Report</th><th>QBO behavior</th><th>Sample</th></tr></thead>
-        <tbody>
-          <tr>
-            <td><strong>General Ledger</strong></td>
-            <td><span class="badge success">Importable</span> Each PCLaw transaction posts as one QBO JournalEntry after confirmation.</td>
-            <td><a href="{{ url_for('onboarding_sample_csv') }}">Sample CSV</a></td>
-          </tr>
-          <tr>
-            <td><strong>Chart of Accounts</strong></td>
-            <td><span class="badge warn">Preview only</span> We compare your accounts against QBO and show which match and which would be created. <strong>No accounts are created without explicit confirmation.</strong></td>
-            <td><a href="{{ url_for('onboarding_sample_report_csv', report_type='chart_of_accounts') }}">Sample CSV</a></td>
-          </tr>
-          <tr>
-            <td><strong>Trial Balance</strong></td>
-            <td><span class="badge">Validation only</span> Parsed, totaled, and flagged if debits do not equal credits. Used to reconcile a posted GL import. <strong>Never auto-posted to QBO.</strong></td>
-            <td><a href="{{ url_for('onboarding_sample_report_csv', report_type='trial_balance') }}">Sample CSV</a></td>
-          </tr>
-          <tr>
-            <td><strong>Trust Listing</strong></td>
-            <td><span class="badge">Validation only</span> Parsed by client / matter with trust totals per bank account. Used to reconcile against QBO trust liability / trust bank balances. <strong>Never auto-posted to QBO.</strong></td>
-            <td><a href="{{ url_for('onboarding_sample_report_csv', report_type='trust_listing') }}">Sample CSV</a></td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="note">
-      Read <code>MULTI_REPORT_SUPPORT.md</code> in the repository for the
-      full column-by-column reference and what each preflight check is
-      looking for.
-    </p>
   </section>
 
-  <section class="card" style="margin-top:var(--space-6);">
+  <section style="margin-top:var(--space-10);" id="report-types">
+    <h2>What you can upload</h2>
+    <p class="muted" style="margin-bottom:var(--space-4);">
+      Four PCLaw report exports. Only your transaction history (General Ledger) posts to QuickBooks; the others are previewed and reconciled.
+    </p>
+    <div class="card" style="padding:0;">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Report</th><th>What happens</th><th>Sample</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>Transaction history</strong> <p class="muted" style="margin:.2rem 0 0;font-size:.85rem;">(General Ledger)</p></td>
+              <td><span class="badge success">Sent to QuickBooks</span> Each transaction posts as one journal entry, after you confirm.</td>
+              <td><a class="btn btn-link" href="{{ url_for('onboarding_sample_csv') }}">Sample CSV</a></td>
+            </tr>
+            <tr>
+              <td><strong>Account list</strong> <p class="muted" style="margin:.2rem 0 0;font-size:.85rem;">(Chart of Accounts)</p></td>
+              <td><span class="badge warn">Preview only</span> We compare against QuickBooks and show what matches and what would be created.</td>
+              <td><a class="btn btn-link" href="{{ url_for('onboarding_sample_report_csv', report_type='chart_of_accounts') }}">Sample CSV</a></td>
+            </tr>
+            <tr>
+              <td><strong>Starting / final balances</strong> <p class="muted" style="margin:.2rem 0 0;font-size:.85rem;">(Trial Balance)</p></td>
+              <td><span class="badge">Validation only</span> Parsed and totaled. Used to seed opening balances and reconcile after import. Never auto-posted.</td>
+              <td><a class="btn btn-link" href="{{ url_for('onboarding_sample_report_csv', report_type='trial_balance') }}">Sample CSV</a></td>
+            </tr>
+            <tr>
+              <td><strong>Client trust balances</strong> <p class="muted" style="margin:.2rem 0 0;font-size:.85rem;">(Trust Listing)</p></td>
+              <td><span class="badge">Validation only</span> Reconciled against QuickBooks trust liability / trust bank totals. Never auto-posted.</td>
+              <td><a class="btn btn-link" href="{{ url_for('onboarding_sample_report_csv', report_type='trust_listing') }}">Sample CSV</a></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section style="margin-top:var(--space-10);">
     <h2>The full workflow</h2>
-    <ol class="secure-list" style="counter-reset:steps;">
-      <li>
-        <strong>Export the PCLaw General Ledger as CSV.</strong>
-        In PCLaw, run the General Ledger report for the period you want
-        to migrate and save it as CSV. The file must include the columns
-        listed in &ldquo;Required columns&rdquo; below.
-      </li>
-      <li>
-        <strong>Upload the CSV.</strong>
-        From the <a href="{{ url_for('dashboard') }}">dashboard</a>,
-        enter the firm/company name (must match the company in
-        QuickBooks Online) and pick the CSV. The file is encrypted
-        before any processing happens.
-      </li>
-      <li>
-        <strong>Review the import preflight.</strong>
-        On the job page you'll see a preflight checklist: number of
-        transactions, debit and credit totals, whether the file
-        balances, and how many unique accounts were detected. Stop here
-        if anything looks wrong &mdash; nothing has been sent to
-        QuickBooks yet.
-      </li>
-      <li>
-        <strong>Map your PCLaw accounts to QuickBooks accounts.</strong>
-        Click <em>Map accounts</em> on the job. You will see one row per
-        account from the CSV; pick the matching QuickBooks Online
-        account on the right. The import is blocked until every account
-        is mapped.
-      </li>
-      <li>
-        <strong>Connect QuickBooks Online.</strong>
-        Click <em>Connect to QuickBooks</em>. Intuit will ask you to
-        sign in and pick the company that should receive the journal
-        entries. The QBO company name is shown back on the job page so
-        you can confirm before importing.
-      </li>
-      <li>
-        <strong>Confirm the production import.</strong>
-        In production mode, the job page shows a final confirmation
-        card with the QBO company name, the number of rows, and a text
-        box. You must type <code>IMPORT</code> exactly to enable the
-        post.
-      </li>
-      <li>
-        <strong>Import.</strong>
-        Each PCLaw transaction posts as one QuickBooks JournalEntry.
-        Duplicate protection runs first &mdash; if the same file or
-        transaction ids were already imported into this QBO company,
-        the import is blocked.
-      </li>
-      <li>
-        <strong>Verify in QuickBooks.</strong>
-        Click <em>Re-verify against QuickBooks</em> on the job page to
-        re-fetch every created entry from QBO and compare totals against
-        the CSV. You can also open the QuickBooks Journal report and
-        spot-check the entries by date.
-      </li>
-      <li>
-        <strong>Reverse if needed.</strong>
-        If you imported into the wrong period, the wrong company, or
-        with the wrong account mapping, open the job, scroll to
-        <em>Reverse this import</em>, type <code>REVERSE</code>, and
-        click the button. QuickBooks gets offsetting JournalEntries
-        (<code>DocNumber</code> starting <code>REV-</code>) and the
-        originals stay visible for audit.
-      </li>
+    <ol class="secure-list" style="margin-top:var(--space-4);">
+      <li><strong>Export from PCLaw.</strong> Run the General Ledger report for the period you want and save as CSV.</li>
+      <li><strong>Upload.</strong> From the dashboard, enter the firm name and pick the CSV. The file is encrypted before processing.</li>
+      <li><strong>Review the preflight.</strong> The job page shows transaction count, debit / credit totals, whether the file balances, and which accounts were detected.</li>
+      <li><strong>Map accounts.</strong> Open the matching screen and pair each PCLaw account with a QuickBooks account. The import is blocked until every account is matched.</li>
+      <li><strong>Connect QuickBooks.</strong> Sign in with Intuit and pick the company that should receive these records.</li>
+      <li><strong>Confirm.</strong> In production, type <code>IMPORT</code> on the confirmation card to enable the post.</li>
+      <li><strong>Send.</strong> Each PCLaw transaction posts as one QuickBooks journal entry. Duplicate protection runs first.</li>
+      <li><strong>Verify.</strong> Re-fetch every entry from QuickBooks and compare against the CSV.</li>
+      <li><strong>Reverse if needed.</strong> Type <code>REVERSE</code> to post offsetting entries.</li>
     </ol>
   </section>
 
-  <section class="card" style="margin-top:var(--space-6);" id="required-columns">
+  <section style="margin-top:var(--space-10);" id="required-columns">
     <h2>Required columns</h2>
-    <p class="muted">
-      Your CSV must have these columns (case-sensitive). Any extra
-      columns &mdash; <code>description</code>, <code>reference</code>,
+    <p class="muted" style="margin-bottom:var(--space-4);">
+      Your CSV must have these column names (case-sensitive). Optional extras
+      &mdash; <code>description</code>, <code>reference</code>,
       <code>client_id</code>, <code>matter_id</code>,
-      <code>customer_name</code>, <code>vendor_name</code> &mdash; are
-      kept but optional.
+      <code>customer_name</code>, <code>vendor_name</code> &mdash; are kept.
     </p>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Column</th><th>What it means</th><th>Example</th></tr></thead>
-        <tbody>
-          <tr><td><code>transaction_id</code></td><td>A unique id for the journal entry. Multiple rows with the same id form one balanced QBO JournalEntry.</td><td><code>JE-0001</code></td></tr>
-          <tr><td><code>date</code></td><td>Posting date for the entry, ISO format.</td><td><code>2026-05-01</code></td></tr>
-          <tr><td><code>account_number</code></td><td>The PCLaw account number. Used first for matching to QBO accounts.</td><td><code>1000</code></td></tr>
-          <tr><td><code>account_name</code></td><td>The PCLaw account name. Used as a fallback when the account number doesn't match.</td><td><code>Operating Bank</code></td></tr>
-          <tr><td><code>debit</code></td><td>Debit amount for this row, or <code>0</code>.</td><td><code>1000.00</code></td></tr>
-          <tr><td><code>credit</code></td><td>Credit amount for this row, or <code>0</code>.</td><td><code>0.00</code></td></tr>
-          <tr><td><code>memo</code> <span class="muted">(optional)</span></td><td>Free-text description copied into the QBO line description.</td><td><code>Opening operating cash</code></td></tr>
-        </tbody>
-      </table>
+    <div class="card" style="padding:0;">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Column</th><th>Meaning</th><th>Example</th></tr></thead>
+          <tbody>
+            <tr><td><code>transaction_id</code></td><td>Unique id for the entry. Multiple rows with the same id form one balanced journal entry.</td><td><code>JE-0001</code></td></tr>
+            <tr><td><code>date</code></td><td>Posting date, ISO format.</td><td><code>2026-05-01</code></td></tr>
+            <tr><td><code>account_number</code></td><td>PCLaw account number. Matched first.</td><td><code>1000</code></td></tr>
+            <tr><td><code>account_name</code></td><td>PCLaw account name. Fallback if number doesn&rsquo;t match.</td><td><code>Operating Bank</code></td></tr>
+            <tr><td><code>debit</code></td><td>Debit amount, or 0.</td><td><code>1000.00</code></td></tr>
+            <tr><td><code>credit</code></td><td>Credit amount, or 0.</td><td><code>0.00</code></td></tr>
+            <tr><td><code>memo</code> <small class="muted">(optional)</small></td><td>Free-text description copied into the QuickBooks line.</td><td><code>Opening operating cash</code></td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
-    <p style="margin-top:var(--space-4);">
+    <div class="actions-row" style="margin-top:var(--space-5);">
       <a class="btn btn-primary" href="{{ url_for('onboarding_template_csv') }}">Download sample CSV template</a>
-      <a class="btn" href="{{ url_for('onboarding_sample_csv') }}">Download larger sample (multi-transaction)</a>
-    </p>
-    <p class="note">
-      The sample template contains two balanced demo transactions and
-      is safe to upload &mdash; nothing reaches QuickBooks until you
-      explicitly connect and confirm.
-    </p>
+      <a class="btn" href="{{ url_for('onboarding_sample_csv') }}">Larger sample CSV</a>
+    </div>
   </section>
 
-  <section class="card" style="margin-top:var(--space-6);">
-    <h2>What we check before posting</h2>
-    <ul class="secure-list">
-      <li>The CSV has every required column.</li>
+  <details class="quiet" style="margin-top:var(--space-10);">
+    <summary>What we check before posting</summary>
+    <ul class="secure-list" style="margin-top:var(--space-3);">
+      <li>Every required column is present.</li>
       <li>Each transaction balances (debits == credits).</li>
-      <li>Every row has a date and at least one of account_number / account_name.</li>
-      <li>Every PCLaw account is mapped to a QuickBooks Online account.</li>
-      <li>QuickBooks is connected and the realm/company id is known.</li>
-      <li>The same file (by SHA-256) has not already been imported into this QBO company.</li>
-      <li>None of the transaction ids in the file have already been posted to this QBO company.</li>
-      <li>You have explicitly confirmed the production import by typing <code>IMPORT</code>.</li>
+      <li>Every row has a date and an account number or name.</li>
+      <li>Every PCLaw account is matched to a QuickBooks account.</li>
+      <li>QuickBooks is connected and the realm id is known.</li>
+      <li>The same file hasn&rsquo;t already been imported into this QuickBooks company.</li>
+      <li>None of the transaction ids already exist in this QuickBooks company.</li>
+      <li>You typed <code>IMPORT</code> on the confirmation card.</li>
     </ul>
-    <p class="note">
-      If any check fails, the import is blocked and a beginner-friendly
-      message is shown on the job page. Nothing is posted to QuickBooks
-      until every check passes.
-    </p>
-  </section>
+  </details>
 
-  <section class="card" style="margin-top:var(--space-6);">
+  <section style="margin-top:var(--space-10);">
     <h2>Need help?</h2>
-    <p>
-      Read the <a href="{{ url_for('support') }}">support page</a> for
-      common issues, or email
+    <p class="muted">
+      Read the <a href="{{ url_for('support') }}">support page</a> for common issues, or email
       {% if support_email and "your-domain.example" not in support_email %}
         <a href="mailto:{{ support_email }}">{{ support_email }}</a>.
       {% else %}
-        the address shown on the support page.
+        the address on the support page.
       {% endif %}
-      Include the job id from the top of the job page and the exact
-      flash message you saw &mdash; please don't paste raw ledger
-      content or OAuth tokens.
+      Include the job id and the exact flash message &mdash; please don&rsquo;t paste raw ledger content or OAuth tokens.
     </p>
   </section>
 
-  <section style="margin-top:var(--space-6);">
-    <p>
+  <section style="margin-top:var(--space-8);">
+    <div class="actions-row">
       <a class="btn btn-primary" href="{{ url_for('dashboard') }}">Back to dashboard</a>
-      <a class="btn" href="{{ url_for('readiness_page') }}">Go-live readiness</a>
-      <a class="btn" href="{{ url_for('quickbooks_manage') }}">QuickBooks connections</a>
-    </p>
+      <a class="btn btn-link" href="{{ url_for('readiness_page') }}">Go-live readiness</a>
+      <a class="btn btn-link" href="{{ url_for('quickbooks_manage') }}">QuickBooks connections</a>
+    </div>
   </section>
 </section>
 {% endblock %}

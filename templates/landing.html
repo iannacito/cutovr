@@ -7,27 +7,30 @@
   <div class="landing-hero__inner">
     <p class="eyebrow">PCLaw &rarr; QuickBooks Online</p>
     <h1 class="display landing-hero__title">
-      Move your PCLaw books to <em>QuickBooks Online</em> &mdash; cleanly, in under an hour.
+      Move PCLaw to <em>QuickBooks Online</em> in under an hour.
     </h1>
     <p class="landing-hero__lede">
-      {{ app_name }} is a guided, self-serve migration tool for law firms.
-      Today it posts your <strong>General Ledger</strong> from PCLaw to
-      QuickBooks Online as journal entries, with mapping, preview, and
-      one-click reversal. It also parses your <strong>Chart of Accounts,
-      Trial Balance, and Trust Listing</strong> exports for preview and
-      reconciliation against the posted books &mdash; those reports stay
-      read-only on QuickBooks until you confirm any changes by hand.
-      Most supported migrations finish in under an hour.
+      {{ app_name }} is a calm, guided way for law firms to migrate from
+      PCLaw to QuickBooks Online &mdash; without a consultant, without
+      spreadsheets, and without risk to your real books.
     </p>
     <div class="landing-hero__ctas">
       <a class="btn btn-primary btn-lg" href="{{ url_for('signup') }}">Start your migration</a>
-      <a class="btn btn-secondary btn-lg" href="#how-it-works">See how it works</a>
-      <a class="landing-hero__signin" href="{{ url_for('login') }}">Already a customer? Sign in</a>
+      <a class="landing-hero__signin" href="{{ url_for('login') }}">Sign in</a>
     </div>
     <ul class="landing-hero__bullets">
-      <li><strong>Designed for under an hour.</strong> For typical supported PCLaw exports, end-to-end.</li>
-      <li><strong>Encrypted at rest.</strong> Your ledger and QuickBooks tokens are encrypted in our store.</li>
-      <li><strong>Reversible.</strong> One-click reversal if something looks wrong in QuickBooks.</li>
+      <li>
+        <strong>Under an hour</strong>
+        End-to-end, for supported PCLaw exports.
+      </li>
+      <li>
+        <strong>Encrypted</strong>
+        Your files and QuickBooks tokens stay private.
+      </li>
+      <li>
+        <strong>Reversible</strong>
+        Roll an import back in one click if anything looks off.
+      </li>
     </ul>
   </div>
 </section>
@@ -35,52 +38,47 @@
 <!-- What we move ----------------------------------------------------- -->
 <section class="landing-section landing-section--coverage" id="coverage">
   <div class="landing-section__inner">
-    <p class="eyebrow">Coverage</p>
+    <p class="eyebrow">What moves</p>
     <h2 class="h-serif landing-section__title">More than just the General Ledger.</h2>
     <p class="muted landing-section__lede">
-      Law-firm books in PCLaw are not one file. {{ app_name }} is built for
-      the accounting data your firm actually has to bring across &mdash;
-      not just a single GL export.
+      A law firm's books aren't one file. We handle the reports your firm
+      actually has to bring across.
     </p>
 
     <div class="landing-coverage">
       <article class="landing-coverage__item">
-        <h3>General Ledger</h3>
-        <p><strong>Importable.</strong> Posted journal activity for the period you choose, mapped onto your QuickBooks chart and written as JournalEntry records after explicit confirmation.</p>
+        <h3>Transaction history</h3>
+        <p>Your General Ledger posts as journal entries after you review and confirm. <small class="muted">(General Ledger)</small></p>
       </article>
       <article class="landing-coverage__item">
-        <h3>Chart of Accounts</h3>
-        <p><strong>Preview only.</strong> Parsed and compared against your QBO chart to show matches and would-be-creates side-by-side. No QBO accounts are created automatically.</p>
+        <h3>Account list</h3>
+        <p>Matched against your QuickBooks accounts, with a side-by-side preview before anything is created. <small class="muted">(Chart of Accounts)</small></p>
       </article>
       <article class="landing-coverage__item">
-        <h3>Trial Balance</h3>
-        <p><strong>Validation only.</strong> Parsed, totaled, and flagged if debits do not equal credits. Used to reconcile a posted GL import &mdash; never auto-posted to QuickBooks.</p>
+        <h3>Starting balances</h3>
+        <p>Parsed and totaled. Used to seed opening balances and check the books later. <small class="muted">(Trial Balance)</small></p>
       </article>
       <article class="landing-coverage__item">
-        <h3>Bank balances</h3>
-        <p>Used to spot-check operating and trust bank totals during reconciliation. Posting bank journal lines is part of the General Ledger import.</p>
-      </article>
-      <article class="landing-coverage__item">
-        <h3>Trust listings</h3>
-        <p><strong>Validation only.</strong> Parsed by client / matter with trust totals per bank account, for reconciliation against QBO trust liability and trust bank balances. Never auto-posted to QuickBooks.</p>
+        <h3>Client trust balances</h3>
+        <p>Reconciled against your trust liability and trust bank totals. Never posted automatically. <small class="muted">(Trust listings)</small></p>
       </article>
       <article class="landing-coverage__item">
         <h3>Client &amp; matter A/R</h3>
-        <p>Customer entities are auto-created in QuickBooks when a GL row posts to Accounts Receivable. Dedicated A/R aging import is on the roadmap.</p>
+        <p>Customers are created in QuickBooks as receivable lines post.</p>
       </article>
       <article class="landing-coverage__item">
         <h3>Vendor A/P</h3>
-        <p>Vendor entities are auto-created in QuickBooks when a GL row posts to Accounts Payable. Dedicated A/P aging import is on the roadmap.</p>
+        <p>Vendors are created in QuickBooks as payable lines post.</p>
       </article>
       <article class="landing-coverage__item">
-        <h3>Cutover reconciliation</h3>
-        <p>Side-by-side checks at cutover so you can confirm every dollar landed where it should before going live.</p>
+        <h3>Bank balances</h3>
+        <p>Operating and trust bank totals are spot-checked during reconciliation.</p>
+      </article>
+      <article class="landing-coverage__item">
+        <h3>Final reconciliation</h3>
+        <p>A side-by-side balance check at switchover so you can confirm every dollar landed cleanly.</p>
       </article>
     </div>
-    <p class="note landing-section__footnote">
-      Coverage depends on what your PCLaw export contains and the workflow you pick.
-      The onboarding guide walks through what each report should look like.
-    </p>
   </div>
 </section>
 
@@ -88,10 +86,10 @@
 <section class="landing-section landing-section--steps" id="how-it-works">
   <div class="landing-section__inner">
     <p class="eyebrow">How it works</p>
-    <h2 class="h-serif landing-section__title">From PCLaw export to QuickBooks &mdash; in six steps.</h2>
+    <h2 class="h-serif landing-section__title">Six steps. One screen at a time.</h2>
     <p class="muted landing-section__lede">
-      The whole flow is in the app. No spreadsheets passed around by email,
-      no consultant on a shared screen.
+      The whole flow happens in the app &mdash; no spreadsheets emailed
+      around, no consultant on a shared screen.
     </p>
 
     <ol class="landing-steps">
@@ -99,42 +97,42 @@
         <span class="landing-step__num">01</span>
         <div>
           <h3>Export from PCLaw</h3>
-          <p>Run the General Ledger (and optional A/R, A/P, trust, trial-balance) report from PCLaw and save as CSV. We provide a sample template if you want to dry-run first.</p>
+          <p>Run the standard PCLaw reports and save as CSV. A sample template is included if you want to dry-run first.</p>
         </div>
       </li>
       <li class="landing-step">
         <span class="landing-step__num">02</span>
         <div>
           <h3>Upload to {{ app_name }}</h3>
-          <p>Sign in, name the migration, and upload the CSV. The file is encrypted before any processing happens.</p>
+          <p>Sign in, name the migration, and drop the files in. Everything is encrypted before processing.</p>
         </div>
       </li>
       <li class="landing-step">
         <span class="landing-step__num">03</span>
         <div>
-          <h3>Validate &amp; map accounts</h3>
-          <p>We parse the file, run preflight checks (balanced entries, valid accounts, sane dates), and present an account-mapping screen so you confirm every PCLaw account lands where you want in QuickBooks.</p>
+          <h3>Validate &amp; match</h3>
+          <p>We check the files for missing columns and balance, and ask you to pair each PCLaw account with the right QuickBooks account.</p>
         </div>
       </li>
       <li class="landing-step">
         <span class="landing-step__num">04</span>
         <div>
           <h3>Connect QuickBooks</h3>
-          <p>Sign in with Intuit. We use Intuit's official OAuth flow &mdash; we never see your QuickBooks password, and the connection can be revoked from inside QuickBooks at any time.</p>
+          <p>Sign in with Intuit. We never see your QuickBooks password, and you can disconnect at any time.</p>
         </div>
       </li>
       <li class="landing-step">
         <span class="landing-step__num">05</span>
         <div>
-          <h3>Review &amp; import</h3>
-          <p>Confirm the QuickBooks company you're posting to, type <code>IMPORT</code> to confirm, and watch journal entries land. Progress and any errors stream back as it runs.</p>
+          <h3>Review &amp; send</h3>
+          <p>Confirm the QuickBooks company, type <code>IMPORT</code> to send, and watch the records land.</p>
         </div>
       </li>
       <li class="landing-step">
         <span class="landing-step__num">06</span>
         <div>
           <h3>Verify &mdash; or reverse</h3>
-          <p>Run a one-click verification against QuickBooks. If something looks wrong, one-click reversal posts offsetting <code>REV-</code> entries and you can re-run.</p>
+          <p>Run a one-click verification. If anything looks wrong, a one-click reversal posts offsetting entries.</p>
         </div>
       </li>
     </ol>
@@ -145,41 +143,36 @@
 <section class="landing-section landing-section--compare" id="compare">
   <div class="landing-section__inner">
     <p class="eyebrow">Why {{ app_name }}</p>
-    <h2 class="h-serif landing-section__title">A faster, less expensive path off PCLaw.</h2>
+    <h2 class="h-serif landing-section__title">A faster, calmer path off PCLaw.</h2>
     <p class="muted landing-section__lede">
-      Traditional consultant-led PCLaw-to-QuickBooks projects can take
-      weeks of back-and-forth and often cost thousands of dollars in
-      professional time. {{ app_name }} is built so a firm administrator
-      can run the migration directly &mdash; with the controls and
-      reversibility you'd expect from a finance-grade tool.
+      A traditional consultant-led migration takes weeks and costs
+      thousands. {{ app_name }} is built so a firm administrator can do
+      this in an afternoon &mdash; with the controls and reversibility
+      a finance-grade tool should have.
     </p>
 
     <div class="landing-compare">
       <article class="landing-compare__col landing-compare__col--old">
-        <p class="kicker">Traditional consultant-led migration</p>
+        <p class="kicker">The old way</p>
         <ul>
-          <li>Can take weeks of meetings, file exchanges, and review cycles.</li>
-          <li>Often costs thousands of dollars in professional services.</li>
-          <li>Hand-built spreadsheets and one-off scripts &mdash; hard to re-run.</li>
-          <li>You email ledger files around and wait on someone else's calendar.</li>
+          <li>Weeks of meetings, file exchanges, and review cycles with a consultant.</li>
+          <li>Thousands of dollars in professional services.</li>
+          <li>Hand-built spreadsheets and one-off scripts.</li>
+          <li>Ledger files emailed around. Calendars dictate the pace.</li>
           <li>Reversing a bad post means more billable hours.</li>
         </ul>
       </article>
       <article class="landing-compare__col landing-compare__col--new">
         <p class="kicker">{{ app_name }}</p>
         <ul>
-          <li>Designed to take under an hour for supported files.</li>
-          <li>A fraction of the cost of a consultant-led engagement.</li>
-          <li>The same guided workflow every time &mdash; no bespoke spreadsheets.</li>
-          <li>You drive: upload, map, post, reconcile &mdash; on your own schedule.</li>
-          <li>One-click reversal posts offsetting entries if something looks wrong.</li>
+          <li>Designed to finish in under an hour, for supported files.</li>
+          <li>A fraction of the cost of a consultant.</li>
+          <li>The same guided workflow every time.</li>
+          <li>You drive: upload, match, send, reconcile &mdash; on your own schedule.</li>
+          <li>One-click reversal if something looks wrong.</li>
         </ul>
       </article>
     </div>
-    <p class="note landing-section__footnote">
-      Time-to-finish depends on the size and shape of your PCLaw export.
-      Larger or non-standard exports may take longer.
-    </p>
   </div>
 </section>
 
@@ -191,15 +184,15 @@
     <div class="grid-three landing-trust">
       <article class="card">
         <h3>Encrypted at rest</h3>
-        <p>Uploaded ledgers and QuickBooks refresh tokens are encrypted in our datastore. Your firm's data stays scoped to your firm workspace.</p>
+        <p>Uploaded files and QuickBooks tokens are encrypted in our store. Your firm's data stays in your workspace.</p>
       </article>
       <article class="card">
         <h3>Reversible imports</h3>
-        <p>Every import can be reversed with one click. Reversals post offsetting <code>REV-</code> journal entries that QuickBooks treats as new, auditable activity.</p>
+        <p>Every import can be reversed in one click. Reversals post offsetting entries that QuickBooks treats as fully auditable activity.</p>
       </article>
       <article class="card">
         <h3>Disconnect any time</h3>
-        <p>You can disconnect QuickBooks from inside the app or from your Intuit account. We honor Intuit's disconnect contract and revoke tokens promptly.</p>
+        <p>Disconnect QuickBooks from inside the app or from Intuit. We honor the disconnect contract and revoke tokens promptly.</p>
       </article>
     </div>
   </div>
@@ -208,13 +201,13 @@
 <!-- Final CTA -------------------------------------------------------- -->
 <section class="landing-cta">
   <div class="landing-cta__inner">
-    <p class="eyebrow">Ready to migrate?</p>
+    <p class="eyebrow">Ready when you are</p>
     <h2 class="display landing-cta__title">
-      Stop emailing ledger files. <em>Move PCLaw to QuickBooks in under an hour.</em>
+      Move PCLaw to QuickBooks <em>cleanly</em>.
     </h2>
     <p class="landing-cta__lede">
-      Create a firm workspace, upload a sample export, and try the full
-      flow against a QuickBooks sandbox before you touch your real books.
+      Create a workspace, upload a sample file, and try the full flow
+      against a QuickBooks sandbox before you touch your real books.
     </p>
     <div class="landing-cta__buttons">
       <a class="btn btn-primary btn-lg" href="{{ url_for('signup') }}">Sign up &amp; start migration</a>

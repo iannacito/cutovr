@@ -1,11 +1,12 @@
 {% extends "_base.html" %}
-{% block title %}{{ job.company }} &mdash; Migration Job{% endblock %}
+{% block title %}{{ job.company }} &mdash; Migration{% endblock %}
 {% block content %}
 <section class="detail-page">
   {% include "_workflow_stepper.html" %}
 
   <a href="{{ url_for('dashboard') }}" class="back-link">&larr; Back to dashboard</a>
 
+  {# ---- Blocking flash banners ---------------------------------------- #}
   {% if job.unmapped_accounts %}
     <div class="flash error">
       <strong>Unmapped accounts blocking import:</strong>
@@ -18,556 +19,414 @@
     <div class="flash error">
       <strong>{{ job.last_validation_error.headline }}</strong>
       {{ job.last_validation_error.action }}
-      <a href="{{ url_for('onboarding') }}">Open the onboarding guide</a>
-      for the required-column reference.
+      <a href="{{ url_for('onboarding') }}">See the onboarding guide</a> for required columns.
     </div>
   {% endif %}
 
   {% if job.last_error %}
-    <section class="card error-panel">
-      <p class="eyebrow" style="color:var(--error);">Last import error</p>
-      <h2 style="margin-top:.25rem;">{{ job.last_error.summary }}</h2>
+    <div class="flash error">
+      <strong>Last import error.</strong> {{ job.last_error.summary }}
       {% if job.last_error.action %}
-        <p><strong>Likely next step:</strong> {{ job.last_error.action }}</p>
+        <p style="margin:var(--space-2) 0 0;"><strong>Likely next step:</strong> {{ job.last_error.action }}</p>
       {% endif %}
-      {% if job.last_error.intuit_tid %}
-        <p class="muted" style="margin-top:var(--space-2);font-size:.9rem;">
-          <strong>Intuit support reference:</strong>
-          <code>{{ job.last_error.intuit_tid }}</code>
-          &mdash; quote this id when contacting Intuit support so they can find the request in their logs.
-        </p>
-      {% endif %}
-      <details style="margin-top:var(--space-3);">
-        <summary class="muted" style="cursor:pointer;">Technical detail (for support){% if job.last_error.status_code %} &middot; HTTP {{ job.last_error.status_code }}{% endif %}{% if job.last_error.intuit_tid %} &middot; intuit_tid {{ job.last_error.intuit_tid }}{% endif %}</summary>
-        <pre style="white-space:pre-wrap;word-break:break-word;font-size:.85rem;margin-top:var(--space-2);">{{ job.last_error.technical_detail }}</pre>
+      <details class="quiet" style="margin-top:var(--space-3);border-top-color:rgba(0,0,0,.06);">
+        <summary>Technical detail (for support){% if job.last_error.status_code %} &middot; HTTP {{ job.last_error.status_code }}{% endif %}{% if job.last_error.intuit_tid %} &middot; intuit_tid {{ job.last_error.intuit_tid }}{% endif %}</summary>
+        {% if job.last_error.intuit_tid %}
+          <p class="muted" style="font-size:.9rem;"><strong>Intuit support reference:</strong> <code>{{ job.last_error.intuit_tid }}</code></p>
+        {% endif %}
+        <pre style="white-space:pre-wrap;word-break:break-word;font-size:.85rem;">{{ job.last_error.technical_detail }}</pre>
       </details>
-    </section>
+    </div>
   {% endif %}
 
-  <section class="card detail-hero">
+  {% if qbo_is_sandbox %}
+    <div class="flash info" role="status" aria-label="Sandbox testing mode">
+      <strong>Sandbox Testing Mode.</strong>
+      When Intuit asks which company to authorize, pick the <strong>sandbox QuickBooks company</strong> we provided &mdash; not your real QuickBooks Online account.
+      Real customer QuickBooks companies require Intuit production approval and production credentials, which this build does not yet have.
+      {% if support_email and "your-domain.example" not in support_email %}
+        Need the sandbox login? <a href="mailto:{{ support_email }}">Email support</a>.
+      {% endif %}
+    </div>
+  {% endif %}
+
+  {# ---- Hero / job identity ------------------------------------------ #}
+  <header class="detail-hero">
     <div class="flex-between">
       <div>
-        <p class="eyebrow">Job {{ job.id }} &middot; {{ report_label or 'General Ledger' }}</p>
+        <p class="eyebrow">{{ report_label or 'Transaction history' }} &middot; Job {{ job.id }}</p>
         <h1>{{ job.company }}</h1>
-        <p class="muted" style="margin-top:.25rem;">Status &middot; {{ job.status }}</p>
-      </div>
-      <div class="stack-sm" style="text-align:right;">
-        {% if job.qbo_connected %}
-          <span class="badge success large">QuickBooks connected</span>
-        {% else %}
-          <span class="badge large">QuickBooks not connected</span>
-        {% endif %}
-        {% if qbo_behavior == 'preview' %}
-          <span class="badge warn" title="Chart of Accounts: dry-run preview only">QBO preview only</span>
-        {% elif qbo_behavior == 'readonly' %}
-          <span class="badge" title="Validation / reconciliation only — never auto-posted">Read-only report</span>
-        {% endif %}
+        <p class="meta-row" style="margin-top:var(--space-3);">
+          <span><strong>Status</strong> {{ job.status }}</span>
+          <span>
+            {% if job.qbo_connected %}
+              <span class="badge success">QuickBooks connected</span>
+            {% else %}
+              <span class="badge">QuickBooks not connected</span>
+            {% endif %}
+          </span>
+          {% if qbo_behavior == 'preview' %}
+            <span class="badge warn">Preview only</span>
+          {% elif qbo_behavior == 'readonly' %}
+            <span class="badge">Read-only report</span>
+          {% endif %}
+        </p>
       </div>
     </div>
-  </section>
+  </header>
 
+  {# ---- Report-type next action (non-GL reports) --------------------- #}
   {% if report_type and report_type != 'general_ledger' %}
-  <section class="card" aria-label="Report type behavior">
-    <p class="eyebrow">{{ report_label }}</p>
-    {% if report_type == 'chart_of_accounts' %}
-      <h2>Chart of Accounts <small class="muted">(your list of accounts)</small> &mdash; preview, then create</h2>
-      <p>
-        This job is a Chart of Accounts export. We parse the accounts in
-        your file and (once QuickBooks is connected) show a side-by-side
-        preview of which accounts already exist in QBO and which would be
-        created. From the preview you can open a typed-confirmation page
-        and create the missing accounts in QuickBooks. <strong>No accounts
-        are written to QuickBooks until you type
-        <code>CREATE ACCOUNTS</code> on the confirmation page.</strong>
-      </p>
-      <p style="margin-top:var(--space-3);">
-        <a class="btn btn-primary" href="{{ url_for('coa_preview', job_id=job.id) }}">Open Chart of Accounts preview</a>
+  <section class="next-card">
+    <div class="next-card__body">
+      <p class="eyebrow">{{ report_label }}</p>
+      {% if report_type == 'chart_of_accounts' %}
+        <h3>Account list <small class="muted">(Chart of Accounts)</small></h3>
+        <p>
+          We&rsquo;ll show which accounts already exist in QuickBooks and which would be created. Nothing is created until you type
+          <code>CREATE ACCOUNTS</code> on the confirmation page.
+        </p>
+      {% elif report_type == 'trial_balance' %}
+        <h3>Starting / final balances <small class="muted">(Trial Balance)</small></h3>
+        <p>
+          Preview the opening-balance entry from this snapshot, or run the final balance check against your transaction history. Nothing posts without a typed confirmation.
+        </p>
+      {% elif report_type == 'trust_listing' %}
+        <h3>Client trust balances <small class="muted">(Trust Listing)</small></h3>
+        <p>
+          Reconciles your client / matter trust balances against QuickBooks. Trust transactions are <strong>never</strong> auto-posted &mdash; that&rsquo;s a per-matter decision.
+        </p>
+      {% endif %}
+    </div>
+    <div class="next-card__actions">
+      {% if report_type == 'chart_of_accounts' %}
+        <a class="btn btn-primary btn-lg" href="{{ url_for('coa_preview', job_id=job.id) }}">Open preview &rarr;</a>
         {% if job.qbo_connected %}
-          <a class="btn" href="{{ url_for('coa_confirm', job_id=job.id) }}">Review &amp; create in QuickBooks</a>
+          <a class="btn" href="{{ url_for('coa_confirm', job_id=job.id) }}">Create in QuickBooks</a>
         {% endif %}
-        <a class="btn" href="{{ url_for('validation_report_csv', job_id=job.id) }}">Download validation report (CSV)</a>
-      </p>
-      {% if job.coa_create_history %}
-        {% set last_create = job.coa_create_history[-1] %}
-        <p class="note success" style="margin-top:var(--space-3);">
-          <strong>QuickBooks COA creation:</strong>
-          {{ last_create.created_count }} created{% if last_create.failed_count %},
-          {{ last_create.failed_count }} failed{% endif %}
-          on {{ last_create.created_at[:19].replace('T', ' ') }} UTC
-          (company {{ last_create.company_name or last_create.realm_id }}).
-        </p>
+      {% elif report_type == 'trial_balance' %}
+        <a class="btn btn-primary btn-lg" href="{{ url_for('opening_balance_preview', job_id=job.id) }}">Preview opening balance &rarr;</a>
+        <a class="btn" href="{{ url_for('ending_tb_reconciliation_view', job_id=job.id) }}">Final balance check</a>
+      {% elif report_type == 'trust_listing' %}
+        <a class="btn btn-primary btn-lg" href="{{ url_for('trust_reconciliation_view', job_id=job.id) }}">Open reconciliation &rarr;</a>
       {% endif %}
-    {% elif report_type == 'trial_balance' %}
-      <h2>Trial Balance <small class="muted">(starting / ending balance snapshot)</small> &mdash; opening balance + reconciliation</h2>
-      <p>
-        This job is a Trial Balance export. From here you can preview an
-        opening-balance JournalEntry built from the TB (it requires
-        QuickBooks to be connected, every account to resolve, and the TB
-        to balance &mdash; nothing posts without an explicit typed
-        confirmation), and you can run an ending-TB reconciliation
-        against the most recent opening TB + GL on file.
-      </p>
-      <p style="margin-top:var(--space-3);">
-        <a class="btn btn-primary" href="{{ url_for('opening_balance_preview', job_id=job.id) }}">Preview opening balance JE</a>
-        <a class="btn" href="{{ url_for('ending_tb_reconciliation_view', job_id=job.id) }}">Ending TB reconciliation</a>
-        <a class="btn" href="{{ url_for('validation_report_csv', job_id=job.id) }}">Download validation report (CSV)</a>
-      </p>
-      {% if job.opening_balance_history %}
-        {% set last_ob = job.opening_balance_history[-1] %}
-        <p class="note success" style="margin-top:var(--space-3);">
-          <strong>Opening balance posted:</strong>
-          {{ last_ob.line_count }} line(s) on {{ last_ob.created_at }}
-          {% if last_ob.qbo_je_id %}&middot; QBO JE #{{ last_ob.qbo_je_id }}{% endif %}
-          {% if last_ob.demo_mode %}&middot; demo mode{% endif %}.
-        </p>
-      {% endif %}
-    {% elif report_type == 'trust_listing' %}
-      <h2>Trust Listing <small class="muted">(client trust balances)</small> &mdash; validation + reconciliation</h2>
-      <p>
-        This job is a Trust Listing export. We parse the client / matter
-        rows, total the trust balance per bank account, and reconcile
-        against the trust-liability and trust-bank balances on the most
-        recent Trial Balance.
-        <strong>No trust transactions are ever auto-posted to QuickBooks
-        from this app.</strong> Trust posting is a deliberate, per-matter
-        decision that the operator must confirm by hand.
-      </p>
-      <p style="margin-top:var(--space-3);">
-        <a class="btn btn-primary" href="{{ url_for('trust_reconciliation_view', job_id=job.id) }}">Trust reconciliation report</a>
-        <a class="btn" href="{{ url_for('validation_report_csv', job_id=job.id) }}">Download validation report (CSV)</a>
-      </p>
-    {% endif %}
+    </div>
   </section>
   {% endif %}
 
-  {# Beginner-friendly migration sequence. Each step shows where the user is. #}
+  {# ---- Migration sequence (GL) -------------------------------------- #}
+  {% if not report_type or report_type == 'general_ledger' %}
   {% set step_validated = preflight and not preflight.missing_required_columns and preflight.balanced %}
   {% set step_mapped = unmapped_count == 0 %}
   {% set step_connected = job.qbo_connected %}
   {% set step_imported = job.qbo_results %}
-  <section class="card" aria-label="Migration sequence">
-    <p class="eyebrow">Migration sequence</p>
-    <h2>What&rsquo;s left to do here</h2>
-    <ol class="migration-steps">
-      <li>
-        <strong>1. Check the file</strong>
-        {% if step_validated %}<span class="badge success">Done</span>{% else %}<span class="badge">Pending</span>{% endif %}
-        <p class="muted">We checked your CSV for missing columns and made sure debits equal credits.</p>
-      </li>
-      <li>
-        <strong>2. Match accounts</strong>
-        {% if step_mapped %}<span class="badge success">Done</span>{% else %}<span class="badge warn">{{ unmapped_count }} not matched yet</span>{% endif %}
-        <p class="muted">
-          Match each PCLaw account to the right QuickBooks account.
-          <a href="{{ url_for('account_mapping', job_id=job.id) }}">Open the matching screen</a>.
-        </p>
-      </li>
-      <li>
-        <strong>3. Preview before posting</strong>
-        <p class="muted">
-          See exactly what would post &mdash; nothing reaches QuickBooks yet.
-          <a class="btn btn-primary" style="margin-top:.4rem;display:inline-block;" href="{{ url_for('preview_import', job_id=job.id) }}">Preview import (journal entries)</a>
-          <a class="btn" style="margin-top:.4rem;display:inline-block;" href="{{ url_for('validation_report_csv', job_id=job.id) }}">Download validation report (CSV)</a>
-        </p>
-      </li>
-      <li>
-        <strong>4. Connect QuickBooks</strong>
-        {% if step_connected %}<span class="badge success">Connected</span>{% else %}<span class="badge">Not connected</span>{% endif %}
-      </li>
-      <li>
-        <strong>5. Post to QuickBooks</strong>
-        {% if step_imported %}<span class="badge success">Posted</span>{% else %}<span class="badge">Not yet</span>{% endif %}
-        <p class="muted">
-          {% if qbo_env_status == 'production' %}
-            You&rsquo;ll be asked to type <code>IMPORT</code> before anything is sent &mdash; this is the only step that changes your real QuickBooks.
-          {% else %}
-            Sandbox mode: journal entries are posted to a test QuickBooks company only.
-          {% endif %}
-        </p>
-      </li>
-      <li>
-        <strong>6. Final balance check (or reverse if needed)</strong>
-        {% if step_imported %}
-          <a class="btn" style="margin-top:.4rem;display:inline-block;" href="{{ url_for('reconciliation_report_csv', job_id=job.id) }}">Download reconciliation report (CSV)</a>
-        {% endif %}
-        <p class="muted">After posting, save the reconciliation report for your records &mdash; or roll the import back if anything looks off.</p>
-      </li>
-    </ol>
+
+  {# Dominant primary CTA card — what to do next ---------------------- #}
+  <section class="next-card">
+    <div class="next-card__body">
+      <p class="eyebrow">Next step</p>
+      {% if not step_validated %}
+        <h3>Fix the file before going further.</h3>
+        <p>The CSV is missing required columns or doesn&rsquo;t balance. Re-export and re-upload.</p>
+      {% elif not step_mapped %}
+        <h3>Match {{ unmapped_count }} account{{ '' if unmapped_count == 1 else 's' }}.</h3>
+        <p>Pair each PCLaw account with the right QuickBooks account before importing.</p>
+      {% elif not step_connected %}
+        <h3>Connect QuickBooks Online.</h3>
+        <p>Sign in with Intuit and pick the QuickBooks company that should receive these records.</p>
+      {% elif not step_imported %}
+        <h3>Review &amp; send to QuickBooks.</h3>
+        <p>Preview the records first. The send step needs you to type <code>IMPORT</code> to confirm.</p>
+      {% else %}
+        <h3>Save the audit report.</h3>
+        <p>The import is posted. Download the reconciliation report for your records, or reverse it if something looks wrong.</p>
+      {% endif %}
+    </div>
+    <div class="next-card__actions">
+      {% if not step_validated %}
+        <a class="btn btn-primary btn-lg" href="{{ url_for('onboarding') }}">See required columns</a>
+      {% elif not step_mapped %}
+        <a class="btn btn-primary btn-lg" href="{{ url_for('account_mapping', job_id=job.id) }}">Match accounts &rarr;</a>
+      {% elif not step_connected %}
+        <a class="btn btn-primary btn-lg" href="/jobs/{{ job.id }}/connect-qbo">Connect QuickBooks &rarr;</a>
+      {% elif not step_imported %}
+        <a class="btn btn-primary btn-lg" href="{{ url_for('preview_import', job_id=job.id) }}">Preview the import &rarr;</a>
+      {% else %}
+        <a class="btn btn-primary btn-lg" href="{{ url_for('reconciliation_report_csv', job_id=job.id) }}">Download audit report</a>
+      {% endif %}
+    </div>
   </section>
 
-  {% if preflight and report_type and report_type != 'general_ledger' %}
-  <section class="card" id="preflight">
-    <p class="eyebrow">{{ report_label }} preflight</p>
-    <h2>What we found in your CSV</h2>
-    <dl class="summary-grid">
-      {% if report_type == 'chart_of_accounts' %}
-        <div><dt>Accounts in file</dt><dd>{{ preflight.account_count }}</dd></div>
-        <div><dt>Rows missing name</dt><dd>{{ preflight.rows_missing_name }}</dd></div>
-        <div><dt>Rows missing type</dt><dd>{{ preflight.rows_missing_type }}</dd></div>
-        <div><dt>Inactive accounts</dt><dd>{{ preflight.inactive_account_count }}</dd></div>
+  {# Compact step list — at a glance ---------------------------------- #}
+  <section>
+    <h2>Migration sequence</h2>
+    <div class="card">
+      <ol class="migration-steps">
+        <li>
+          <strong>1. Check the file</strong>
+          {% if step_validated %}<span class="badge success">Done</span>{% else %}<span class="badge">Pending</span>{% endif %}
+          <p>We confirm the CSV has every column and that debits equal credits.</p>
+        </li>
+        <li>
+          <strong>2. Match accounts</strong>
+          {% if step_mapped %}<span class="badge success">Done</span>{% else %}<span class="badge warn">{{ unmapped_count }} unmatched</span>{% endif %}
+          <p>
+            Pair each PCLaw account with the right QuickBooks account.
+            <a href="{{ url_for('account_mapping', job_id=job.id) }}">Open the match screen</a>.
+          </p>
+        </li>
+        <li>
+          <strong>3. Preview before sending</strong>
+          <span class="badge">Always available</span>
+          <p>
+            See exactly what would post. Nothing reaches QuickBooks yet.
+            <a class="btn btn-link" href="{{ url_for('preview_import', job_id=job.id) }}">Preview import &rarr;</a>
+            <a class="btn btn-link" href="{{ url_for('validation_report_csv', job_id=job.id) }}">Download validation report (CSV)</a>
+          </p>
+        </li>
+        <li>
+          <strong>4. Connect QuickBooks</strong>
+          {% if step_connected %}<span class="badge success">Connected</span>{% else %}<span class="badge">Not yet</span>{% endif %}
+          <p>Sign in with Intuit to authorize the company.</p>
+        </li>
+        <li>
+          <strong>5. Send to QuickBooks</strong>
+          {% if step_imported %}<span class="badge success">Sent</span>{% else %}<span class="badge">Not yet</span>{% endif %}
+          <p>
+            {% if qbo_env_status == 'production' %}
+              We&rsquo;ll ask you to type <code>IMPORT</code> before anything is sent.
+            {% else %}
+              Sandbox: posts to a test QuickBooks company only.
+            {% endif %}
+          </p>
+        </li>
+        <li>
+          <strong>6. Final balance check</strong>
+          {% if step_imported %}<span class="badge success">Available</span>{% else %}<span class="badge">After import</span>{% endif %}
+          <p>
+            Save the reconciliation report &mdash; or roll the import back if something looks off.
+            {% if step_imported %}
+              <a class="btn btn-link" href="{{ url_for('reconciliation_report_csv', job_id=job.id) }}">Download reconciliation report (CSV)</a>
+            {% endif %}
+          </p>
+        </li>
+      </ol>
+    </div>
+  </section>
+  {% endif %}
+
+  {# ---- Preflight summary (collapsed) -------------------------------- #}
+  {% if preflight %}
+  <details class="quiet" id="preflight">
+    <summary>{% if not report_type or report_type == 'general_ledger' %}Import preflight &mdash; what we found in your file{% else %}{{ report_label }} preflight &mdash; what we found in your file{% endif %}</summary>
+    <div class="card" style="margin-top:var(--space-3);">
+      <dl class="summary-grid">
+        {% if report_type == 'chart_of_accounts' %}
+          <div><dt>Accounts in file</dt><dd>{{ preflight.account_count }}</dd></div>
+          <div><dt>Rows missing name</dt><dd>{{ preflight.rows_missing_name }}</dd></div>
+          <div><dt>Rows missing type</dt><dd>{{ preflight.rows_missing_type }}</dd></div>
+          <div><dt>Inactive accounts</dt><dd>{{ preflight.inactive_account_count }}</dd></div>
+          <div>
+            <dt>Duplicate account numbers</dt>
+            <dd>
+              {% if preflight.duplicate_account_numbers %}
+                <span class="badge error">{{ preflight.duplicate_account_numbers|join(', ') }}</span>
+              {% else %}
+                <span class="badge success">None</span>
+              {% endif %}
+            </dd>
+          </div>
+        {% elif report_type == 'trial_balance' %}
+          <div><dt>Accounts in file</dt><dd>{{ preflight.account_count }}</dd></div>
+          <div><dt>Total debits</dt><dd>${{ preflight.total_debit }}</dd></div>
+          <div><dt>Total credits</dt><dd>${{ preflight.total_credit }}</dd></div>
+          <div>
+            <dt>Balanced</dt>
+            <dd>
+              {% if preflight.balanced %}
+                <span class="badge success">Yes</span>
+              {% else %}
+                <span class="badge error">Off by ${{ preflight.out_of_balance_amount }}</span>
+              {% endif %}
+            </dd>
+          </div>
+          <div><dt>Rows missing account</dt><dd>{{ preflight.rows_missing_account }}</dd></div>
+        {% elif report_type == 'trust_listing' %}
+          <div><dt>Rows</dt><dd>{{ preflight.row_count }}</dd></div>
+          <div><dt>Clients</dt><dd>{{ preflight.client_count }}</dd></div>
+          <div><dt>Matters</dt><dd>{{ preflight.matter_count }}</dd></div>
+          <div><dt>Total trust balance</dt><dd>${{ preflight.total_trust_balance }}</dd></div>
+          <div>
+            <dt>Negative balances</dt>
+            <dd>
+              {% if preflight.negative_balance_count %}
+                <span class="badge error">{{ preflight.negative_balance_count }}</span>
+              {% else %}
+                <span class="badge success">0</span>
+              {% endif %}
+            </dd>
+          </div>
+        {% else %}
+          <div><dt>Transactions</dt><dd>{{ preflight.transaction_count }}</dd></div>
+          <div><dt>Lines</dt><dd>{{ preflight.line_count }}</dd></div>
+          <div><dt>Total debits</dt><dd>${{ preflight.total_debits }}</dd></div>
+          <div><dt>Total credits</dt><dd>${{ preflight.total_credits }}</dd></div>
+          <div>
+            <dt>Balanced</dt>
+            <dd>
+              {% if preflight.balanced %}
+                <span class="badge success">Yes</span>
+              {% else %}
+                <span class="badge error">No</span>
+              {% endif %}
+            </dd>
+          </div>
+          <div><dt>Unique accounts</dt><dd>{{ preflight.unique_account_count }}</dd></div>
+          <div>
+            <dt>Unmapped accounts</dt>
+            <dd>
+              {% if unmapped_count == 0 %}
+                <span class="badge success">0</span>
+              {% else %}
+                <span class="badge error">{{ unmapped_count }}</span>
+                &mdash; <a href="{{ url_for('account_mapping', job_id=job.id) }}">match accounts</a>
+              {% endif %}
+            </dd>
+          </div>
+        {% endif %}
         <div>
-          <dt>Duplicate account numbers</dt>
+          <dt>Missing required columns</dt>
           <dd>
-            {% if preflight.duplicate_account_numbers %}
-              <span class="badge error">{{ preflight.duplicate_account_numbers|join(', ') }}</span>
+            {% if preflight.missing_required_columns %}
+              <span class="badge error">{{ preflight.missing_required_columns|join(', ') }}</span>
             {% else %}
               <span class="badge success">None</span>
             {% endif %}
           </dd>
         </div>
-      {% elif report_type == 'trial_balance' %}
-        <div><dt>Accounts in file</dt><dd>{{ preflight.account_count }}</dd></div>
-        <div><dt>Total debits</dt><dd>${{ preflight.total_debit }}</dd></div>
-        <div><dt>Total credits</dt><dd>${{ preflight.total_credit }}</dd></div>
-        <div>
-          <dt>Balanced</dt>
-          <dd>
-            {% if preflight.balanced %}
-              <span class="badge success">Yes</span>
-            {% else %}
-              <span class="badge error">No &mdash; off by ${{ preflight.out_of_balance_amount }}</span>
-            {% endif %}
-          </dd>
-        </div>
-        <div><dt>Rows missing account</dt><dd>{{ preflight.rows_missing_account }}</dd></div>
-      {% elif report_type == 'trust_listing' %}
-        <div><dt>Rows in file</dt><dd>{{ preflight.row_count }}</dd></div>
-        <div><dt>Distinct clients</dt><dd>{{ preflight.client_count }}</dd></div>
-        <div><dt>Distinct matters</dt><dd>{{ preflight.matter_count }}</dd></div>
-        <div><dt>Total trust balance</dt><dd>${{ preflight.total_trust_balance }}</dd></div>
-        <div>
-          <dt>Negative balances</dt>
-          <dd>
-            {% if preflight.negative_balance_count %}
-              <span class="badge error">{{ preflight.negative_balance_count }}</span>
-            {% else %}
-              <span class="badge success">0</span>
-            {% endif %}
-          </dd>
-        </div>
-        <div><dt>Rows missing identifier</dt><dd>{{ preflight.rows_missing_identifier }}</dd></div>
-      {% endif %}
-      <div>
-        <dt>Missing required columns</dt>
-        <dd>
-          {% if preflight.missing_required_columns %}
-            <span class="badge error">{{ preflight.missing_required_columns|join(', ') }}</span>
-          {% else %}
-            <span class="badge success">None</span>
-          {% endif %}
-        </dd>
-      </div>
-    </dl>
-    {% if not preflight.ready %}
-      <p class="flash error" style="margin-top:var(--space-4);">
-        Review the warnings above. {{ report_label }} uploads are parsed for
-        validation only &mdash; nothing is posted to QuickBooks Online from
-        this job.
-      </p>
-    {% else %}
-      <p class="note" style="margin-top:var(--space-4);">
-        {{ report_label }} parsed successfully. Use the validation report
-        as your reconciliation reference.
-        {% if report_type == 'chart_of_accounts' %}
-          Open the QBO preview to see which accounts already exist and which
-          would be created.
-        {% endif %}
-      </p>
-    {% endif %}
-  </section>
-  {% endif %}
-
-  {% if preflight and (not report_type or report_type == 'general_ledger') %}
-  <section class="card" id="preflight">
-    <p class="eyebrow">Import preflight</p>
-    <h2>What we found in your CSV</h2>
-    <p class="muted">
-      A snapshot of the uploaded ledger before anything is sent to
-      QuickBooks. Review this before connecting QBO &mdash; nothing has
-      been posted yet.
-    </p>
-    <dl class="summary-grid">
-      <div><dt>Transactions</dt><dd>{{ preflight.transaction_count }}</dd></div>
-      <div><dt>Lines</dt><dd>{{ preflight.line_count }}</dd></div>
-      <div><dt>Total debits</dt><dd>${{ preflight.total_debits }}</dd></div>
-      <div><dt>Total credits</dt><dd>${{ preflight.total_credits }}</dd></div>
-      <div>
-        <dt>Balanced</dt>
-        <dd>
-          {% if preflight.balanced %}
-            <span class="badge success">Yes</span>
-          {% else %}
-            <span class="badge error">No &mdash; debits and credits do not match</span>
-          {% endif %}
-        </dd>
-      </div>
-      <div><dt>Unique accounts</dt><dd>{{ preflight.unique_account_count }}</dd></div>
-      <div>
-        <dt>Unmapped accounts</dt>
-        <dd>
-          {% if unmapped_count == 0 %}
-            <span class="badge success">0</span>
-          {% else %}
-            <span class="badge error">{{ unmapped_count }}</span>
-            &mdash; <a href="{{ url_for('account_mapping', job_id=job.id) }}">Map accounts</a>
-          {% endif %}
-        </dd>
-      </div>
-      <div>
-        <dt>Missing required columns</dt>
-        <dd>
-          {% if preflight.missing_required_columns %}
-            <span class="badge error">{{ preflight.missing_required_columns|join(', ') }}</span>
-          {% else %}
-            <span class="badge success">None</span>
-          {% endif %}
-        </dd>
-      </div>
-      <div>
-        <dt>QuickBooks connection</dt>
-        <dd>
-          {% if qbo_connection_status == 'connected' %}
-            <span class="badge success">Connected</span>
-          {% else %}
-            <span class="badge">Not connected</span>
-          {% endif %}
-        </dd>
-      </div>
-      <div>
-        <dt>QuickBooks environment</dt>
-        <dd>
-          {% if qbo_env_status == 'production' %}
-            <span class="badge success">Production</span>
-          {% else %}
-            <span class="badge warn">Sandbox</span>
-          {% endif %}
-        </dd>
-      </div>
-    </dl>
-
-    {% if preflight.missing_required_columns %}
-      <p class="flash error" style="margin-top:var(--space-4);">
-        Your CSV is missing
-        <strong>{{ preflight.missing_required_columns|join(', ') }}</strong>.
-        Re-export from PCLaw or copy the required columns from the
-        <a href="{{ url_for('onboarding') }}">onboarding guide</a>.
-      </p>
-    {% elif not preflight.balanced %}
-      <p class="flash error" style="margin-top:var(--space-4);">
-        The total debits and credits in this file do not match. Re-export
-        the GL from PCLaw and confirm the period is closed.
-      </p>
-    {% elif preflight.rows_missing_account or preflight.rows_missing_date %}
-      <p class="flash error" style="margin-top:var(--space-4);">
-        {% if preflight.rows_missing_account %}
-          {{ preflight.rows_missing_account }} row(s) are missing both account number and account name.
-        {% endif %}
-        {% if preflight.rows_missing_date %}
-          {{ preflight.rows_missing_date }} row(s) are missing a date.
-        {% endif %}
-        Fix these in the CSV and re-upload.
-      </p>
-    {% else %}
-      <p class="note" style="margin-top:var(--space-4);">
-        Preflight checks passed. Continue to <em>Map accounts</em> and
-        <em>Connect QuickBooks</em> below.
-        <strong>Reminder:</strong> on your first run, upload a small slice
-        of the GL and confirm it lands cleanly in QuickBooks before
-        sending the full client ledger.
-      </p>
-    {% endif %}
-  </section>
-  {% endif %}
-
-  <section class="grid-two">
-    <article class="card">
-      <p class="eyebrow">Step 01 &middot; Pre-import</p>
-      <h2>File &amp; ledger</h2>
-      <dl class="summary-grid">
-        <div><dt>Source file</dt><dd><code>{{ job.source_file }}</code></dd></div>
-        {% if job.output_file %}<div><dt>Output file</dt><dd><code>{{ job.output_file }}</code></dd></div>{% endif %}
-        <div><dt>Rows parsed</dt><dd>{{ job.summary.row_count }}</dd></div>
-        {% if job.summary.format %}<div><dt>Format</dt><dd>{{ job.summary.format }}</dd></div>{% endif %}
-        {% if job.summary.balanced is defined %}<div><dt>Balanced</dt><dd>{{ "Yes" if job.summary.balanced else "No" }}</dd></div>{% endif %}
-        <div><dt>Storage</dt><dd>Encrypted (AES-256)</dd></div>
-        <div><dt>File hash</dt><dd><code>{{ (job.file_sha256 or '')[:16] }}&hellip;</code></dd></div>
-        <div><dt>Created</dt><dd>{{ job.created_at[:19].replace("T", " ") }} UTC</dd></div>
       </dl>
-    </article>
 
-    <article class="card">
-      <p class="eyebrow">Step 02 &middot; QuickBooks</p>
-      <h2>QuickBooks Online</h2>
-      {% if qbo_is_sandbox %}
-        <div class="flash error" role="status" style="margin-bottom:var(--space-4);">
-          <strong>Sandbox Testing Mode.</strong>
-          This build is connected to QuickBooks <em>Sandbox</em> only.
-          When Intuit asks which company to authorize, pick the
-          <strong>sandbox QuickBooks company</strong> we sent you &mdash;
-          <strong>not</strong> your firm's real QuickBooks Online account.
-          Real customer QBO companies require Intuit production review and
-          production credentials, which this build does not yet have.
-          {% if support_email and "your-domain.example" not in support_email %}
-            Need the sandbox login? Email <a href="mailto:{{ support_email }}">{{ support_email }}</a>.
+      {% if preflight.missing_required_columns %}
+        <p class="muted" style="margin-top:var(--space-4);font-size:.92rem;">
+          Re-export from PCLaw, or copy the required columns from the
+          <a href="{{ url_for('onboarding') }}">onboarding guide</a>.
+        </p>
+      {% endif %}
+    </div>
+  </details>
+  {% endif %}
+
+  {# ---- QuickBooks connection panel ---------------------------------- #}
+  <section class="card">
+    <p class="eyebrow">QuickBooks Online</p>
+    {% if job.qbo_connected %}
+      <h2 style="margin-bottom:var(--space-3);">
+        Connected: {{ qbo_connection.company_name or 'company name unavailable' }}
+      </h2>
+      <p class="meta-row" style="margin-bottom:var(--space-4);">
+        <span><strong>Realm</strong> <code>{{ qbo_connection.realm_id }}</code></span>
+        <span><strong>Connected</strong> {{ qbo_connection.connected_at[:10] }}</span>
+        {% if qbo_is_sandbox %}<span class="badge warn">Sandbox</span>{% else %}<span class="badge success">Production</span>{% endif %}
+      </p>
+
+      {% if not qbo_is_sandbox and qbo_real_import and job.pending_production_confirm %}
+        <div class="card error-panel" style="margin-bottom:var(--space-4);" role="alert">
+          <p class="eyebrow" style="color:var(--error);">Production safety check</p>
+          <h3 style="margin-top:0;">Final confirmation</h3>
+          <p>
+            You are about to post
+            <strong>{{ job.summary.row_count or '?' }} record(s)</strong>
+            from <code>{{ job.source_file }}</code> to
+            <strong>{{ qbo_connection.company_name or qbo_connection.realm_id }}</strong>
+            (real QuickBooks).
+          </p>
+          {% if job.summary.balanced is defined %}
+            <p class="muted">Debits and credits balance: <strong>{{ "Yes" if job.summary.balanced else "NO" }}</strong>.</p>
           {% endif %}
+          <p class="muted">
+            This can&rsquo;t be undone in one click. You can post reversal entries afterwards, but the originals stay visible.
+          </p>
+          <form action="/jobs/{{ job.id }}/import-to-qbo" method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label>
+              <span>Type IMPORT to confirm</span>
+              <input type="text" name="confirm_import" placeholder="IMPORT" autocomplete="off" required>
+            </label>
+            <div class="actions-row" style="margin-top:var(--space-3);">
+              <button class="btn btn-danger" type="submit">Send to QuickBooks</button>
+              <a class="btn btn-link" href="{{ url_for('job_detail', job_id=job.id) }}">Cancel</a>
+            </div>
+          </form>
         </div>
       {% endif %}
-      {% if job.qbo_connected %}
-        {% if qbo_connection.company_name %}
-          <p><strong>Company:</strong> {{ qbo_connection.company_name }}</p>
-        {% else %}
-          <p class="muted"><em>Company name unavailable{% if qbo_connection.company_info_error %} ({{ qbo_connection.company_info_error }}){% endif %}</em></p>
-        {% endif %}
-        <p class="muted">realmId: <code>{{ qbo_connection.realm_id }}</code></p>
-        <p class="muted">Connected at: {{ qbo_connection.connected_at[:19].replace("T", " ") }} UTC</p>
-        <p class="note">
+
+      <div class="actions-row">
+        <form action="/jobs/{{ job.id }}/import-to-qbo" method="post" style="display:inline;"
+              {% if not qbo_is_sandbox and qbo_real_import %}
+              onsubmit="return confirm('Post records to QuickBooks Online company {{ qbo_connection.company_name or qbo_connection.realm_id }}?');"
+              {% endif %}>
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="btn btn-primary btn-lg" type="submit">
+            {% if not qbo_is_sandbox and qbo_real_import %}
+              Send to QuickBooks
+            {% else %}
+              Send to QuickBooks (demo)
+            {% endif %}
+          </button>
+        </form>
+        <a class="btn" href="{{ url_for('account_mapping', job_id=job.id) }}">Match accounts</a>
+        <form action="/jobs/{{ job.id }}/disconnect-qbo" method="post" style="display:inline;" onsubmit="return confirm('Disconnect QuickBooks for this job?');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="btn btn-link" type="submit">Disconnect QuickBooks</button>
+        </form>
+      </div>
+      {% if not qbo_real_import %}
+        <p class="muted" style="font-size:.88rem;margin-top:var(--space-3);">
+          Demo mode &mdash; this simulates the import without touching QuickBooks.
+        </p>
+      {% endif %}
+    {% else %}
+      {% if qbo_configured %}
+        <h2 style="margin-bottom:var(--space-3);">Connect QuickBooks to send this migration.</h2>
+        <p class="muted" style="margin-bottom:var(--space-4);max-width:60ch;">
           {% if qbo_is_sandbox %}
-            Wrong company? Disconnect and reconnect to pick a different sandbox.
+            Sandbox only &mdash; use the sandbox QuickBooks company we provided. Nothing reaches a real firm&rsquo;s books.
           {% else %}
-            Wrong company? <strong>Disconnect immediately</strong> &mdash; importing
-            into the wrong production QuickBooks company posts real journal entries.
+            We&rsquo;ll redirect you to Intuit to sign in and pick the QuickBooks company.
+            The company name will appear here so you can confirm before sending.
           {% endif %}
         </p>
-
-        {% if not qbo_is_sandbox and qbo_real_import and job.pending_production_confirm %}
-          <div class="card error-panel" style="margin-top:var(--space-4);" role="alert">
-            <h3 style="margin-top:0;">Final confirmation: real QuickBooks import</h3>
-            <p>
-              You are about to post
-              <strong>{{ job.summary.row_count or '?' }} ledger row(s)</strong>
-              from <code>{{ job.source_file }}</code> as journal entries to the
-              <strong>real QuickBooks Online company</strong>
-              &ldquo;{{ qbo_connection.company_name or qbo_connection.realm_id }}&rdquo;
-              (realmId <code>{{ qbo_connection.realm_id }}</code>).
-            </p>
-            {% if job.summary.balanced is defined %}
-              <p>
-                Source debit / credit totals balance:
-                <strong>{{ "Yes" if job.summary.balanced else "NO" }}</strong>.
-              </p>
-            {% endif %}
-            <p class="note">
-              This action <strong>cannot be undone with one click</strong>. After
-              the import, you can post offsetting reversal entries from the
-              Reverse this import section, but the originals will stay visible.
-            </p>
-            <form action="/jobs/{{ job.id }}/import-to-qbo" method="post">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <label>
-                <span>Type IMPORT to confirm posting to the real QuickBooks company above</span>
-                <input type="text" name="confirm_import" placeholder="IMPORT" autocomplete="off" required>
-              </label>
-              <div class="actions-row" style="margin-top:var(--space-3);">
-                <button class="btn btn-danger" type="submit">Yes, post to real QuickBooks</button>
-                <a class="btn" href="{{ url_for('job_detail', job_id=job.id) }}">Cancel</a>
-              </div>
-            </form>
-          </div>
-        {% endif %}
-
-        <div class="actions-col" style="margin-top:var(--space-4);">
-          <form action="/jobs/{{ job.id }}/import-to-qbo" method="post"
-                {% if not qbo_is_sandbox and qbo_real_import %}
-                onsubmit="return confirm('You are about to post real journal entries to QuickBooks Online company {{ qbo_connection.company_name or qbo_connection.realm_id }}. Continue?');"
-                {% endif %}>
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="btn btn-primary full-width" type="submit">
-              {% if not qbo_is_sandbox and qbo_real_import %}
-                Import to real QuickBooks ({{ qbo_connection.company_name or qbo_connection.realm_id }})
-              {% else %}
-                Import to QuickBooks
-              {% endif %}
-            </button>
-          </form>
-          <a class="btn full-width" href="{{ url_for('account_mapping', job_id=job.id) }}">Map accounts</a>
-          <form action="/jobs/{{ job.id }}/disconnect-qbo" method="post" onsubmit="return confirm('Disconnect QuickBooks for this job? Tokens will be revoked at Intuit and removed from this app.');">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="btn full-width" type="submit">Disconnect QuickBooks</button>
-          </form>
-          {% if qbo_real_import %}
-            <p class="note">
-              Real import is <strong>enabled</strong>.
-              {% if qbo_is_sandbox %}
-                Clicking this will create journal entries in the
-                <strong>QuickBooks sandbox</strong> company you connected
-                &mdash; nothing is posted to a real customer's books.
-              {% else %}
-                Clicking this will create journal entries in the
-                <strong>real QuickBooks Online company</strong> shown above.
-                You will be asked to type <code>IMPORT</code> to confirm
-                before any data is posted.
-              {% endif %}
-            </p>
-          {% else %}
-            <p class="note">Demo mode: this simulates the import. To perform a real sandbox import, set <code>QBO_REAL_IMPORT=1</code> and restart the app.</p>
-          {% endif %}
-        </div>
+        <a href="/jobs/{{ job.id }}/connect-qbo" class="btn btn-primary btn-lg">
+          Connect to QuickBooks
+        </a>
       {% else %}
-        {% if qbo_configured %}
-          {% if qbo_is_sandbox %}
-            <p class="muted">
-              <strong>Sandbox only.</strong> Click <strong>Connect to QuickBooks</strong>
-              below. Intuit will ask you to sign in. <strong>Use the
-              sandbox QuickBooks company we provided</strong>, not a real
-              firm's QuickBooks Online account. Real customer QuickBooks
-              companies require Intuit production approval and production
-              credentials, which this build does not yet have.
-            </p>
-            <p class="note">
-              If you sign in with a real QuickBooks Online account, Intuit
-              will show "Uh oh, there's a connection problem" and the
-              connection will fail. That is expected in sandbox mode and
-              nothing in your real QuickBooks is changed.
-            </p>
-          {% else %}
-            <p class="muted">
-              <strong>Production mode.</strong> Clicking
-              <strong>Connect to QuickBooks</strong> below will start an
-              Intuit OAuth flow that authorizes
-              <strong>your real QuickBooks Online company</strong> to
-              receive journal entries from this app. Sign in to QuickBooks
-              with the user account whose company should receive the
-              journal entries from <code>{{ job.source_file }}</code>.
-            </p>
-            <p class="note">
-              Nothing is posted yet &mdash; after you connect, you will see
-              the QuickBooks company name on this page and a separate
-              <em>Import to real QuickBooks</em> button that requires you
-              to type <code>IMPORT</code> to confirm.
-            </p>
-          {% endif %}
-          <a href="/jobs/{{ job.id }}/connect-qbo" class="btn btn-primary">
-            {% if qbo_is_sandbox %}Connect to QuickBooks (sandbox){% else %}Connect to QuickBooks (real){% endif %}
-          </a>
-        {% else %}
-          <p class="muted">QuickBooks OAuth not configured. Set environment variables to enable.</p>
-        {% endif %}
+        <p class="muted">QuickBooks connection is not set up on this deploy.</p>
       {% endif %}
-    </article>
+    {% endif %}
   </section>
 
+  {# ---- Import receipt ---------------------------------------------- #}
   {% if job.import_summary %}
-  <section class="card">
-    <p class="eyebrow">Step 03 &middot; Import result</p>
-    <h2>Import receipt</h2>
+  <section class="card success-panel">
+    <p class="eyebrow">Sent</p>
+    <h2 style="margin-bottom:var(--space-3);">Import complete.</h2>
     <dl class="summary-grid">
       <div><dt>Source transactions</dt><dd>{{ job.import_summary.source_transaction_count }}</dd></div>
-      <div><dt>QBO journal entries created</dt><dd>{{ job.import_summary.qbo_je_count }}</dd></div>
-      <div><dt>Source debit total</dt><dd>${{ job.import_summary.source_debit_total }}</dd></div>
-      <div><dt>Source credit total</dt><dd>${{ job.import_summary.source_credit_total }}</dd></div>
-      <div><dt>Balanced</dt><dd>{{ "Yes" if job.import_summary.balanced else "No" }}</dd></div>
+      <div><dt>QuickBooks entries created</dt><dd>{{ job.import_summary.qbo_je_count }}</dd></div>
+      <div><dt>Source debits</dt><dd>${{ job.import_summary.source_debit_total }}</dd></div>
+      <div><dt>Source credits</dt><dd>${{ job.import_summary.source_credit_total }}</dd></div>
     </dl>
-    <div class="actions-row" style="margin-top:var(--space-3);">
-      <a class="btn" href="{{ url_for('reconciliation_report_csv', job_id=job.id) }}">
-        Download reconciliation report (CSV)
+    <div class="actions-row" style="margin-top:var(--space-4);">
+      <a class="btn btn-primary" href="{{ url_for('reconciliation_report_csv', job_id=job.id) }}">
+        Download audit report
       </a>
     </div>
     {% if job.qbo_results %}
-      <details style="margin-top:var(--space-4);">
-        <summary class="muted" style="cursor:pointer;">Show created QuickBooks JournalEntry IDs ({{ job.qbo_results|length }})</summary>
+      <details class="quiet">
+        <summary>QuickBooks entry IDs ({{ job.qbo_results|length }})</summary>
         <div class="table-wrap" style="margin-top:var(--space-3);">
           <table>
-            <thead><tr><th>PCLaw transaction</th><th>QBO Id</th><th>DocNumber</th><th>TxnDate</th></tr></thead>
+            <thead><tr><th>PCLaw transaction</th><th>QBO Id</th><th>DocNumber</th><th>Date</th></tr></thead>
             <tbody>
               {% for r in job.qbo_results %}
                 <tr>
@@ -585,192 +444,163 @@
   </section>
   {% endif %}
 
+  {# ---- Verification (collapsed) ------------------------------------ #}
   {% if job.qbo_results %}
-  <section class="card">
-    <p class="eyebrow">Step 04 &middot; Verification</p>
-    <h2>Verification result</h2>
-    {% if job.verification %}
-      {% set v = job.verification %}
-      <p>
-        <strong>Status:</strong>
-        {% if v.status == 'ok' %}
-          <span class="badge success">OK</span>
-        {% elif v.status == 'mismatch' %}
-          <span class="badge warn">Mismatch</span>
-        {% else %}
-          <span class="badge error">Error</span>
+  <details class="quiet">
+    <summary>Verification against QuickBooks</summary>
+    <div class="card" style="margin-top:var(--space-3);">
+      {% if job.verification %}
+        {% set v = job.verification %}
+        <p>
+          <strong>Status:</strong>
+          {% if v.status == 'ok' %}
+            <span class="badge success">Matches</span>
+          {% elif v.status == 'mismatch' %}
+            <span class="badge warn">Mismatch</span>
+          {% else %}
+            <span class="badge error">Error</span>
+          {% endif %}
+        </p>
+        {% if v.error %}<p class="flash error">{{ v.error }}</p>{% endif %}
+        {% if v.qbo_je_count is defined %}
+          <dl class="summary-grid">
+            <div><dt>QBO entries found</dt><dd>{{ v.qbo_je_count }} {% if v.je_count_match %}&check;{% else %}&ne;{% endif %}</dd></div>
+            <div><dt>QBO debits</dt><dd>${{ v.qbo_debit_total }} {% if v.debits_match %}&check;{% else %}&ne; ${{ v.source_debit_total }}{% endif %}</dd></div>
+            <div><dt>QBO credits</dt><dd>${{ v.qbo_credit_total }} {% if v.credits_match %}&check;{% else %}&ne; ${{ v.source_credit_total }}{% endif %}</dd></div>
+            <div><dt>Verified at</dt><dd>{{ v.verified_at[:10] }}</dd></div>
+          </dl>
         {% endif %}
-      </p>
-      <p class="muted">Method: {{ v.method or 'response-based' }}</p>
-      {% if v.error %}<p class="flash error">{{ v.error }}</p>{% endif %}
-      {% if v.qbo_je_count is defined %}
-        <dl class="summary-grid">
-          <div><dt>QBO JEs found</dt><dd>{{ v.qbo_je_count }} {% if v.je_count_match %}&check;{% else %}&ne;{% endif %}</dd></div>
-          <div><dt>QBO debits</dt><dd>${{ v.qbo_debit_total }} {% if v.debits_match %}&check;{% else %}&ne; ${{ v.source_debit_total }}{% endif %}</dd></div>
-          <div><dt>QBO credits</dt><dd>${{ v.qbo_credit_total }} {% if v.credits_match %}&check;{% else %}&ne; ${{ v.source_credit_total }}{% endif %}</dd></div>
-          <div><dt>Verified at</dt><dd>{{ v.verified_at[:19].replace("T", " ") }} UTC</dd></div>
-        </dl>
-        {% if v.not_found_ids %}
-          <p class="flash error">JE Ids not found in QBO: {{ v.not_found_ids|join(', ') }}</p>
-        {% endif %}
+      {% else %}
+        <p class="muted">Not run yet.</p>
       {% endif %}
-    {% else %}
-      <p class="muted">Verification has not been run yet.</p>
-    {% endif %}
-    <form action="/jobs/{{ job.id }}/verify" method="post" style="margin-top:var(--space-4);">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button class="btn" type="submit">Re-verify against QuickBooks</button>
-    </form>
-    <p class="note">Verification re-queries each created JournalEntry by Id and totals the debits/credits to compare against the source CSV.</p>
-  </section>
+      <form action="/jobs/{{ job.id }}/verify" method="post" style="margin-top:var(--space-4);">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn" type="submit">Re-verify</button>
+      </form>
+    </div>
+  </details>
   {% endif %}
 
+  {# ---- File / job meta (collapsed) --------------------------------- #}
+  <details class="quiet">
+    <summary>File &amp; job details</summary>
+    <div class="card" style="margin-top:var(--space-3);">
+      <dl class="summary-grid">
+        <div><dt>Source file</dt><dd><code>{{ job.source_file }}</code></dd></div>
+        {% if job.output_file %}<div><dt>Output file</dt><dd><code>{{ job.output_file }}</code></dd></div>{% endif %}
+        <div><dt>Rows parsed</dt><dd>{{ job.summary.row_count }}</dd></div>
+        {% if job.summary.format %}<div><dt>Format</dt><dd>{{ job.summary.format }}</dd></div>{% endif %}
+        {% if job.summary.balanced is defined %}<div><dt>Balanced</dt><dd>{{ "Yes" if job.summary.balanced else "No" }}</dd></div>{% endif %}
+        <div><dt>Storage</dt><dd>Encrypted (AES-256)</dd></div>
+        <div><dt>File hash</dt><dd><code>{{ (job.file_sha256 or '')[:16] }}&hellip;</code></dd></div>
+        <div><dt>Created</dt><dd>{{ job.created_at[:19].replace("T", " ") }} UTC</dd></div>
+        <div>
+          <dt>Duplicate guard</dt>
+          <dd>
+            {% if job.status == 'Duplicate blocked' %}
+              <span class="badge error">Blocked</span>
+            {% elif job.last_import_id %}
+              <span class="badge success">Recorded</span>
+            {% else %}
+              <span class="badge">No prior import</span>
+            {% endif %}
+          </dd>
+        </div>
+      </dl>
+    </div>
+  </details>
+
+  {# ---- Reverse (only after import) --------------------------------- #}
   {% if job.qbo_results %}
     {% set latest = job_history[0] if job_history else None %}
-    <section class="card danger-zone">
-      <p class="eyebrow" style="color:var(--error);">Reversal</p>
-      <h2>Reverse this import</h2>
-      <p class="muted">
-        A reversal posts <strong>offsetting</strong> JournalEntry records to QuickBooks. It does not delete the original entries &mdash; both sides remain visible for audit.
-        Use this if you imported into the wrong period, the wrong company, or with the wrong account mapping.
-      </p>
-      <p class="note">
-        In QuickBooks, reversals appear as <em>new</em> journal entries with DocNumber starting <code>REV-</code> and line descriptions prefixed <strong>REVERSAL</strong>. The Journal report will list them alongside the originals; QuickBooks does not mark the originals as voided.
-      </p>
-      {% if latest and latest.reversal %}
-        <p style="margin-top:var(--space-4);">
-          <strong>Status:</strong>
-          {% if latest.reversal.status == 'success' %}
-            <span class="badge success">Reversed</span>
-          {% else %}
-            <span class="badge error">Reversal {{ latest.reversal.status }}</span>
+    <details class="quiet">
+      <summary>Reverse this import</summary>
+      <div class="card danger-zone" style="margin-top:var(--space-3);">
+        <p class="muted">
+          A reversal posts <strong>offsetting</strong> entries to QuickBooks. The originals stay visible for audit &mdash; QuickBooks does not mark them as voided.
+        </p>
+        <p class="muted" style="font-size:.88rem;">
+          In QuickBooks, reversals appear as new journal entries with DocNumber starting <code>REV-</code> and line descriptions prefixed <strong>REVERSAL</strong>.
+        </p>
+        {% if latest and latest.reversal %}
+          <p style="margin-top:var(--space-3);">
+            <strong>Status:</strong>
+            {% if latest.reversal.status == 'success' %}
+              <span class="badge success">Reversed</span>
+            {% else %}
+              <span class="badge error">{{ latest.reversal.status }}</span>
+            {% endif %}
+            on {{ latest.reversal.reversed_at[:10] }}.
+          </p>
+          {% if latest.reversal.error %}
+            <p class="flash error">{{ latest.reversal.error }}</p>
           {% endif %}
-          on {{ latest.reversal.reversed_at[:19].replace("T", " ") }} UTC.
-        </p>
-        {% if latest.reversal.error %}
-          <p class="flash error">{{ latest.reversal.error }}</p>
-        {% endif %}
-        <details style="margin-top:var(--space-3);">
-          <summary class="muted" style="cursor:pointer;">Show reversal records ({{ latest.reversal.transactions|length if latest.reversal.transactions else 0 }})</summary>
-          <div class="table-wrap" style="margin-top:var(--space-3);">
-            <table>
-              <thead><tr><th>PCLaw transaction</th><th>Original QBO Id</th><th>Reversal QBO Id</th><th>Reversal DocNumber</th><th>Reversal date</th></tr></thead>
-              <tbody>
-                {% for t in (latest.reversal.transactions or []) %}
-                  <tr>
-                    <td><code>{{ t.transaction_id }}</code></td>
-                    <td><code>{{ t.original_qbo_je_id or '—' }}</code></td>
-                    <td><code>{{ t.reversal_qbo_je_id or '—' }}</code></td>
-                    <td><code>{{ t.reversal_doc_number or '—' }}</code></td>
-                    <td>{{ t.reversal_txn_date or '—' }}</td>
-                  </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        </details>
-      {% else %}
-        <p class="note" style="margin-top:var(--space-3);">
-          Type <code>REVERSE</code> below to confirm. We do not allow this on a single click.
-        </p>
-        <form action="/jobs/{{ job.id }}/reverse-import" method="post"
-              onsubmit="return confirm('Post offsetting JournalEntries to QuickBooks for this import?');">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <label>
-            <span>Type REVERSE to confirm</span>
-            <input type="text" name="confirm_reverse" placeholder="REVERSE" autocomplete="off" required>
-          </label>
-          <div class="actions-row" style="margin-top:var(--space-3);">
-            <button class="btn btn-danger" type="submit">Reverse import</button>
-          </div>
-        </form>
-      {% endif %}
-    </section>
-  {% endif %}
-
-  <section class="card">
-    <p class="eyebrow">Duplicate guard</p>
-    <h2>Duplicate protection</h2>
-    {% if job.file_sha256 %}
-      <p class="muted">This file's SHA-256 content hash and its <code>transaction_id</code> values are checked against the persistent <code>data/import_history.sqlite3</code> database before any JournalEntry is posted. If the same file or any of the same <code>transaction_id</code> values were already imported successfully to this QBO company, the import is blocked.</p>
-      <p style="margin-top:var(--space-3);"><strong>Status:</strong>
-        {% if job.status == 'Duplicate blocked' %}
-          <span class="badge error">Blocked</span>
-        {% elif job.last_import_id %}
-          <span class="badge success">Recorded as import #{{ job.last_import_id }}</span>
         {% else %}
-          <span class="badge">No prior import for this file in this company</span>
+          <form action="/jobs/{{ job.id }}/reverse-import" method="post" style="margin-top:var(--space-3);"
+                onsubmit="return confirm('Post offsetting entries to QuickBooks for this import?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label>
+              <span>Type REVERSE to confirm</span>
+              <input type="text" name="confirm_reverse" placeholder="REVERSE" autocomplete="off" required>
+            </label>
+            <div class="actions-row" style="margin-top:var(--space-3);">
+              <button class="btn btn-danger" type="submit">Reverse</button>
+            </div>
+          </form>
         {% endif %}
-      </p>
-    {% else %}
-      <p class="muted">No file hash recorded for this job.</p>
-    {% endif %}
-  </section>
-
-  {% if job_history %}
-  <section class="card">
-    <p class="eyebrow">History</p>
-    <h2>Import history (this job)</h2>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>#</th><th>When (UTC)</th><th>Company</th><th>Txns</th><th>Debit</th><th>Credit</th><th>Status</th></tr></thead>
-        <tbody>
-          {% for h in job_history %}
-            <tr>
-              <td>{{ h.id }}</td>
-              <td>{{ h.created_at[:19].replace("T", " ") }}</td>
-              <td>{{ h.company_name or '—' }}</td>
-              <td>{{ h.transaction_count }}</td>
-              <td>${{ h.debit_total }}</td>
-              <td>${{ h.credit_total }}</td>
-              <td><span class="badge {% if h.status == 'success' %}success{% elif h.status == 'failed' %}error{% endif %}">{{ h.status }}</span></td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </section>
+      </div>
+    </details>
   {% endif %}
 
-  <section class="card">
-    <p class="eyebrow">Security</p>
-    <h2>Security &amp; compliance</h2>
-    <ul class="secure-list">
-      <li>Source file encrypted immediately after upload with AES-256.</li>
-      <li>Processed export encrypted before storage.</li>
-      <li>OAuth tokens encrypted at rest.</li>
-      <li>Access tokens refreshed automatically before expiration.</li>
-      <li>Tokens removed when job is deleted.</li>
-    </ul>
-  </section>
-
-  <section class="card danger-zone">
-    <p class="eyebrow" style="color:var(--error);">Danger zone</p>
-    <h3 style="margin:0 0 var(--space-2);">Delete local job data</h3>
-    <p class="muted" style="margin:0 0 var(--space-3);">
-      Permanently deletes the encrypted source file, encrypted output file, the
-      QuickBooks tokens for this job, and the local job record. This cannot be
-      undone.
-    </p>
-    <div class="card" style="background:var(--surface-muted, #f7f7f5); margin:var(--space-3) 0;">
-      <p style="margin:0 0 var(--space-2);"><strong>What this does NOT do</strong></p>
-      <ul class="secure-list" style="margin:0;">
-        <li>It does <strong>not</strong> delete or reverse any JournalEntry records already posted in QuickBooks. Those stay in your QBO company.{% if job.qbo_results %} If you want to remove the {{ job.qbo_results|length }} entry/entries posted by this job, use <em>Reverse this import</em> above first.{% endif %}</li>
-        <li>It does <strong>not</strong> remove this file from the duplicate-import history. If you upload the same file to the same QuickBooks company later, it will still be blocked as a duplicate &mdash; that protects you from accidental double-posting.</li>
-        <li>It does <strong>not</strong> remove audit-log rows for this job; those are kept for compliance.</li>
-      </ul>
-    </div>
-    <form action="/jobs/{{ job.id }}/delete" method="post"
-          onsubmit="return confirm('Delete local data for this job? This does NOT undo any QuickBooks entries.');">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <label>
-        <span>Type DELETE to confirm</span>
-        <input type="text" name="confirm_delete" placeholder="DELETE" autocomplete="off" required>
-      </label>
-      <div class="actions-row" style="margin-top:var(--space-3);">
-        <button class="btn btn-danger" type="submit">Delete local job data</button>
+  {# ---- History (collapsed) ----------------------------------------- #}
+  {% if job_history %}
+  <details class="quiet">
+    <summary>Import history for this job</summary>
+    <div class="card" style="padding:0;margin-top:var(--space-3);">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>#</th><th>When (UTC)</th><th>Company</th><th>Txns</th><th>Debit</th><th>Credit</th><th>Status</th></tr></thead>
+          <tbody>
+            {% for h in job_history %}
+              <tr>
+                <td>{{ h.id }}</td>
+                <td>{{ h.created_at[:19].replace("T", " ") }}</td>
+                <td>{{ h.company_name or '—' }}</td>
+                <td>{{ h.transaction_count }}</td>
+                <td>${{ h.debit_total }}</td>
+                <td>${{ h.credit_total }}</td>
+                <td><span class="badge {% if h.status == 'success' %}success{% elif h.status == 'failed' %}error{% endif %}">{{ h.status }}</span></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
-    </form>
-  </section>
+    </div>
+  </details>
+  {% endif %}
+
+  {# ---- Delete job (very last, well-collapsed) ---------------------- #}
+  <details class="quiet">
+    <summary>Delete local job data</summary>
+    <div class="card danger-zone" style="margin-top:var(--space-3);">
+      <p class="muted">
+        Permanently deletes the encrypted file, the encrypted output, and the QuickBooks tokens for this job. This does <strong>not</strong> delete or reverse any JournalEntry records already posted in QuickBooks &mdash; use <em>Reverse</em> first if you want to roll those back. The duplicate-import history is preserved.
+      </p>
+      <p class="muted" style="font-size:.88rem;">
+        This action does NOT remove this file from the duplicate-import history. If you upload the same file to the same QuickBooks company later, it will still be blocked as a duplicate.
+      </p>
+      <form action="/jobs/{{ job.id }}/delete" method="post"
+            onsubmit="return confirm('Delete local data for this job? This does NOT undo any QuickBooks entries.');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label>
+          <span>Type DELETE to confirm</span>
+          <input type="text" name="confirm_delete" placeholder="DELETE" autocomplete="off" required>
+        </label>
+        <div class="actions-row" style="margin-top:var(--space-3);">
+          <button class="btn btn-danger" type="submit">Delete</button>
+        </div>
+      </form>
+    </div>
+  </details>
 </section>
 {% endblock %}

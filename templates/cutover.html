@@ -1,63 +1,53 @@
 {% extends "_base.html" %}
-{% block title %}Cutover setup &mdash; {{ firm.name }}{% endblock %}
+{% block title %}Setup &mdash; {{ firm.name }}{% endblock %}
 {% block content %}
-<section class="page">
+<section class="page page--prose">
   {% include "_workflow_stepper.html" %}
 
   <div class="hero">
-    <p class="eyebrow">{{ firm.name }} &middot; Migration setup</p>
-    <h1>Tell us about the cutover <small class="muted">(your switchover day)</small></h1>
+    <p class="eyebrow">{{ firm.name }}</p>
+    <h1>Migration setup <small class="muted">(your switchover day)</small></h1>
     <p>
-      A clean PCLaw &rarr; QuickBooks migration depends on a few simple
-      dates and decisions. The <em>cutover date</em> is the day you stop
-      running the books in PCLaw and start running them in QuickBooks
-      Online. Fill these in once and we&rsquo;ll use them to choose smart
-      defaults for the rest of the migration. Nothing on this page
-      posts to QuickBooks &mdash; it&rsquo;s configuration only.
-    </p>
-    <p style="margin-top:var(--space-3);">
-      <a class="btn" href="{{ url_for('migration_checklist') }}">View migration checklist</a>
-      <a class="btn" href="{{ url_for('dashboard') }}">Back to dashboard</a>
+      Tell us about the cutover &mdash; a few dates and choices so we can
+      plan the rest of the move. Nothing on this page touches QuickBooks
+      &mdash; it&rsquo;s configuration only.
     </p>
   </div>
 
-  <form method="post" action="{{ url_for('cutover_setup') }}" class="card" style="margin-bottom:var(--space-6);">
+  <form method="post" action="{{ url_for('cutover_setup') }}" class="card" style="margin-bottom:var(--space-8);">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
-    <section style="margin-bottom:var(--space-5);">
-      <h2>Cutover &amp; period</h2>
-      <p class="muted">{{ guidance.cutover_date }}</p>
-      <label>
-        <span>Cutover date <small class="muted">(YYYY-MM-DD)</small></span>
-        <input type="date" name="cutover_date" value="{{ cutover.cutover_date or '' }}">
-      </label>
-      <p class="muted" style="margin-top:var(--space-3);">{{ guidance.opening_balance_date }}</p>
-      <label>
-        <span>Opening balance as-of date</span>
-        <input type="date" name="opening_balance_date" value="{{ cutover.opening_balance_date or '' }}">
-      </label>
-
-      <p class="muted" style="margin-top:var(--space-3);">{{ guidance.period }}</p>
-      <div class="grid-two">
+    <section style="margin-bottom:var(--space-8);">
+      <h2>Dates</h2>
+      <p class="muted" style="margin-bottom:var(--space-4);">{{ guidance.cutover_date }}</p>
+      <div class="form-grid">
+        <label class="full">
+          <span>Cutover date <small class="muted">(when you stop running PCLaw)</small></span>
+          <input type="date" name="cutover_date" value="{{ cutover.cutover_date or '' }}">
+        </label>
+        <label class="full">
+          <span>Opening balance as of <small class="muted">(starting balances date)</small></span>
+          <input type="date" name="opening_balance_date" value="{{ cutover.opening_balance_date or '' }}">
+        </label>
         <label>
-          <span>GL period start</span>
+          <span>Transaction history start</span>
           <input type="date" name="period_start" value="{{ cutover.period_start or '' }}">
         </label>
         <label>
-          <span>GL period end</span>
+          <span>Transaction history end</span>
           <input type="date" name="period_end" value="{{ cutover.period_end or '' }}">
         </label>
       </div>
     </section>
 
-    <section style="margin-bottom:var(--space-5);">
+    <section style="margin-bottom:var(--space-8);">
       <h2>Country &amp; accounting basis</h2>
-      <p class="muted">{{ guidance.country_basis }}</p>
-      <div class="grid-two">
+      <p class="muted" style="margin-bottom:var(--space-4);">{{ guidance.country_basis }}</p>
+      <div class="form-grid">
         <label>
           <span>Country</span>
           <select name="country">
-            <option value="">&mdash; Select &mdash;</option>
+            <option value="">Select&hellip;</option>
             {% for code, label in country_choices %}
               <option value="{{ code }}" {% if cutover.country == code %}selected{% endif %}>{{ label }}</option>
             {% endfor %}
@@ -66,7 +56,7 @@
         <label>
           <span>Accounting basis</span>
           <select name="accounting_basis">
-            <option value="">&mdash; Select &mdash;</option>
+            <option value="">Select&hellip;</option>
             {% for code, label in accounting_basis_choices %}
               <option value="{{ code }}" {% if cutover.accounting_basis == code %}selected{% endif %}>{{ label }}</option>
             {% endfor %}
@@ -75,51 +65,49 @@
       </div>
     </section>
 
-    <section style="margin-bottom:var(--space-5);">
-      <h2>QuickBooks target company</h2>
-      <p class="muted">
-        Optional &mdash; you can leave these blank and we'll pull them
-        in automatically the first time you connect QuickBooks Online
-        for an import job.
+    <section style="margin-bottom:var(--space-8);">
+      <h2>QuickBooks target</h2>
+      <p class="muted" style="margin-bottom:var(--space-4);">
+        Optional &mdash; we&rsquo;ll fill these in the first time you connect QuickBooks.
       </p>
-      <div class="grid-two">
+      <div class="form-grid">
         <label>
           <span>QBO company name</span>
           <input type="text" name="qbo_company_name" maxlength="200" value="{{ cutover.qbo_company_name or '' }}" placeholder="Smith &amp; Hart LLP (Operating)">
         </label>
         <label>
-          <span>QBO realm ID <small class="muted">(if you know it)</small></span>
+          <span>Realm ID <small class="muted">(optional)</small></span>
           <input type="text" name="qbo_realm_id" maxlength="64" value="{{ cutover.qbo_realm_id or '' }}">
         </label>
       </div>
-      <label class="checkbox-row" style="margin-top:var(--space-3);">
-        <input type="checkbox" name="clio_involved" value="1" {% if cutover.clio_involved %}checked{% endif %}>
-        <span>This firm uses Clio for trust / billing (we'll flag trust handling accordingly)</span>
+      <label class="checkbox-row" style="margin-top:var(--space-3);display:flex;align-items:center;gap:var(--space-2);">
+        <input type="checkbox" name="clio_involved" value="1" {% if cutover.clio_involved %}checked{% endif %} style="width:auto;">
+        <span style="margin:0;">This firm uses Clio for trust / billing</span>
       </label>
     </section>
 
-    <section style="margin-bottom:var(--space-5);">
-      <h2>AR / AP migration strategy</h2>
-      <p class="muted">{{ guidance.ar_ap }}</p>
+    <section style="margin-bottom:var(--space-8);">
+      <h2>A/R and A/P</h2>
+      <p class="muted" style="margin-bottom:var(--space-4);">{{ guidance.ar_ap }}</p>
       <label>
-        <span>Strategy</span>
+        <span>How you&rsquo;d like to handle these</span>
         <select name="ar_ap_strategy">
-          <option value="">&mdash; Not decided yet &mdash;</option>
+          <option value="">Not decided yet</option>
           {% for code, label in ar_ap_strategy_choices %}
             <option value="{{ code }}" {% if cutover.ar_ap_strategy == code %}selected{% endif %}>{{ label }}</option>
           {% endfor %}
         </select>
       </label>
       {% if ar_ap_guidance %}
-        <div class="card" style="background:var(--surface-2);margin-top:var(--space-3);">
-          <p><strong>{{ ar_ap_guidance.label }}.</strong> {{ ar_ap_guidance.summary }}</p>
+        <div class="card card--inset" style="margin-top:var(--space-3);">
+          <p style="margin:0;"><strong>{{ ar_ap_guidance.label }}.</strong> {{ ar_ap_guidance.summary }}</p>
           {% if ar_ap_guidance.blockers %}
-            <ul>
-              {% for b in ar_ap_guidance.blockers %}<li class="muted">⚠️ {{ b }}</li>{% endfor %}
+            <ul class="secure-list" style="margin-top:var(--space-3);">
+              {% for b in ar_ap_guidance.blockers %}<li class="muted">{{ b }}</li>{% endfor %}
             </ul>
           {% endif %}
           {% if ar_ap_guidance.recommendations %}
-            <ul>
+            <ul class="secure-list" style="margin-top:var(--space-3);">
               {% for r in ar_ap_guidance.recommendations %}<li class="muted">{{ r }}</li>{% endfor %}
             </ul>
           {% endif %}
@@ -127,36 +115,36 @@
       {% endif %}
     </section>
 
-    <section style="margin-bottom:var(--space-5);">
+    <section style="margin-bottom:var(--space-8);">
       <h2>Scope &amp; notes</h2>
       <label>
-        <span>Migration scope <small class="muted">(one line, e.g. &ldquo;FY2025 GL + opening TB + trust listing&rdquo;)</small></span>
-        <input type="text" name="migration_scope" maxlength="200" value="{{ cutover.migration_scope or '' }}">
+        <span>What you&rsquo;re migrating <small class="muted">(one line)</small></span>
+        <input type="text" name="migration_scope" maxlength="200" value="{{ cutover.migration_scope or '' }}" placeholder="e.g. FY2025 transaction history + starting balances + trust">
       </label>
       <label>
         <span>Notes for the migration team</span>
-        <textarea name="notes" maxlength="4000" rows="5" placeholder="Anything unusual the team should know — multi-entity setup, undeposited funds quirks, retainer accounting decisions, etc.">{{ cutover.notes or '' }}</textarea>
+        <textarea name="notes" maxlength="4000" rows="4" placeholder="Anything unusual we should know.">{{ cutover.notes or '' }}</textarea>
       </label>
     </section>
 
-    <section class="card" style="background:var(--surface-2);margin-bottom:var(--space-5);">
-      <h3>Accounting guidance</h3>
-      <ul>
-        <li>{{ guidance.opening_balance_first }}</li>
-        <li>{{ guidance.ending_tb_after_gl }}</li>
-        <li>{{ guidance.trust_listing }}</li>
-        <li>{{ guidance.ar_ap }}</li>
-      </ul>
-    </section>
-
     <div class="actions-row">
-      <button class="btn btn-primary" type="submit">Save cutover settings</button>
-      <a class="btn" href="{{ url_for('migration_checklist') }}">Cancel</a>
+      <button class="btn btn-primary btn-lg" type="submit">Save cutover settings</button>
+      <a class="btn btn-link" href="{{ url_for('migration_checklist') }}">Cancel</a>
     </div>
   </form>
 
   {% if cutover.updated_at %}
-    <p class="muted">Last saved {{ cutover.updated_at[:19].replace('T', ' ') }} UTC.</p>
+    <p class="muted" style="font-size:.88rem;">Last saved {{ cutover.updated_at[:19].replace('T', ' ') }} UTC.</p>
   {% endif %}
+
+  <details class="quiet">
+    <summary>Accounting guidance</summary>
+    <ul class="secure-list" style="margin-top:var(--space-3);">
+      <li>{{ guidance.opening_balance_first }}</li>
+      <li>{{ guidance.ending_tb_after_gl }}</li>
+      <li>{{ guidance.trust_listing }}</li>
+      <li>{{ guidance.ar_ap }}</li>
+    </ul>
+  </details>
 </section>
 {% endblock %}
