@@ -1,0 +1,107 @@
+{% extends "_base.html" %}
+{% block title %}Migration checklist &mdash; {{ firm.name }}{% endblock %}
+{% block content %}
+<section class="page">
+  <div class="hero">
+    <p class="eyebrow">{{ firm.name }} &middot; Migration checklist</p>
+    <h1>Where are we in the migration?</h1>
+    <p>
+      This page derives status from the work this firm has already done
+      in the app &mdash; uploads, QuickBooks connections, account
+      mappings, dry-runs, and posted imports. Some steps are flagged as
+      <em>Planned</em>: the supporting file can be uploaded today but
+      automated posting (opening JE, trust posting, AR/AP) is delivered
+      in a follow-up release.
+    </p>
+    <p style="margin-top:var(--space-3);">
+      <a class="btn" href="{{ url_for('cutover_setup') }}">{% if cutover %}Update cutover setup{% else %}Complete cutover setup{% endif %}</a>
+      <a class="btn" href="{{ url_for('dashboard') }}">Back to dashboard</a>
+    </p>
+  </div>
+
+  {% if next_step %}
+    <div class="card warning-panel" role="status" aria-label="Next recommended step">
+      <h3>Next step: {{ next_step.label }}</h3>
+      <p>{{ next_step.summary }}</p>
+      {% if next_step.key == 'cutover_setup' %}
+        <p><a class="btn btn-primary" href="{{ url_for('cutover_setup') }}">Open cutover setup &rarr;</a></p>
+      {% else %}
+        <p><a class="btn btn-primary" href="{{ url_for('dashboard') }}#intake">Go to dashboard intake &rarr;</a></p>
+      {% endif %}
+    </div>
+  {% else %}
+    <div class="card success-panel" role="status" aria-label="All complete">
+      <h3>Every checklist step is complete</h3>
+      <p>Nice. Confirm the reconciliation report against PCLaw before sign-off.</p>
+    </div>
+  {% endif %}
+
+  <section class="card" style="margin-bottom:var(--space-6);">
+    <div class="panel-head"><h2>Checklist</h2></div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Status</th><th>Step</th><th>Details</th></tr>
+        </thead>
+        <tbody>
+          {% for item in checklist_items %}
+            <tr>
+              <td>
+                {% if item.status == 'complete' %}
+                  <span class="badge success">Complete</span>
+                {% elif item.status == 'in_progress' %}
+                  <span class="badge">In progress</span>
+                {% else %}
+                  <span class="badge error">Not started</span>
+                {% endif %}
+                {% if item.planned %}
+                  <br><span class="badge">Posting planned</span>
+                {% endif %}
+              </td>
+              <td><strong>{{ item.label }}</strong></td>
+              <td>{{ item.summary }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card" style="margin-bottom:var(--space-6);">
+    <h2>Recommended order &amp; accounting guidance</h2>
+    <ul>
+      <li>{{ guidance.opening_balance_first }}</li>
+      <li>{{ guidance.ending_tb_after_gl }}</li>
+      <li>{{ guidance.trust_listing }}</li>
+      <li>{{ guidance.ar_ap }}</li>
+    </ul>
+    <p class="muted">
+      For full context see <code>CUTOVER_WORKFLOW.md</code> in the
+      repository: it describes the intended sequence and what is built
+      today vs planned next.
+    </p>
+  </section>
+
+  {% if cutover %}
+  <section class="card" id="cutover-snapshot">
+    <div class="panel-head"><h2>Cutover snapshot</h2></div>
+    <dl class="summary-grid">
+      <div><dt>Cutover date</dt><dd>{{ cutover.cutover_date or '—' }}</dd></div>
+      <div><dt>Opening balance as of</dt><dd>{{ cutover.opening_balance_date or '—' }}</dd></div>
+      <div><dt>Period</dt><dd>{{ cutover.period_start or '—' }} → {{ cutover.period_end or '—' }}</dd></div>
+      <div><dt>Country</dt><dd>{{ cutover.country or '—' }}</dd></div>
+      <div><dt>Accounting basis</dt><dd>{{ cutover.accounting_basis or '—' }}</dd></div>
+      <div><dt>Source &rarr; target</dt><dd>{{ cutover.source_system or 'PCLaw' }} → {{ cutover.target_system or 'QBO' }}</dd></div>
+      <div><dt>Clio involved</dt><dd>{{ 'Yes' if cutover.clio_involved else 'No' }}</dd></div>
+      <div><dt>QBO target</dt><dd>{{ cutover.qbo_company_name or '—' }}</dd></div>
+    </dl>
+    {% if cutover.migration_scope %}
+      <p style="margin-top:var(--space-3);"><strong>Scope:</strong> {{ cutover.migration_scope }}</p>
+    {% endif %}
+    {% if cutover.notes %}
+      <p style="margin-top:var(--space-2);"><strong>Notes:</strong> {{ cutover.notes }}</p>
+    {% endif %}
+  </section>
+  {% endif %}
+</section>
+{% endblock %}

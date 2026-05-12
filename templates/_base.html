@@ -26,6 +26,7 @@
         {% if user %}
           <a href="{{ url_for('dashboard') }}">Dashboard</a>
           <a href="{{ url_for('onboarding') }}">Onboarding</a>
+          <a href="{{ url_for('migration_checklist') }}">Checklist</a>
           <a href="{{ url_for('quickbooks_manage') }}">QuickBooks</a>
           <a href="{{ url_for('readiness_page') }}">Readiness</a>
           {% if is_operator %}

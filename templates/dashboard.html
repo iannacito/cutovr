@@ -26,6 +26,28 @@
     </p>
   </div>
 
+  {% if next_step %}
+    <div class="card{% if next_step.key == 'cutover_setup' %} warning-panel{% endif %}" role="status" aria-label="Next migration step" style="margin-bottom:var(--space-6);">
+      <p class="eyebrow">Next recommended step</p>
+      <h3>{{ next_step.label }}</h3>
+      <p>{{ next_step.summary }}</p>
+      <p style="margin-top:var(--space-3);">
+        {% if next_step.key == 'cutover_setup' %}
+          <a class="btn btn-primary" href="{{ url_for('cutover_setup') }}">Open cutover setup &rarr;</a>
+        {% endif %}
+        <a class="btn" href="{{ url_for('migration_checklist') }}">View full checklist</a>
+        {% if cutover %}
+          <a class="btn" href="{{ url_for('cutover_setup') }}">Edit cutover setup</a>
+        {% endif %}
+      </p>
+    </div>
+  {% else %}
+    <div class="card success-panel" role="status" style="margin-bottom:var(--space-6);">
+      <h3>Migration checklist: every step complete</h3>
+      <p>Open the <a href="{{ url_for('migration_checklist') }}">checklist</a> to review status and download reconciliation reports.</p>
+    </div>
+  {% endif %}
+
   {% if not qbo_configured %}
     <div class="card warning-panel">
       <h3>QuickBooks OAuth not configured</h3>
