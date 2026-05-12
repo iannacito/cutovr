@@ -59,6 +59,7 @@ from report_types import (
 )
 import qbo_error_hint
 import email_sender
+import cutover_workflow
 from rate_limit import RateLimiter, client_ip
 import csv as _csv
 from io import StringIO
@@ -1073,16 +1074,141 @@ def logout():
     return redirect(url_for("login"))
 
 
+def _firm_account_mapping_count(firm_id):
+    """Total saved PCLaw→QBO account mappings across every connected QBO
+    company for a firm. Used by the checklist to derive the
+    'account_mapping' step status.
+    """
+    total = 0
+    for conn in db.list_qbo_connections_for_firm(firm_id):
+        total += len(db.list_account_mappings(firm_id, conn["realm_id"]))
+    return total
+
+
+def _build_firm_checklist(firm_id):
+    """Helper that loads everything needed for the migration checklist
+    and returns (cutover, checklist_items, next_step).
+    """
+    cutover = db.get_cutover_settings(firm_id)
+    firm_jobs = db.list_jobs_for_firm(firm_id, limit=500)
+    # Hydrate the jobs we know about so checklist can look at `preflight`,
+    # `import_summary`, `verification`. list_jobs_for_firm returns raw rows
+    # (with *_json columns); hydrate_job decodes them.
+    hydrated = []
+    for row in firm_jobs:
+        h = db.hydrate_job(row["id"])
+        hydrated.append(h or row)
+    qbo_conns = db.list_qbo_connections_for_firm(firm_id)
+    items = cutover_workflow.build_checklist(
+        cutover,
+        hydrated,
+        has_qbo_connection=bool(qbo_conns),
+        account_mapping_count=_firm_account_mapping_count(firm_id),
+    )
+    return cutover, items, cutover_workflow.next_recommended_step(items)
+
+
 @app.route("/dashboard")
 @login_required
 def dashboard():
     user = current_user()
     firm_jobs = db.list_jobs_for_firm(user["firm_id"], limit=20)
+    cutover, checklist_items, next_step = _build_firm_checklist(user["firm_id"])
     return render_template(
         "dashboard.html",
         firm_jobs=firm_jobs,
         qbo_configured=QBO_CLIENT_ID != "your-client-id-here",
         recent_audit=db.recent_audit_for_firm(user["firm_id"], limit=10),
+        cutover=cutover,
+        checklist_items=checklist_items,
+        next_step=next_step,
+    )
+
+
+@app.route("/cutover", methods=["GET", "POST"])
+@app.route("/migration-setup", methods=["GET", "POST"])
+@login_required
+def cutover_setup():
+    """Create or update the firm's cutover/migration context.
+
+    Idempotent — every POST is an upsert, so the firm admin can come
+    back to refine fields. No values written here are secrets and no
+    QBO writes happen from this route.
+    """
+    user = current_user()
+    firm_id = user["firm_id"]
+    existing = db.get_cutover_settings(firm_id)
+
+    if request.method == "POST":
+        def _form(name, max_len=200):
+            return (request.form.get(name) or "").strip()[:max_len] or None
+
+        cutover_date = _form("cutover_date", 32)
+        opening_balance_date = _form("opening_balance_date", 32)
+        period_start = _form("period_start", 32)
+        period_end = _form("period_end", 32)
+        country = _form("country", 16)
+        accounting_basis = _form("accounting_basis", 16)
+        migration_scope = _form("migration_scope", 200)
+        notes = _form("notes", 4000)
+        qbo_company_name = _form("qbo_company_name", 200)
+        qbo_realm_id = _form("qbo_realm_id", 64)
+        clio_involved = bool(request.form.get("clio_involved"))
+
+        if country and country not in {c[0] for c in cutover_workflow.COUNTRY_CHOICES}:
+            country = "OTHER"
+        if accounting_basis and accounting_basis not in {
+            b[0] for b in cutover_workflow.ACCOUNTING_BASIS_CHOICES
+        }:
+            accounting_basis = "unknown"
+
+        db.upsert_cutover_settings(
+            firm_id,
+            cutover_date=cutover_date,
+            opening_balance_date=opening_balance_date,
+            period_start=period_start,
+            period_end=period_end,
+            country=country,
+            accounting_basis=accounting_basis,
+            migration_scope=migration_scope,
+            notes=notes,
+            source_system="PCLaw",
+            target_system="QBO",
+            clio_involved=clio_involved,
+            qbo_company_name=qbo_company_name,
+            qbo_realm_id=qbo_realm_id,
+        )
+        db.audit(
+            action="cutover_settings_saved",
+            firm_id=firm_id,
+            user_id=user["id"],
+            target_type="firm",
+            target_id=str(firm_id),
+        )
+        flash("Cutover settings saved.", "success")
+        return redirect(url_for("migration_checklist"))
+
+    return render_template(
+        "cutover.html",
+        cutover=existing or {},
+        guidance=cutover_workflow.GUIDANCE_TEXT,
+        country_choices=cutover_workflow.COUNTRY_CHOICES,
+        accounting_basis_choices=cutover_workflow.ACCOUNTING_BASIS_CHOICES,
+    )
+
+
+@app.route("/migration-checklist")
+@login_required
+def migration_checklist():
+    """Render the per-firm migration checklist + next-step nudge."""
+    user = current_user()
+    cutover, items, next_step = _build_firm_checklist(user["firm_id"])
+    return render_template(
+        "migration-checklist.html",
+        cutover=cutover,
+        checklist_items=items,
+        next_step=next_step,
+        guidance=cutover_workflow.GUIDANCE_TEXT,
     )
 
 

@@ -196,6 +196,25 @@ CREATE TABLE IF NOT EXISTS rate_limit_events (
 );
 CREATE INDEX IF NOT EXISTS idx_ratelimit_bucket
     ON rate_limit_events(bucket_key, created_at);
+
+CREATE TABLE IF NOT EXISTS cutover_settings (
+    firm_id              INTEGER PRIMARY KEY REFERENCES firms(id) ON DELETE CASCADE,
+    cutover_date         TEXT,
+    opening_balance_date TEXT,
+    period_start         TEXT,
+    period_end           TEXT,
+    country              TEXT,
+    accounting_basis     TEXT,
+    migration_scope      TEXT,
+    notes                TEXT,
+    source_system        TEXT NOT NULL DEFAULT 'PCLaw',
+    target_system        TEXT NOT NULL DEFAULT 'QBO',
+    clio_involved        INTEGER NOT NULL DEFAULT 0,
+    qbo_company_name     TEXT,
+    qbo_realm_id         TEXT,
+    created_at           TEXT NOT NULL,
+    updated_at           TEXT NOT NULL
+);
 """
 
 
@@ -690,6 +709,77 @@ class AppDB:
                 "DELETE FROM account_mappings WHERE firm_id = ? AND realm_id = ? "
                 "AND pclaw_account_number IS ? AND pclaw_account_name IS ?",
                 (firm_id, realm_id, pclaw_account_number, pclaw_account_name),
+            )
+
+    # --- cutover settings --------------------------------------------------
+
+    def get_cutover_settings(self, firm_id: int) -> Optional[dict]:
+        """Return the cutover settings row for a firm, or None if never saved.
+
+        Callers should treat None as "firm has not completed the cutover
+        setup step" and surface the onboarding nudge.
+        """
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT * FROM cutover_settings WHERE firm_id = ?",
+                (firm_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def upsert_cutover_settings(
+        self,
+        firm_id: int,
+        *,
+        cutover_date: Optional[str] = None,
+        opening_balance_date: Optional[str] = None,
+        period_start: Optional[str] = None,
+        period_end: Optional[str] = None,
+        country: Optional[str] = None,
+        accounting_basis: Optional[str] = None,
+        migration_scope: Optional[str] = None,
+        notes: Optional[str] = None,
+        source_system: str = "PCLaw",
+        target_system: str = "QBO",
+        clio_involved: bool = False,
+        qbo_company_name: Optional[str] = None,
+        qbo_realm_id: Optional[str] = None,
+    ) -> None:
+        """Insert or update the firm's cutover settings.
+
+        Every field is optional so a firm can save partial progress as
+        they figure things out. We never persist secrets here; this is
+        configuration the firm admin types in.
+        """
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO cutover_settings "
+                "(firm_id, cutover_date, opening_balance_date, period_start, "
+                " period_end, country, accounting_basis, migration_scope, "
+                " notes, source_system, target_system, clio_involved, "
+                " qbo_company_name, qbo_realm_id, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(firm_id) DO UPDATE SET "
+                "    cutover_date=excluded.cutover_date, "
+                "    opening_balance_date=excluded.opening_balance_date, "
+                "    period_start=excluded.period_start, "
+                "    period_end=excluded.period_end, "
+                "    country=excluded.country, "
+                "    accounting_basis=excluded.accounting_basis, "
+                "    migration_scope=excluded.migration_scope, "
+                "    notes=excluded.notes, "
+                "    source_system=excluded.source_system, "
+                "    target_system=excluded.target_system, "
+                "    clio_involved=excluded.clio_involved, "
+                "    qbo_company_name=excluded.qbo_company_name, "
+                "    qbo_realm_id=excluded.qbo_realm_id, "
+                "    updated_at=excluded.updated_at",
+                (
+                    firm_id, cutover_date, opening_balance_date, period_start,
+                    period_end, country, accounting_basis, migration_scope,
+                    notes, source_system or "PCLaw", target_system or "QBO",
+                    1 if clio_involved else 0, qbo_company_name, qbo_realm_id,
+                    _now(), _now(),
+                ),
             )
 
     # --- audit log ---------------------------------------------------------

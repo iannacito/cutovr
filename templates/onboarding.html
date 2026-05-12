@@ -11,6 +11,22 @@
     in QuickBooks.
   </p>
 
+  {% if user %}
+  <div class="card" style="margin-top:var(--space-6);">
+    <h3>Start here: cutover setup</h3>
+    <p>
+      Before uploading any data, fill out the cutover setup screen with
+      your cutover date, opening balance date, GL period, country, and
+      accounting basis. The rest of the app uses these to make sensible
+      defaults and to drive the migration checklist.
+    </p>
+    <p style="margin-top:var(--space-3);">
+      <a class="btn btn-primary" href="{{ url_for('cutover_setup') }}">Open cutover setup &rarr;</a>
+      <a class="btn" href="{{ url_for('migration_checklist') }}">View migration checklist</a>
+    </p>
+  </div>
+  {% endif %}
+
   <div class="card warning-panel" style="margin-top:var(--space-6);">
     <h3>Before you start &mdash; private beta guidance</h3>
     <ul class="secure-list">
