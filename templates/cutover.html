@@ -97,6 +97,35 @@
     </section>
 
     <section style="margin-bottom:var(--space-5);">
+      <h2>AR / AP migration strategy</h2>
+      <p class="muted">{{ guidance.ar_ap }}</p>
+      <label>
+        <span>Strategy</span>
+        <select name="ar_ap_strategy">
+          <option value="">&mdash; Not decided yet &mdash;</option>
+          {% for code, label in ar_ap_strategy_choices %}
+            <option value="{{ code }}" {% if cutover.ar_ap_strategy == code %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      {% if ar_ap_guidance %}
+        <div class="card" style="background:var(--surface-2);margin-top:var(--space-3);">
+          <p><strong>{{ ar_ap_guidance.label }}.</strong> {{ ar_ap_guidance.summary }}</p>
+          {% if ar_ap_guidance.blockers %}
+            <ul>
+              {% for b in ar_ap_guidance.blockers %}<li class="muted">⚠️ {{ b }}</li>{% endfor %}
+            </ul>
+          {% endif %}
+          {% if ar_ap_guidance.recommendations %}
+            <ul>
+              {% for r in ar_ap_guidance.recommendations %}<li class="muted">{{ r }}</li>{% endfor %}
+            </ul>
+          {% endif %}
+        </div>
+      {% endif %}
+    </section>
+
+    <section style="margin-bottom:var(--space-5);">
       <h2>Scope &amp; notes</h2>
       <label>
         <span>Migration scope <small class="muted">(one line, e.g. &ldquo;FY2025 GL + opening TB + trust listing&rdquo;)</small></span>

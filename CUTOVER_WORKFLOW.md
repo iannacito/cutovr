@@ -111,29 +111,45 @@ is not yet built are flagged **Posting planned** in the UI.
   derivation, dashboard next-step display, and backward compatibility
   for firms without settings.
 
-## Planned next (NOT in this PR)
-
-The following items require deliberate accounting decisions and QBO
-writes. They are intentionally scoped out of this foundation PR.
+## Migration workflow completion (shipped after the foundation PR)
 
 * **COA creation in QuickBooks** — *done.* See
   MULTI_REPORT_SUPPORT.md → "Chart of Accounts creation" for the
-  confirmation/apply flow and the type-mapping rules. Limitations:
-  no opening balances on create, no parent/sub-account hierarchy, no
-  automated reversal of created accounts.
-* **Opening trial balance → opening journal entry** — generate a single
-  JE that establishes opening balances in QuickBooks as of the opening
-  balance date, with explicit confirmation and reversal support.
-* **Ending TB reconciliation report** — automated diff between the
-  ending PCLaw TB and the QuickBooks TB pulled via the QBO Reports
-  API.
-* **Trust listing reconciliation** — compare PCLaw trust listing to a
-  QBO (or Clio) trust account ledger, surface differences per matter,
-  but **never auto-post**. Posting is operator-confirmed.
-* **AR / AP migration strategy** — at least two paths: summary opening
-  JE by customer / vendor (accrual), and skip (cash). UI to pick the
-  strategy per firm and execute it.
-* **Reconciliation report download** — single PDF / CSV bundle that the
+  confirmation/apply flow and the type-mapping rules.
+* **Opening trial balance → opening journal entry** — *done.* See
+  `MIGRATION_WORKFLOW_COMPLETION.md` §1. Refuses unbalanced TBs,
+  refuses rows that don't resolve to a QBO account, refuses without
+  the `POST OPENING BALANCE` typed confirmation.
+* **Ending TB reconciliation report** — *done* (with documented
+  limitation: compares parsed opening + GL to ending TB instead of
+  calling the QBO Reports API). See
+  `MIGRATION_WORKFLOW_COMPLETION.md` §2.
+* **Trust listing reconciliation** — *done*. Cross-checks listing
+  total against TB trust-liability and TB trust-bank. **Posting still
+  intentionally disabled.** See
+  `MIGRATION_WORKFLOW_COMPLETION.md` §3.
+* **AR / AP migration strategy** — *strategy capture + per-firm
+  guidance + safe refusal of unsupported imports.* See
+  `MIGRATION_WORKFLOW_COMPLETION.md` §4. Per-invoice / summary-JE
+  execution remains future work behind additional confirmation gates.
+* **Parent / sub-account hierarchy** — *detection, deterministic
+  create-order, and orphan/cycle blocking done.* No silent flattening.
+  Wiring `ParentRef` on Account create is the next iteration. See
+  `MIGRATION_WORKFLOW_COMPLETION.md` §5.
+* **Real-world PCLaw parser variants** — *done.* Money formats
+  (parentheses, CR/DR suffixes, unicode minus), combined
+  "1000 - Operating Bank" cells, preamble/footer skipping, signed
+  amounts. See `MIGRATION_WORKFLOW_COMPLETION.md` §6.
+
+## Still planned
+
+* **Trust posting** under an operator-confirmed per-matter flow.
+* **Live QBO Reports API lookup** for the ending-TB reconciliation.
+* **`ParentRef` on Account create** so QBO files newly-created
+  sub-accounts under their parents.
+* **Full AR/AP execution** for the `summary_je` and `open_items`
+  strategies.
+* **Reconciliation report download** — single PDF / CSV bundle the
   firm can keep as audit evidence.
 
 ---

@@ -1,0 +1,113 @@
+{% extends "_base.html" %}
+{% block title %}Ending TB reconciliation &mdash; {{ job.company }}{% endblock %}
+{% block content %}
+<section class="detail-page">
+  <a href="{{ url_for('job_detail', job_id=job.id) }}" class="back-link">&larr; Back to job</a>
+
+  <section class="card detail-hero">
+    <p class="eyebrow">Job {{ job.id }} &middot; Ending Trial Balance reconciliation</p>
+    <h1>{{ job.company }}</h1>
+    <p class="muted">
+      Compares the uploaded ending Trial Balance against expected
+      balances built from the firm's opening TB + parsed GL activity.
+      <strong>This is not a QuickBooks lookup</strong> &mdash; see the
+      limitation note at the bottom.
+    </p>
+  </section>
+
+  <section class="card">
+    <p class="eyebrow">Summary</p>
+    <dl class="summary-grid">
+      <div><dt>Matched</dt><dd><span class="badge success">{{ report.summary.matched_count }}</span></dd></div>
+      <div><dt>Differences</dt>
+        <dd>
+          {% if report.summary.diff_count %}
+            <span class="badge error">{{ report.summary.diff_count }}</span>
+          {% else %}
+            <span class="badge success">0</span>
+          {% endif %}
+        </dd></div>
+      <div><dt>Unexpected</dt>
+        <dd>
+          {% if report.summary.unexpected_count %}
+            <span class="badge warn">{{ report.summary.unexpected_count }}</span>
+          {% else %}
+            <span class="badge success">0</span>
+          {% endif %}
+        </dd></div>
+      <div><dt>Missing</dt>
+        <dd>
+          {% if report.summary.missing_count %}
+            <span class="badge warn">{{ report.summary.missing_count }}</span>
+          {% else %}
+            <span class="badge success">0</span>
+          {% endif %}
+        </dd></div>
+      <div><dt>Total absolute difference</dt>
+        <dd>${{ report.summary.total_abs_difference }}</dd></div>
+      <div><dt>Opening TB available</dt>
+        <dd>{{ 'Yes' if opening_available else 'No' }}</dd></div>
+      <div><dt>GL activity available</dt>
+        <dd>{{ 'Yes' if gl_available else 'No' }}</dd></div>
+      <div><dt>Overall pass</dt>
+        <dd>
+          {% if report.summary.overall_pass %}
+            <span class="badge success">Pass</span>
+          {% else %}
+            <span class="badge error">Fail</span>
+          {% endif %}
+        </dd></div>
+    </dl>
+    <p style="margin-top:var(--space-3);">
+      <a class="btn" href="{{ url_for('ending_tb_reconciliation_csv', job_id=job.id) }}">Download reconciliation CSV</a>
+    </p>
+  </section>
+
+  <section class="card">
+    <p class="eyebrow">Per-account reconciliation</p>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Account #</th>
+          <th>Account name</th>
+          <th>Status</th>
+          <th>Opening net</th>
+          <th>GL net</th>
+          <th>Expected</th>
+          <th>Actual</th>
+          <th>Diff</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in report.rows %}
+          <tr>
+            <td>{{ row.account_number }}</td>
+            <td>{{ row.account_name }}</td>
+            <td>
+              {% if row.status == 'match' %}
+                <span class="badge success">match</span>
+              {% elif row.status == 'diff' %}
+                <span class="badge error">diff</span>
+              {% elif row.status == 'unexpected' %}
+                <span class="badge warn">unexpected</span>
+              {% else %}
+                <span class="badge warn">missing</span>
+              {% endif %}
+            </td>
+            <td>{{ row.opening_net }}</td>
+            <td>{{ row.gl_net }}</td>
+            <td>{{ row.expected }}</td>
+            <td>{{ row.actual }}</td>
+            <td>{{ row.difference }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card" style="background:var(--surface-2);">
+    <p class="eyebrow">Limitation</p>
+    <p>{{ report.limitation }}</p>
+  </section>
+</section>
+{% endblock %}

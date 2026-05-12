@@ -1,0 +1,166 @@
+{% extends "_base.html" %}
+{% block title %}Opening balance &mdash; {{ job.company }}{% endblock %}
+{% block content %}
+<section class="detail-page">
+  <a href="{{ url_for('job_detail', job_id=job.id) }}" class="back-link">&larr; Back to job</a>
+
+  <section class="card detail-hero">
+    <p class="eyebrow">Job {{ job.id }} &middot; Trial Balance &middot; Opening balance JE</p>
+    <h1>{{ job.company }}</h1>
+    <p class="muted">
+      This page builds a single balancing <code>JournalEntry</code> that
+      seeds QuickBooks with the opening balances from the uploaded
+      trial balance. <strong>Nothing is posted to QuickBooks until you
+      type <code>{{ confirmation_phrase }}</code> and submit.</strong>
+    </p>
+  </section>
+
+  {% if qbo_error %}
+    <div class="flash error">{{ qbo_error }}</div>
+  {% endif %}
+  {% if confirmation_error %}
+    <div class="flash error">{{ confirmation_error }}</div>
+  {% endif %}
+
+  <section class="card">
+    <p class="eyebrow">Plan summary</p>
+    <dl class="summary-grid">
+      <div><dt>As-of date</dt>
+        <dd>{{ plan.as_of_date or '(not set)' }}</dd></div>
+      <div><dt>Lines to post</dt>
+        <dd>{{ plan.line_count }} ({{ plan.omitted_zero_rows }} zero-balance row(s) omitted)</dd></div>
+      <div><dt>Total debits</dt>
+        <dd>${{ plan.total_debit }}</dd></div>
+      <div><dt>Total credits</dt>
+        <dd>${{ plan.total_credit }}</dd></div>
+      <div><dt>Balanced</dt>
+        <dd>
+          {% if plan.balanced %}
+            <span class="badge success">Yes</span>
+          {% else %}
+            <span class="badge error">No</span>
+          {% endif %}
+        </dd></div>
+      <div><dt>Account resolution blockers</dt>
+        <dd>
+          {% if plan.blocker_count %}
+            <span class="badge error">{{ plan.blocker_count }}</span>
+          {% else %}
+            <span class="badge success">0</span>
+          {% endif %}
+        </dd></div>
+    </dl>
+
+    {% if plan.blockers %}
+      <div class="flash error" style="margin-top:var(--space-3);">
+        <strong>Plan is blocked:</strong>
+        <ul>
+          {% for b in plan.blockers %}<li>{{ b }}</li>{% endfor %}
+        </ul>
+        We do not auto-balance to a suspense account. Fix the trial
+        balance in PCLaw (or add the missing accounts to QuickBooks
+        via the Chart of Accounts step) and re-upload.
+      </div>
+    {% endif %}
+
+    {% if plan.warnings %}
+      <div class="flash" style="margin-top:var(--space-3);">
+        <strong>Warnings:</strong>
+        <ul>
+          {% for w in plan.warnings %}<li>{{ w }}</li>{% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <p class="eyebrow">Per-account plan</p>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Account #</th>
+          <th>Account name</th>
+          <th>QBO account</th>
+          <th>QBO type</th>
+          <th>Debit</th>
+          <th>Credit</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for line in plan.lines %}
+          <tr>
+            <td>{{ line.account_number }}</td>
+            <td>{{ line.account_name }}</td>
+            <td>
+              {% if line.qbo_account_name %}
+                {{ line.qbo_account_name }}
+                <small class="muted">(#{{ line.qbo_account_id }})</small>
+              {% else %}
+                <span class="badge error">unresolved</span>
+              {% endif %}
+            </td>
+            <td>{{ line.qbo_account_type or '' }}</td>
+            <td>{{ line.debit }}</td>
+            <td>{{ line.credit }}</td>
+            <td>
+              {% if line.blocker %}
+                <span class="badge error" title="{{ line.blocker }}">blocked</span>
+              {% else %}
+                <span class="badge success">ok</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <p class="eyebrow">Confirm and post</p>
+    {% if plan.has_blockers %}
+      <p class="muted">
+        Posting is disabled until the plan is unblocked. Resolve the
+        items above and reload this page.
+      </p>
+    {% else %}
+      <form method="post" action="{{ url_for('opening_balance_preview', job_id=job.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <p>
+          Type <code>{{ confirmation_phrase }}</code> exactly to post the
+          opening balance JournalEntry to QuickBooks Online company
+          <strong>{{ qbo_connection.company_name or qbo_connection.realm_id or '(not connected)' }}</strong>.
+        </p>
+        <label>
+          <span>Confirmation</span>
+          <input type="text" name="confirm_post" autocomplete="off" placeholder="{{ confirmation_phrase }}">
+        </label>
+        <p style="margin-top:var(--space-3);">
+          <button type="submit" class="btn btn-primary">Post opening balance JE</button>
+          <a class="btn" href="{{ url_for('job_detail', job_id=job.id) }}">Cancel</a>
+        </p>
+      </form>
+    {% endif %}
+  </section>
+
+  {% if job.opening_balance_history %}
+    <section class="card">
+      <p class="eyebrow">Posting history</p>
+      <ul>
+        {% for h in job.opening_balance_history %}
+          <li>
+            {{ h.created_at }} &middot; as-of {{ h.as_of_date or '(none)' }} &middot;
+            lines={{ h.line_count }} &middot; debits=${{ h.total_debit }} &middot;
+            credits=${{ h.total_credit }}
+            {% if h.qbo_je_id %}
+              &middot; JE #{{ h.qbo_je_id }}
+            {% elif h.demo_mode %}
+              &middot; demo (not posted)
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+</section>
+{% endblock %}
