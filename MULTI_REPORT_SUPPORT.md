@@ -12,8 +12,8 @@ explicitly *not* yet implemented.
 | --- | --- | --- | --- |
 | General Ledger | `general_ledger` | **Importable** | Each PCLaw transaction posts as one QBO JournalEntry after explicit confirmation. Existing behavior; unchanged. |
 | Chart of Accounts | `chart_of_accounts` | **Preview + create** | Parsed and compared against the connected QBO company's Account list. Shows matched accounts, would-be-creates, and soft conflicts. From the preview, operators can confirm-and-create the missing accounts in QBO behind a typed `CREATE ACCOUNTS` confirmation. |
-| Trial Balance | `trial_balance` | **Validation only** | Parsed, totaled, and flagged if debits do not equal credits. Used to reconcile a posted GL import. Never auto-posted to QBO. |
-| Trust Listing | `trust_listing` | **Validation only** | Parsed by client / matter with trust totals per bank account. Used to reconcile against the QBO trust liability and trust bank account balances. Never auto-posted to QBO. |
+| Trial Balance | `trial_balance` | **Opening balance JE + reconciliation** | Parsed, totaled, and flagged if debits do not equal credits. Drives the opening-balance JournalEntry workflow (`POST OPENING BALANCE` confirmation; unbalanced TBs and unresolved accounts refused). Also drives the ending-TB reconciliation report. See `MIGRATION_WORKFLOW_COMPLETION.md`. |
+| Trust Listing | `trust_listing` | **Reconciliation only** | Parsed by client / matter with trust totals per bank account. Reconciliation report cross-checks against TB trust-liability and TB trust-bank balances and flags negative balances / missing IDs. **Never auto-posted to QBO.** See `MIGRATION_WORKFLOW_COMPLETION.md`. |
 
 Upload-form selection is optional. When the user picks
 "Auto-detect from CSV headers" the server inspects the headers and
@@ -39,6 +39,9 @@ canonical header.
 | `description` | `notes`, `memo` | optional | Free-text. |
 | `active` | `status`, `is_active`, `enabled` | optional | `Yes/No`, `true/false`, `1/0`, or `A/I`. Defaults to active. |
 | `opening_balance` | `balance` | optional | Display only. Never posted to QBO. |
+| `parent_account_number` | `parent_acct_num`, `parent_number`, `parent_id` | optional | Identifies a parent account in the same upload or in QBO. See `MIGRATION_WORKFLOW_COMPLETION.md` §5. |
+| `parent_account_name` | `parent_account`, `parent`, `header_account` | optional | Same as above, by name. |
+| `account` (combined) | `gl_account`, `ledger_account` | optional | Single column like `1000 - Operating Bank` — auto-split into number + name when dedicated columns are absent. |
 
 ### Trial Balance (`trial_balance`)
 

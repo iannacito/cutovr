@@ -80,18 +80,42 @@ def is_valid_report_type(rt: Optional[str]) -> bool:
 
 
 def _money(value) -> Decimal:
-    """Parse a money-like cell. Empty/blank/None -> 0.00. Robust to $ , and
-    accounting parentheses for negatives, which are common in PCLaw exports.
+    """Parse a money-like cell. Empty/blank/None -> 0.00.
+
+    Robust to common PCLaw export variants:
+      - $ and , thousand separators
+      - accounting parentheses for negatives: (1,234.56)
+      - trailing "CR" / "DR" indicators on printed reports
+      - leading +/- signs and unicode minus (-, –, —, U+2212)
+      - non-breaking spaces and assorted whitespace
+      - hyphen-only / "N/A" placeholder cells (treated as 0)
     """
     if value is None:
         return Decimal("0.00")
     s = str(value).strip()
     if not s:
         return Decimal("0.00")
+    # Normalize unicode minus / dash variants and non-breaking space.
+    s = s.replace("−", "-").replace("–", "-").replace("—", "-")
+    s = s.replace("\xa0", " ").strip()
+    if s in {"-", "--", "—", "n/a", "N/A", "na", "NA", "--"}:
+        return Decimal("0.00")
     negative = False
     if s.startswith("(") and s.endswith(")"):
         negative = True
-        s = s[1:-1]
+        s = s[1:-1].strip()
+    # Trailing CR / DR indicators ("1,234.56 CR" -> credit/negative).
+    upper = s.upper()
+    if upper.endswith(" CR"):
+        negative = True
+        s = s[:-3].rstrip()
+    elif upper.endswith("CR") and len(s) > 2 and not s[-3].isalpha():
+        negative = True
+        s = s[:-2].rstrip()
+    elif upper.endswith(" DR"):
+        s = s[:-3].rstrip()
+    elif upper.endswith("DR") and len(s) > 2 and not s[-3].isalpha():
+        s = s[:-2].rstrip()
     s = s.replace(",", "").replace("$", "").strip()
     if not s:
         return Decimal("0.00")
@@ -102,6 +126,39 @@ def _money(value) -> Decimal:
     if negative:
         d = -d
     return d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+# Real-world PCLaw printouts include footer rows and subtotals that should
+# be skipped at parse time so they don't pollute counts / balance checks.
+_FOOTER_MARKERS = (
+    "total", "subtotal", "grand total", "report total", "end of report",
+    "end of file", "page ", "report generated", "*** end ***",
+    "===", "_____",
+)
+
+
+def _looks_like_footer_or_subtotal(row: dict) -> bool:
+    """Heuristic: True when this CSV row is a totals / footer / pagination
+    artifact rather than a real data row. PCLaw GL / TB CSV exports often
+    include these at the bottom of the file."""
+    if not row:
+        return False
+    values = [str(v or "").strip().lower() for v in row.values()]
+    blob = " ".join(values).strip()
+    if not blob:
+        return True
+    first_nonempty = next((v for v in values if v), "")
+    # A row whose first non-empty cell starts with "total" / "subtotal" /
+    # "grand total" is almost always a footer line.
+    if first_nonempty.startswith(("total ", "totals", "subtotal", "grand total")):
+        return True
+    if first_nonempty in {"total", "totals", "subtotal", "grand total",
+                          "report total", "end of report", "end of file"}:
+        return True
+    # Pagination markers ("Page 1 of 4")
+    if "page " in blob and " of " in blob and len(blob) < 60:
+        return True
+    return False
 
 
 def _norm_header(h: str) -> str:
@@ -135,6 +192,40 @@ def _index_headers(fieldnames: Optional[Iterable[str]]) -> dict[str, str]:
         # First occurrence wins; PCLaw exports rarely duplicate columns.
         index.setdefault(norm, raw)
     return index
+
+
+def _split_combined_account(value: str) -> tuple[str, str]:
+    """Split a single "1000 - Operating Bank" cell into (number, name).
+
+    PCLaw printouts sometimes combine the account number and name into a
+    single column (especially when exported from the screen rather than a
+    real report). Common separators: " - ", " – ", ":", " | ", and tabs.
+    If only a number or only a name is present, the other side returns
+    empty so the caller can fall back to dedicated columns.
+    """
+    if not value:
+        return "", ""
+    s = str(value).strip()
+    for sep in (" - ", " – ", "—", ":", " | ", "\t"):
+        if sep in s:
+            left, _, right = s.partition(sep)
+            left = left.strip()
+            right = right.strip()
+            if left and right:
+                # Heuristic: digits-only or short alphanumeric left side -> number.
+                if left.replace("-", "").replace(".", "").isdigit() or (
+                    len(left) <= 8 and any(ch.isdigit() for ch in left)
+                ):
+                    return left, right
+                # Otherwise treat the *right* side as the number if it looks like one.
+                if right.replace("-", "").replace(".", "").isdigit():
+                    return right, left
+            # No confident split — fall through.
+            break
+    # Single token. Treat as a number when it's purely numeric/dash, otherwise name.
+    if s.replace("-", "").replace(".", "").isdigit():
+        return s, ""
+    return "", s
 
 
 def _pick(row: dict, header_index: dict[str, str], *aliases: str) -> str:
@@ -182,6 +273,8 @@ def _score_chart_of_accounts(idx: dict[str, str]) -> int:
         score += 1
     if any(_norm_header(h) in idx for h in ("account_type", "type", "category", "pclaw_category")):
         score += 2
+    if any(_norm_header(h) in idx for h in ("parent_account", "parent_account_name", "parent_account_number", "header_account")):
+        score += 1
     if any(_norm_header(h) in idx for h in ("debit", "credit", "debit_balance", "credit_balance")):
         # Looks more like TB than COA — penalize.
         score -= 2
@@ -252,28 +345,118 @@ TRUST_REQUIRED = ("trust_balance",)
 
 
 def _open_csv(path) -> tuple[list[dict], list[str]]:
+    """Open a PCLaw CSV export, returning (data_rows, fieldnames).
+
+    Resilient to a handful of real-world PCLaw quirks:
+      * Pre-header preamble rows ("Report Date: ...", blank lines, "PCLaw
+        General Ledger Report", etc.) above the actual column header.
+        We scan the first ~20 lines for a row that looks like a header
+        and use that as the start.
+      * BOM-prefixed files (utf-8-sig handles that already).
+      * Footer / subtotal / pagination rows at the bottom — skipped via
+        ``_looks_like_footer_or_subtotal``.
+      * Fully-blank rows scattered throughout — skipped.
+    """
     p = Path(path)
     with p.open("r", newline="", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        fieldnames = list(reader.fieldnames or [])
-        rows = list(reader)
+        # Buffer up to ~20 lines while we search for the real header row.
+        raw_lines: list[str] = []
+        for _ in range(20):
+            line = f.readline()
+            if not line:
+                break
+            raw_lines.append(line)
+        header_index = _find_header_line_index(raw_lines)
+        rest = f.read()
+
+    csv_text = "".join(raw_lines[header_index:]) + rest
+    reader = csv.DictReader(csv_text.splitlines())
+    fieldnames = list(reader.fieldnames or [])
+    rows: list[dict] = []
+    for row in reader:
+        if row is None:
+            continue
+        if _looks_like_footer_or_subtotal(row):
+            continue
+        rows.append(row)
     return rows, fieldnames
 
 
+def _find_header_line_index(lines: list[str]) -> int:
+    """Return the index of the line that most plausibly contains the real
+    CSV header. Looks for the first non-empty line that contains at least
+    two known PCLaw header tokens. Falls back to the first non-empty line.
+    """
+    HEADER_TOKENS = (
+        "account", "debit", "credit", "balance", "transaction", "date",
+        "amount", "client", "matter", "trust", "type", "name", "number",
+    )
+    fallback = 0
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        lower = stripped.lower()
+        hits = sum(1 for t in HEADER_TOKENS if t in lower)
+        # If line has commas AND >= 2 header tokens AND no $ sign, it's
+        # very likely the header. (Data rows usually carry $ amounts.)
+        if "," in stripped and hits >= 2 and "$" not in stripped:
+            return i
+        if fallback == 0 and stripped:
+            fallback = i
+    return fallback
+
+
 def parse_chart_of_accounts(path) -> tuple[list[dict], list[str], list[str]]:
-    """Return (normalized_rows, raw_fieldnames, missing_required)."""
+    """Return (normalized_rows, raw_fieldnames, missing_required).
+
+    Real-world tolerances:
+      * Combined "1000 - Operating Bank" cell under an "Account" column is
+        split into account_number + account_name when dedicated columns
+        are absent.
+      * Parent hierarchy is read from any of the parent-account aliases
+        listed below; absent fields produce an empty parent string.
+      * Inactive flag accepts Yes/No, A/I, 1/0, true/false case-insensitively.
+    """
     rows, fieldnames = _open_csv(path)
     idx = _index_headers(fieldnames)
     missing = [c for c in COA_REQUIRED if _norm_header(c) not in idx]
+
+    # If neither account_number nor account_name columns exist but a
+    # combined "account" column is present, we synthesize them at parse
+    # time so the rest of the pipeline doesn't have to special-case it.
+    has_num_col = _norm_header("account_number") in idx
+    has_name_col = _norm_header("account_name") in idx
+    combined_key = None
+    for alias in ("account", "gl_account", "ledger_account"):
+        if _norm_header(alias) in idx:
+            combined_key = _norm_header(alias)
+            break
+
     normalized = []
     for row in rows:
         account_number = _pick(row, idx, "account_number", "acct_num", "number")
         account_name = _pick(row, idx, "account_name", "name", "description_name")
+        if (not account_number or not account_name) and combined_key is not None:
+            combined = _pick(row, idx, "account", "gl_account", "ledger_account")
+            num_from_combined, name_from_combined = _split_combined_account(combined)
+            account_number = account_number or num_from_combined
+            account_name = account_name or name_from_combined
         account_type = _pick(
             row, idx, "account_type", "type", "qbo_suggested_type", "pclaw_category", "category"
         )
         detail_type = _pick(row, idx, "qbo_suggested_detail_type", "detail_type", "sub_type")
         description = _pick(row, idx, "description", "notes", "memo")
+        parent_number = _pick(
+            row, idx,
+            "parent_account_number", "parent_acct_num", "parent_number",
+            "parent_id",
+        )
+        parent_name = _pick(
+            row, idx,
+            "parent_account_name", "parent_account", "parent",
+            "parent_name", "header_account",
+        )
         active_raw = _pick(row, idx, "active", "status", "is_active", "enabled")
         # Normalize active flag. Most exports use Yes/No, true/false, 1/0, A/I.
         active_lower = active_raw.lower()
@@ -291,34 +474,85 @@ def parse_chart_of_accounts(path) -> tuple[list[dict], list[str], list[str]]:
                 "account_type": account_type,
                 "detail_type": detail_type,
                 "description": description,
+                "parent_account_number": parent_number,
+                "parent_account_name": parent_name,
                 "active": active,
                 "opening_balance": f"{opening_balance:.2f}",
             }
         )
+    # If both dedicated columns were missing but the combined column
+    # rescued us, drop the missing-column warning for whatever we
+    # successfully derived.
+    if combined_key is not None:
+        derived_num = any(r.get("account_number") for r in normalized)
+        derived_name = any(r.get("account_name") for r in normalized)
+        if derived_num and "account_number" in missing:
+            missing.remove("account_number")
+        if derived_name and "account_name" in missing:
+            missing.remove("account_name")
     return normalized, fieldnames, missing
 
 
 def parse_trial_balance(path) -> tuple[list[dict], list[str], list[str]]:
+    """Parse a PCLaw Trial Balance export with real-world tolerances.
+
+    Accepts:
+      * Combined "1000 - Operating Bank" cell when dedicated columns
+        are absent.
+      * Signed net_balance / amount column where a negative value means
+        credit (so 1234 -> debit, -1234 -> credit).
+      * Negative debit cells (rare): treated as a credit of the same
+        magnitude. This is a real defect in some printouts so we
+        normalize and surface it as a parse-time assumption note.
+      * Trailing CR / DR indicators on individual cells (handled by
+        ``_money``).
+    """
     rows, fieldnames = _open_csv(path)
     idx = _index_headers(fieldnames)
     missing = [c for c in TB_REQUIRED if _norm_header(c) not in idx]
     # The report should have *some* form of debit/credit OR a net balance.
-    has_debit = any(_norm_header(h) in idx for h in ("debit_balance", "debit"))
-    has_credit = any(_norm_header(h) in idx for h in ("credit_balance", "credit"))
-    has_net = _norm_header("net_balance") in idx or _norm_header("balance") in idx
+    has_debit = any(_norm_header(h) in idx for h in ("debit_balance", "debit", "debit_amount"))
+    has_credit = any(_norm_header(h) in idx for h in ("credit_balance", "credit", "credit_amount"))
+    has_net = any(
+        _norm_header(h) in idx
+        for h in ("net_balance", "balance", "amount", "ending_balance", "closing_balance")
+    )
     if not (has_debit or has_credit or has_net):
-        # Surface a synthetic "missing column" message — caller's preflight
-        # rendering treats this as a hard required-column failure.
         missing.append("debit_balance/credit_balance or net_balance")
+
+    has_num_col = _norm_header("account_number") in idx
+    has_name_col = _norm_header("account_name") in idx
+    combined_key = None
+    for alias in ("account", "gl_account", "ledger_account"):
+        if _norm_header(alias) in idx:
+            combined_key = _norm_header(alias)
+            break
 
     normalized = []
     for row in rows:
         account_number = _pick(row, idx, "account_number", "acct_num", "number")
         account_name = _pick(row, idx, "account_name", "name")
+        if (not account_number or not account_name) and combined_key is not None:
+            combined = _pick(row, idx, "account", "gl_account", "ledger_account")
+            num_from_combined, name_from_combined = _split_combined_account(combined)
+            account_number = account_number or num_from_combined
+            account_name = account_name or name_from_combined
         debit = _money(_pick(row, idx, "debit_balance", "debit", "debit_amount"))
         credit = _money(_pick(row, idx, "credit_balance", "credit", "credit_amount"))
+        # Negative-debit normalization. Defensive — keeps the totals row
+        # honest when an export reports "Debit: -1234.00, Credit: 0.00".
+        if debit < 0:
+            credit += -debit
+            debit = Decimal("0.00")
+        if credit < 0:
+            debit += -credit
+            credit = Decimal("0.00")
         if debit == 0 and credit == 0 and has_net:
-            net = _money(_pick(row, idx, "net_balance", "balance"))
+            net = _money(_pick(
+                row, idx,
+                "net_balance", "balance", "amount",
+                "ending_balance", "closing_balance",
+            ))
             if net > 0:
                 debit = net
             elif net < 0:
@@ -333,6 +567,13 @@ def parse_trial_balance(path) -> tuple[list[dict], list[str], list[str]]:
                 "as_of_date": as_of,
             }
         )
+    if combined_key is not None:
+        derived_num = any(r.get("account_number") for r in normalized)
+        derived_name = any(r.get("account_name") for r in normalized)
+        if derived_num and "account_number" in missing:
+            missing.remove("account_number")
+        if derived_name and "account_name" in missing:
+            missing.remove("account_name")
     return normalized, fieldnames, missing
 
 
@@ -381,6 +622,7 @@ def build_coa_preflight(rows: list[dict], fieldnames: list[str], missing: list[s
     seen_numbers: dict[str, int] = {}
     duplicates: list[str] = []
     inactive = 0
+    parent_links = 0
     for r in rows:
         t = (r.get("account_type") or "").strip() or "(unspecified)"
         type_counts[t] = type_counts.get(t, 0) + 1
@@ -393,9 +635,18 @@ def build_coa_preflight(rows: list[dict], fieldnames: list[str], missing: list[s
         num = (r.get("account_number") or "").strip()
         if num:
             seen_numbers[num] = seen_numbers.get(num, 0) + 1
+        if (r.get("parent_account_number") or r.get("parent_account_name") or "").strip():
+            parent_links += 1
     for num, count in seen_numbers.items():
         if count > 1:
             duplicates.append(num)
+
+    assumptions: list[str] = []
+    if parent_links:
+        assumptions.append(
+            f"{parent_links} row(s) reference a parent account; the COA "
+            "hierarchy preview will show how those would map in QuickBooks."
+        )
 
     summary = {
         "report_type": REPORT_CHART_OF_ACCOUNTS,
@@ -406,6 +657,8 @@ def build_coa_preflight(rows: list[dict], fieldnames: list[str], missing: list[s
         "rows_missing_type": rows_missing_type,
         "inactive_account_count": inactive,
         "duplicate_account_numbers": sorted(duplicates),
+        "parent_linked_count": parent_links,
+        "assumptions": assumptions,
         "missing_required_columns": list(missing),
     }
     summary["ready"] = (

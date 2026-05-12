@@ -4,6 +4,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from decimal import Decimal
 from functools import wraps
+from typing import Optional
 import os, secrets
 import hashlib
 import logging
@@ -58,6 +59,23 @@ from report_types import (
     build_coa_dry_run_preview,
 )
 from coa_apply import build_create_plan, apply_create_plan
+from coa_hierarchy import (
+    build_hierarchy_plan,
+    annotate_create_plan_with_hierarchy,
+    detect_hierarchy,
+)
+from opening_balance import (
+    build_opening_balance_plan,
+    OPENING_BALANCE_CONFIRMATION_PHRASE,
+    build_opening_je_payload,
+)
+from tb_reconciliation import build_ending_tb_reconciliation
+from trust_reconciliation import build_trust_listing_reconciliation
+from ar_ap_strategy import (
+    validate_ar_ap_strategy,
+    AR_AP_STRATEGY_CHOICES,
+    guidance_for_strategy,
+)
 import qbo_error_hint
 import email_sender
 import cutover_workflow
@@ -1155,6 +1173,7 @@ def cutover_setup():
         qbo_company_name = _form("qbo_company_name", 200)
         qbo_realm_id = _form("qbo_realm_id", 64)
         clio_involved = bool(request.form.get("clio_involved"))
+        ar_ap_strategy = validate_ar_ap_strategy(_form("ar_ap_strategy", 32))
 
         if country and country not in {c[0] for c in cutover_workflow.COUNTRY_CHOICES}:
             country = "OTHER"
@@ -1178,6 +1197,7 @@ def cutover_setup():
             clio_involved=clio_involved,
             qbo_company_name=qbo_company_name,
             qbo_realm_id=qbo_realm_id,
+            ar_ap_strategy=ar_ap_strategy or None,
         )
         db.audit(
             action="cutover_settings_saved",
@@ -1189,12 +1209,20 @@ def cutover_setup():
         flash("Cutover settings saved.", "success")
         return redirect(url_for("migration_checklist"))
 
+    ar_ap_strategy = (existing or {}).get("ar_ap_strategy") if existing else ""
     return render_template(
         "cutover.html",
         cutover=existing or {},
         guidance=cutover_workflow.GUIDANCE_TEXT,
         country_choices=cutover_workflow.COUNTRY_CHOICES,
         accounting_basis_choices=cutover_workflow.ACCOUNTING_BASIS_CHOICES,
+        ar_ap_strategy_choices=AR_AP_STRATEGY_CHOICES,
+        ar_ap_guidance=guidance_for_strategy(
+            ar_ap_strategy,
+            country=(existing or {}).get("country"),
+            accounting_basis=(existing or {}).get("accounting_basis"),
+            clio_involved=bool((existing or {}).get("clio_involved")),
+        ),
     )
 
 
@@ -1893,12 +1921,18 @@ def coa_preview(job_id):
                 target_type="job", target_id=job_id, details=str(exc)[:200],
             )
     preview = build_coa_dry_run_preview(coa_rows or [], qbo_accounts)
+    hierarchy_plan = build_hierarchy_plan(coa_rows or [], qbo_accounts)
     _audit("coa_preview_view", target_type="job", target_id=job_id,
-           details=f"matched={preview['matched_count']} would_create={preview['would_create_count']}")
+           details=(
+               f"matched={preview['matched_count']} "
+               f"would_create={preview['would_create_count']} "
+               f"hierarchy_blocked={len(hierarchy_plan.blocked)}"
+           ))
     return render_template(
         "coa-preview.html",
         job=job,
         preview=preview,
+        hierarchy=hierarchy_plan.to_dict(),
         qbo_error=qbo_error,
         qbo_connection=qbo_conn or {},
         report_label=REPORT_LABELS[REPORT_CHART_OF_ACCOUNTS],
@@ -1956,11 +1990,46 @@ def _load_coa_state(job_id):
 
 
 def _build_coa_plan(coa_rows, qbo):
-    """Run the read-only QBO query, build the preview, then the create plan."""
+    """Run the read-only QBO query, build the preview, then the create plan.
+
+    Also resolves the parent/sub-account hierarchy and folds any
+    hierarchy-blocked rows (orphan parents, cycles) into the plan's
+    blocked list so the confirmation page refuses to create them.
+    Hierarchy creation order is annotated on the plan dict so the
+    confirmation UI can render parent-first semantics.
+    """
     qbo_accounts = qbo.get_accounts()
     preview = build_coa_dry_run_preview(coa_rows, qbo_accounts)
     plan = build_create_plan(coa_rows, preview)
-    return preview, plan
+    hierarchy_plan = build_hierarchy_plan(coa_rows, qbo_accounts)
+    if hierarchy_plan.has_blockers:
+        # Promote hierarchy blockers (orphan parent, cycle) into the
+        # CreatePlan.blocked list so plan.has_blockers gates the apply.
+        blocked_keys = {
+            (n.account_number, n.account_name) for n in hierarchy_plan.blocked
+        }
+        from coa_apply import CreatePlanEntry
+        moved: list = []
+        kept = []
+        for entry in plan.to_create:
+            if (entry.account_number, entry.account_name) in blocked_keys:
+                node = next(
+                    (n for n in hierarchy_plan.blocked
+                     if n.account_number == entry.account_number
+                     and n.account_name == entry.account_name),
+                    None,
+                )
+                entry.decision = "blocked"
+                entry.blocked_reason = (
+                    node.blocker if node and node.blocker else
+                    "Parent/sub-account hierarchy could not be resolved."
+                )
+                moved.append(entry)
+            else:
+                kept.append(entry)
+        plan.to_create = kept
+        plan.blocked = plan.blocked + moved
+    return preview, plan, hierarchy_plan
 
 
 @app.route("/jobs/<job_id>/coa-confirm", methods=["GET", "POST"])
@@ -1981,7 +2050,7 @@ def coa_confirm(job_id):
     coa_rows = state["coa_rows"]
 
     try:
-        preview, plan = _build_coa_plan(coa_rows, qbo)
+        preview, plan, hierarchy_plan = _build_coa_plan(coa_rows, qbo)
     except QBOError as e:
         _audit(
             "coa_create_qbo_query_failed",
@@ -2052,6 +2121,7 @@ def coa_confirm(job_id):
         job=job,
         preview=preview,
         plan=plan.to_dict(),
+        hierarchy=hierarchy_plan.to_dict(),
         qbo_connection=qbo_conn or {},
         report_label=REPORT_LABELS[REPORT_CHART_OF_ACCOUNTS],
         confirmation_phrase=COA_CREATE_CONFIRMATION_PHRASE,
@@ -2091,7 +2161,7 @@ def coa_apply_route(job_id):
         return redirect(url_for("coa_confirm", job_id=job_id))
 
     try:
-        preview, plan = _build_coa_plan(coa_rows, qbo)
+        preview, plan, hierarchy_plan = _build_coa_plan(coa_rows, qbo)
     except Exception as e:  # noqa: BLE001
         tid = getattr(e, "intuit_tid", None)
         _audit(
@@ -2228,6 +2298,404 @@ def _reparse_report_rows(job: dict, report_type: str):
         return []
     finally:
         temp_path.unlink(missing_ok=True)
+
+
+def _job_trial_balance_rows(job: dict) -> list[dict]:
+    rows = job.get("parsed_trial_balance")
+    if not rows:
+        rows = _reparse_report_rows(job, REPORT_TRIAL_BALANCE)
+    return rows or []
+
+
+def _job_trust_listing_rows(job: dict) -> list[dict]:
+    rows = job.get("parsed_trust_listing")
+    if not rows:
+        rows = _reparse_report_rows(job, REPORT_TRUST_LISTING)
+    return rows or []
+
+
+def _firm_latest_jobs_by_type(firm_id: int, report_type: str, limit: int = 20) -> list[dict]:
+    """Return firm jobs of a given report_type, newest first."""
+    all_jobs = db.list_jobs_for_firm(firm_id, limit=limit) or []
+    return [j for j in all_jobs if (j.get("report_type") or "general_ledger") == report_type]
+
+
+def _latest_other_job_report(firm_id: int, report_type: str, exclude_job_id: str) -> list[dict]:
+    """Find the most recent successful job of a given report_type for this
+    firm, *excluding* the current job, and return its parsed rows (from
+    the in-memory jobs cache or by reparsing). Returns [] when nothing
+    suitable is on file.
+    """
+    candidates = [
+        j for j in _firm_latest_jobs_by_type(firm_id, report_type)
+        if j.get("id") != exclude_job_id
+    ]
+    for j in candidates:
+        live = jobs.get(j["id"])
+        if report_type == REPORT_TRIAL_BALANCE:
+            rows = (live or {}).get("parsed_trial_balance")
+            if not rows:
+                rows = _reparse_report_rows(live or j, REPORT_TRIAL_BALANCE)
+            if rows:
+                return rows
+        elif report_type == REPORT_TRUST_LISTING:
+            rows = (live or {}).get("parsed_trust_listing")
+            if not rows:
+                rows = _reparse_report_rows(live or j, REPORT_TRUST_LISTING)
+            if rows:
+                return rows
+        elif report_type == REPORT_GENERAL_LEDGER:
+            # GL doesn't have parsed_* cached on the job dict; reparse via
+            # the dedicated pipeline.
+            live_job = live or j
+            try:
+                enc_name = live_job.get("encrypted_file")
+                if not enc_name:
+                    continue
+                enc_path = UPLOAD_DIR / enc_name
+                if not enc_path.exists():
+                    continue
+                temp_path = UPLOAD_DIR / f"reparse_gl_{secrets.token_urlsafe(8)}.csv"
+                decrypt_file(enc_path, temp_path)
+                try:
+                    rows = load_general_ledger_csv(temp_path)
+                    if rows:
+                        return rows
+                finally:
+                    temp_path.unlink(missing_ok=True)
+            except Exception:  # noqa: BLE001
+                continue
+    return []
+
+
+@app.route("/jobs/<job_id>/opening-balance", methods=["GET", "POST"])
+@login_required
+def opening_balance_preview(job_id):
+    """Opening Trial Balance -> opening balance JournalEntry preview.
+
+    GET (or POST without the confirmation phrase) shows the plan: every
+    TB row mapped to a QBO account, totals, balance check, and per-row
+    blockers. POST with ``confirm_post=POST OPENING BALANCE`` and a
+    fully-resolved plan posts a single balancing JournalEntry to QBO.
+
+    Refuses to post when:
+      * the TB is unbalanced (no auto-balance to suspense),
+      * any TB row can't resolve to a QBO account,
+      * QBO isn't connected,
+      * the confirmation phrase wasn't typed.
+    """
+    job, user = _job_or_403(job_id)
+    if (job.get("report_type") or REPORT_GENERAL_LEDGER) != REPORT_TRIAL_BALANCE:
+        flash(
+            "Opening balance posting is only available for jobs uploaded "
+            "as a Trial Balance report.",
+            "info",
+        )
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    tb_rows = _job_trial_balance_rows(job)
+    if not tb_rows:
+        flash("Could not read the Trial Balance upload. Re-upload and try again.", "error")
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    qbo, qbo_conn = _get_qbo_client(job_id, user)
+    qbo_error: Optional[str] = None
+    if not qbo:
+        qbo_error = (
+            "Connect QuickBooks to resolve TB accounts and (eventually) "
+            "post the opening journal entry. The plan below is shown "
+            "without QBO account resolution until you connect."
+        )
+        qbo_accounts = {"QueryResponse": {"Account": []}}
+        account_mappings = []
+    else:
+        try:
+            qbo_accounts = qbo.get_accounts()
+        except Exception as exc:  # noqa: BLE001
+            qbo_error = (
+                "Could not fetch the QuickBooks Chart of Accounts. The "
+                "opening balance plan will retry on next page load."
+            )
+            qbo_accounts = {"QueryResponse": {"Account": []}}
+            _audit(
+                "opening_balance_qbo_query_failed",
+                target_type="job", target_id=job_id,
+                details=str(exc)[:200],
+            )
+        account_mappings = db.list_account_mappings(
+            user["firm_id"], qbo_conn["realm_id"]
+        ) if qbo_conn else []
+
+    cutover = db.get_cutover_settings(user["firm_id"]) or {}
+    plan = build_opening_balance_plan(
+        tb_rows,
+        qbo_accounts,
+        as_of_date=cutover.get("opening_balance_date"),
+        account_mappings=account_mappings,
+    )
+
+    confirmation_error: Optional[str] = None
+    if request.method == "POST":
+        phrase = (request.form.get("confirm_post") or "").strip().upper()
+        if phrase != OPENING_BALANCE_CONFIRMATION_PHRASE:
+            confirmation_error = (
+                f"Type {OPENING_BALANCE_CONFIRMATION_PHRASE} exactly to "
+                "confirm. Nothing was posted."
+            )
+            _audit(
+                "opening_balance_confirmation_failed",
+                target_type="job", target_id=job_id,
+                details=f"phrase={phrase!r}",
+            )
+        elif plan.has_blockers:
+            confirmation_error = (
+                "Cannot post: the plan has blockers (unbalanced TB or "
+                "rows that don't resolve to a QBO account). Fix them "
+                "before confirming."
+            )
+            _audit(
+                "opening_balance_confirmation_blocked",
+                target_type="job", target_id=job_id,
+                details=f"blocker_count={len(plan.blockers)}",
+            )
+        elif not qbo:
+            confirmation_error = (
+                "Connect QuickBooks before confirming. Nothing was posted."
+            )
+        else:
+            return _opening_balance_post(job, user, qbo, qbo_conn, plan)
+
+    return render_template(
+        "opening-balance.html",
+        job=job,
+        plan=plan.to_dict(),
+        qbo_connection=qbo_conn or {},
+        qbo_error=qbo_error,
+        confirmation_phrase=OPENING_BALANCE_CONFIRMATION_PHRASE,
+        confirmation_error=confirmation_error,
+        report_label=REPORT_LABELS[REPORT_TRIAL_BALANCE],
+        qbo_env_status=(
+            "production" if (QBO_ENVIRONMENT or "").lower() == "production"
+            else "sandbox"
+        ),
+    )
+
+
+def _opening_balance_post(job, user, qbo, qbo_conn, plan):
+    job_id = job["id"]
+    if QBO_ENVIRONMENT == "production":
+        confirmation = (request.form.get("confirm_post") or "").strip().upper()
+        if confirmation != OPENING_BALANCE_CONFIRMATION_PHRASE:
+            flash(
+                "Production safety check: type "
+                f"{OPENING_BALANCE_CONFIRMATION_PHRASE} to confirm.",
+                "error",
+            )
+            return redirect(url_for("opening_balance_preview", job_id=job_id))
+
+    if not QBO_REAL_IMPORT:
+        job["status"] = "Opening balance JE (demo mode)"
+        history_entry = {
+            "created_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            "demo_mode": True,
+            "as_of_date": plan.as_of_date,
+            "total_debit": plan.total_debit,
+            "total_credit": plan.total_credit,
+            "line_count": len(plan.postable_lines),
+            "qbo_je_id": None,
+        }
+        job.setdefault("opening_balance_history", []).append(history_entry)
+        _save_job(job_id)
+        _audit("opening_balance_demo", target_type="job", target_id=job_id,
+               details=f"lines={len(plan.postable_lines)} as_of={plan.as_of_date}")
+        flash(
+            "Demo mode: no journal entry was posted to QuickBooks. Set "
+            "QBO_REAL_IMPORT=1 and reconnect QBO to post a real opening "
+            "balance JE.",
+            "info",
+        )
+        return redirect(url_for("opening_balance_preview", job_id=job_id))
+
+    payload = build_opening_je_payload(plan)
+    try:
+        response = qbo.create_journal_entry(payload)
+    except QBOError as e:
+        _audit(
+            "opening_balance_post_failed",
+            target_type="job", target_id=job_id,
+            details=_audit_details_with_tid(str(e)[:300], e.intuit_tid),
+        )
+        flash(
+            "Could not post the opening balance JE to QuickBooks. Nothing "
+            f"was created.{' Intuit ref: ' + e.intuit_tid if e.intuit_tid else ''}",
+            "error",
+        )
+        return redirect(url_for("opening_balance_preview", job_id=job_id))
+    except Exception as e:  # noqa: BLE001
+        _audit(
+            "opening_balance_post_failed",
+            target_type="job", target_id=job_id,
+            details=str(e)[:300],
+        )
+        flash("Could not post the opening balance JE. Nothing was created.", "error")
+        return redirect(url_for("opening_balance_preview", job_id=job_id))
+
+    je = (response or {}).get("JournalEntry") or {}
+    je_id = str(je.get("Id") or "")
+    history_entry = {
+        "created_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "as_of_date": plan.as_of_date,
+        "total_debit": plan.total_debit,
+        "total_credit": plan.total_credit,
+        "line_count": len(plan.postable_lines),
+        "qbo_je_id": je_id,
+        "realm_id": qbo_conn.get("realm_id"),
+        "company_name": qbo_conn.get("company_name"),
+    }
+    job.setdefault("opening_balance_history", []).append(history_entry)
+    job["status"] = f"Opening balance JE posted (#{je_id})"
+    _save_job(job_id)
+    _audit(
+        "opening_balance_posted",
+        target_type="job", target_id=job_id,
+        details=f"je_id={je_id} as_of={plan.as_of_date} total={plan.total_debit}",
+    )
+    flash(
+        f"Opening balance JournalEntry #{je_id} posted to QuickBooks. "
+        "Use the ending trial balance step to verify QBO matches PCLaw.",
+        "success",
+    )
+    return redirect(url_for("opening_balance_preview", job_id=job_id))
+
+
+@app.route("/jobs/<job_id>/ending-tb-reconciliation")
+@login_required
+def ending_tb_reconciliation_view(job_id):
+    """Compare an uploaded ending TB against opening TB + parsed GL."""
+    job, user = _job_or_403(job_id)
+    if (job.get("report_type") or REPORT_GENERAL_LEDGER) != REPORT_TRIAL_BALANCE:
+        flash(
+            "Ending TB reconciliation is only available for Trial Balance "
+            "report jobs.",
+            "info",
+        )
+        return redirect(url_for("job_detail", job_id=job_id))
+    ending_rows = _job_trial_balance_rows(job)
+    if not ending_rows:
+        flash("Could not read the Trial Balance upload. Re-upload and try again.", "error")
+        return redirect(url_for("job_detail", job_id=job_id))
+    opening_rows = _latest_other_job_report(user["firm_id"], REPORT_TRIAL_BALANCE, job_id)
+    gl_rows = _latest_other_job_report(user["firm_id"], REPORT_GENERAL_LEDGER, job_id)
+    report = build_ending_tb_reconciliation(ending_rows, opening_rows, gl_rows)
+    job["ending_tb_reconciliation"] = {
+        "built_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "summary": report["summary"],
+    }
+    _save_job(job_id)
+    _audit(
+        "ending_tb_reconciliation_view",
+        target_type="job", target_id=job_id,
+        details=(
+            f"matched={report['summary']['matched_count']} "
+            f"diff={report['summary']['diff_count']} "
+            f"unexpected={report['summary']['unexpected_count']} "
+            f"missing={report['summary']['missing_count']}"
+        ),
+    )
+    return render_template(
+        "ending-tb-reconciliation.html",
+        job=job,
+        report=report,
+        opening_available=bool(opening_rows),
+        gl_available=bool(gl_rows),
+    )
+
+
+@app.route("/jobs/<job_id>/ending-tb-reconciliation.csv")
+@login_required
+def ending_tb_reconciliation_csv(job_id):
+    from tb_reconciliation import render_ending_tb_reconciliation_csv
+    job, user = _job_or_403(job_id)
+    if (job.get("report_type") or REPORT_GENERAL_LEDGER) != REPORT_TRIAL_BALANCE:
+        return ("Not a Trial Balance job", 400)
+    ending_rows = _job_trial_balance_rows(job)
+    opening_rows = _latest_other_job_report(user["firm_id"], REPORT_TRIAL_BALANCE, job_id)
+    gl_rows = _latest_other_job_report(user["firm_id"], REPORT_GENERAL_LEDGER, job_id)
+    report = build_ending_tb_reconciliation(ending_rows, opening_rows, gl_rows)
+    csv_text = render_ending_tb_reconciliation_csv(report)
+    _audit("ending_tb_reconciliation_download", target_type="job", target_id=job_id)
+    return Response(
+        csv_text,
+        mimetype="text/csv",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="ending_tb_reconciliation_{job_id}.csv"'
+            ),
+        },
+    )
+
+
+@app.route("/jobs/<job_id>/trust-reconciliation")
+@login_required
+def trust_reconciliation_view(job_id):
+    job, user = _job_or_403(job_id)
+    if (job.get("report_type") or REPORT_GENERAL_LEDGER) != REPORT_TRUST_LISTING:
+        flash(
+            "Trust reconciliation is only available for Trust Listing "
+            "report jobs.",
+            "info",
+        )
+        return redirect(url_for("job_detail", job_id=job_id))
+    trust_rows = _job_trust_listing_rows(job)
+    if not trust_rows:
+        flash("Could not read the Trust Listing upload. Re-upload and try again.", "error")
+        return redirect(url_for("job_detail", job_id=job_id))
+    tb_rows = _latest_other_job_report(user["firm_id"], REPORT_TRIAL_BALANCE, job_id)
+    report = build_trust_listing_reconciliation(trust_rows, tb_rows)
+    job["trust_reconciliation"] = {
+        "built_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "summary": report["summary"],
+    }
+    _save_job(job_id)
+    _audit(
+        "trust_reconciliation_view",
+        target_type="job", target_id=job_id,
+        details=(
+            f"clients={report['summary']['client_count']} "
+            f"matters={report['summary']['matter_count']} "
+            f"negatives={report['summary']['negative_row_count']} "
+            f"liability_match={report['summary']['liability_match']}"
+        ),
+    )
+    return render_template(
+        "trust-reconciliation.html",
+        job=job,
+        report=report,
+        tb_available=bool(tb_rows),
+    )
+
+
+@app.route("/jobs/<job_id>/trust-reconciliation.csv")
+@login_required
+def trust_reconciliation_csv(job_id):
+    from trust_reconciliation import render_trust_reconciliation_csv
+    job, user = _job_or_403(job_id)
+    if (job.get("report_type") or REPORT_GENERAL_LEDGER) != REPORT_TRUST_LISTING:
+        return ("Not a Trust Listing job", 400)
+    trust_rows = _job_trust_listing_rows(job)
+    tb_rows = _latest_other_job_report(user["firm_id"], REPORT_TRIAL_BALANCE, job_id)
+    report = build_trust_listing_reconciliation(trust_rows, tb_rows)
+    csv_text = render_trust_reconciliation_csv(report)
+    _audit("trust_reconciliation_download", target_type="job", target_id=job_id)
+    return Response(
+        csv_text,
+        mimetype="text/csv",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="trust_reconciliation_{job_id}.csv"'
+            ),
+        },
+    )
 
 
 @app.route("/jobs/<job_id>/connect-qbo")

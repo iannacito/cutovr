@@ -72,10 +72,9 @@ def t1_empty_firm_checklist():
     nxt = cw.next_recommended_step(items)
     assert nxt is not None
     assert nxt.key == cw.STEP_CUTOVER_SETUP, nxt.key
-    # Planned-next flags should be set for the steps where posting
-    # isn't built yet.
-    assert by_key[cw.STEP_OPENING_TB].planned is True
-    assert by_key[cw.STEP_ENDING_TB].planned is True
+    # Trust posting is the only step still flagged "planned" — opening
+    # TB JE posting and ending TB reconciliation shipped in the
+    # migration-workflow-completion PR.
     assert by_key[cw.STEP_TRUST_LISTING].planned is True
     print("T1 empty firm checklist: OK")
 

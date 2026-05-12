@@ -252,16 +252,28 @@ def build_checklist(
                     "what would be created in QuickBooks.",
         ))
 
-    # 3. Opening Trial Balance uploaded
+    # 3. Opening Trial Balance uploaded + posted
     tb_jobs = [j for j in jobs
                if (j.get("report_type") or "") == "trial_balance"]
-    if tb_jobs:
+    opening_je_posted = [
+        h for j in tb_jobs for h in (j.get("opening_balance_history") or [])
+        if not h.get("demo_mode") and h.get("qbo_je_id")
+    ]
+    if opening_je_posted:
+        items.append(ChecklistItem(
+            STEP_OPENING_TB, "Opening balance JE posted to QuickBooks",
+            STATUS_COMPLETE,
+            summary=(
+                f"Opening balance JournalEntry posted "
+                f"({len(opening_je_posted)} run(s))."
+            ),
+        ))
+    elif tb_jobs:
         items.append(ChecklistItem(
             STEP_OPENING_TB, "Opening Trial Balance uploaded",
-            STATUS_COMPLETE,
+            STATUS_IN_PROGRESS,
             summary=f"{len(tb_jobs)} trial-balance upload(s) on file. "
-                    "Use the earliest as the opening TB.",
-            planned=True,  # posting the opening JE isn't built yet
+                    "Open the opening-balance preview to post the seed JE.",
         ))
     else:
         items.append(ChecklistItem(
@@ -269,7 +281,6 @@ def build_checklist(
             STATUS_NOT_STARTED,
             summary="Upload the PCLaw trial balance as of the day BEFORE "
                     "your cutover date.",
-            planned=True,
         ))
 
     # 4. General Ledger uploaded / imported
@@ -299,43 +310,61 @@ def build_checklist(
                     "period.",
         ))
 
-    # 5. Ending Trial Balance uploaded / checked
-    if len(tb_jobs) >= 2:
+    # 5. Ending Trial Balance reconciliation
+    ending_recon_built = any(
+        j.get("ending_tb_reconciliation") for j in tb_jobs
+    )
+    if ending_recon_built:
+        items.append(ChecklistItem(
+            STEP_ENDING_TB, "Ending Trial Balance reconciled",
+            STATUS_COMPLETE,
+            summary="Ending TB reconciliation report has been built. "
+                    "Download the CSV for your audit trail.",
+        ))
+    elif len(tb_jobs) >= 2:
         items.append(ChecklistItem(
             STEP_ENDING_TB, "Ending Trial Balance uploaded / checked",
-            STATUS_COMPLETE,
-            summary=f"{len(tb_jobs)} trial-balance upload(s) on file — "
-                    "use the latest to spot-check QuickBooks after import.",
-            planned=True,  # reconciliation report planned for next PR
+            STATUS_IN_PROGRESS,
+            summary=f"{len(tb_jobs)} trial-balance upload(s) on file. "
+                    "Open the latest to run the reconciliation report.",
         ))
     elif tb_jobs:
         items.append(ChecklistItem(
             STEP_ENDING_TB, "Ending Trial Balance uploaded / checked",
             STATUS_IN_PROGRESS,
             summary="One trial balance on file. Upload the ending TB once "
-                    "GL import is done so we can compare.",
-            planned=True,
+                    "GL import is done so we can reconcile.",
         ))
     else:
         items.append(ChecklistItem(
             STEP_ENDING_TB, "Ending Trial Balance uploaded / checked",
             STATUS_NOT_STARTED,
             summary="After GL import, upload the ending trial balance to "
-                    "spot-check QuickBooks against PCLaw.",
-            planned=True,
+                    "reconcile QuickBooks against PCLaw.",
         ))
 
-    # 6. Trust Listing uploaded / checked
+    # 6. Trust Listing uploaded / reconciled
     trust_jobs = [j for j in jobs
                   if (j.get("report_type") or "") == "trust_listing"]
-    if trust_jobs:
+    trust_reconciled = any(j.get("trust_reconciliation") for j in trust_jobs)
+    if trust_reconciled:
+        items.append(ChecklistItem(
+            STEP_TRUST_LISTING, "Trust Listing reconciled",
+            STATUS_COMPLETE,
+            summary=(
+                f"{len(trust_jobs)} trust-listing upload(s) reconciled. "
+                "Trust posting remains manual (per-matter, operator-confirmed)."
+            ),
+            planned=True,  # auto-posting still intentionally NOT built
+        ))
+    elif trust_jobs:
         items.append(ChecklistItem(
             STEP_TRUST_LISTING, "Trust Listing uploaded / checked",
-            STATUS_COMPLETE,
+            STATUS_IN_PROGRESS,
             summary=f"{len(trust_jobs)} trust-listing upload(s) on file. "
-                    "Validate against the trust bank statement before "
-                    "any QBO/Clio posting.",
-            planned=True,  # auto-posting NOT built
+                    "Open the trust reconciliation report to validate "
+                    "against the trust liability / trust bank balances.",
+            planned=True,
         ))
     else:
         items.append(ChecklistItem(

@@ -96,27 +96,42 @@
         </p>
       {% endif %}
     {% elif report_type == 'trial_balance' %}
-      <h2>Trial Balance &mdash; validation only</h2>
+      <h2>Trial Balance &mdash; opening balance + reconciliation</h2>
       <p>
-        This job is a Trial Balance export. We parse the report, total
-        the debit / credit columns, and flag any imbalance. <strong>No
-        journal entries or accounts are posted to QuickBooks for Trial
-        Balance uploads</strong> &mdash; this report is parsed for
-        reconciliation against a posted General Ledger import.
+        This job is a Trial Balance export. From here you can preview an
+        opening-balance JournalEntry built from the TB (it requires
+        QuickBooks to be connected, every account to resolve, and the TB
+        to balance &mdash; nothing posts without an explicit typed
+        confirmation), and you can run an ending-TB reconciliation
+        against the most recent opening TB + GL on file.
       </p>
       <p style="margin-top:var(--space-3);">
+        <a class="btn btn-primary" href="{{ url_for('opening_balance_preview', job_id=job.id) }}">Preview opening balance JE</a>
+        <a class="btn" href="{{ url_for('ending_tb_reconciliation_view', job_id=job.id) }}">Ending TB reconciliation</a>
         <a class="btn" href="{{ url_for('validation_report_csv', job_id=job.id) }}">Download validation report (CSV)</a>
       </p>
+      {% if job.opening_balance_history %}
+        {% set last_ob = job.opening_balance_history[-1] %}
+        <p class="note success" style="margin-top:var(--space-3);">
+          <strong>Opening balance posted:</strong>
+          {{ last_ob.line_count }} line(s) on {{ last_ob.created_at }}
+          {% if last_ob.qbo_je_id %}&middot; QBO JE #{{ last_ob.qbo_je_id }}{% endif %}
+          {% if last_ob.demo_mode %}&middot; demo mode{% endif %}.
+        </p>
+      {% endif %}
     {% elif report_type == 'trust_listing' %}
-      <h2>Trust Listing &mdash; validation only</h2>
+      <h2>Trust Listing &mdash; validation + reconciliation</h2>
       <p>
         This job is a Trust Listing export. We parse the client / matter
-        rows and total the trust balance per bank account. <strong>No
-        trust transactions are posted to QuickBooks for Trust Listing
-        uploads</strong> &mdash; this report is parsed for reconciliation
-        against the trust liability / trust bank balances in QBO.
+        rows, total the trust balance per bank account, and reconcile
+        against the trust-liability and trust-bank balances on the most
+        recent Trial Balance.
+        <strong>No trust transactions are ever auto-posted to QuickBooks
+        from this app.</strong> Trust posting is a deliberate, per-matter
+        decision that the operator must confirm by hand.
       </p>
       <p style="margin-top:var(--space-3);">
+        <a class="btn btn-primary" href="{{ url_for('trust_reconciliation_view', job_id=job.id) }}">Trust reconciliation report</a>
         <a class="btn" href="{{ url_for('validation_report_csv', job_id=job.id) }}">Download validation report (CSV)</a>
       </p>
     {% endif %}

@@ -266,6 +266,12 @@ class AppDB:
         # rest of the schema stays flat.
         add_col("jobs", "preflight_json TEXT")
 
+        # cutover_settings: AR/AP migration strategy (Task 4 in the
+        # migration-workflow completion PR). Default empty so existing
+        # firms without a strategy continue to behave as "undecided",
+        # which the guidance helper handles cleanly.
+        add_col("cutover_settings", "ar_ap_strategy TEXT")
+
         # qbo_connections additions for encrypted token persistence
         add_col("qbo_connections", "legal_name TEXT")
         add_col("qbo_connections", "country TEXT")
@@ -743,6 +749,7 @@ class AppDB:
         clio_involved: bool = False,
         qbo_company_name: Optional[str] = None,
         qbo_realm_id: Optional[str] = None,
+        ar_ap_strategy: Optional[str] = None,
     ) -> None:
         """Insert or update the firm's cutover settings.
 
@@ -756,8 +763,9 @@ class AppDB:
                 "(firm_id, cutover_date, opening_balance_date, period_start, "
                 " period_end, country, accounting_basis, migration_scope, "
                 " notes, source_system, target_system, clio_involved, "
-                " qbo_company_name, qbo_realm_id, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                " qbo_company_name, qbo_realm_id, ar_ap_strategy, "
+                " created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(firm_id) DO UPDATE SET "
                 "    cutover_date=excluded.cutover_date, "
                 "    opening_balance_date=excluded.opening_balance_date, "
@@ -772,12 +780,14 @@ class AppDB:
                 "    clio_involved=excluded.clio_involved, "
                 "    qbo_company_name=excluded.qbo_company_name, "
                 "    qbo_realm_id=excluded.qbo_realm_id, "
+                "    ar_ap_strategy=excluded.ar_ap_strategy, "
                 "    updated_at=excluded.updated_at",
                 (
                     firm_id, cutover_date, opening_balance_date, period_start,
                     period_end, country, accounting_basis, migration_scope,
                     notes, source_system or "PCLaw", target_system or "QBO",
                     1 if clio_involved else 0, qbo_company_name, qbo_realm_id,
+                    ar_ap_strategy,
                     _now(), _now(),
                 ),
             )
