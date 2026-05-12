@@ -140,6 +140,59 @@ class QBOClient:
             )
         return response.json()
 
+    def find_account_by_acctnum(self, acct_num):
+        """Return the QBO Account dict matching AcctNum exactly, or None.
+
+        Used by the COA-creation flow to defend against races: between
+        the dry-run preview and the create POST another user may have
+        added the same account number. We re-check inside the create
+        loop so we don't end up with parallel duplicates.
+        """
+        if not acct_num:
+            return None
+        safe = self._escape_qbo_string(str(acct_num))
+        result = self.query(
+            f"SELECT Id, Name, AcctNum, AccountType, AccountSubType "
+            f"FROM Account WHERE AcctNum = '{safe}'"
+        )
+        items = result.get("QueryResponse", {}).get("Account", [])
+        return items[0] if items else None
+
+    def find_account_by_name(self, name):
+        """Return the QBO Account dict matching Name exactly, or None."""
+        if not name:
+            return None
+        safe = self._escape_qbo_string(name)
+        result = self.query(
+            f"SELECT Id, Name, AcctNum, AccountType, AccountSubType "
+            f"FROM Account WHERE Name = '{safe}'"
+        )
+        items = result.get("QueryResponse", {}).get("Account", [])
+        return items[0] if items else None
+
+    def create_account(self, payload):
+        """Create a QBO Account. Returns the parsed JSON response.
+
+        ``payload`` should contain at minimum ``Name`` and ``AccountType``.
+        Optional fields: ``AccountSubType``, ``AcctNum``, ``Active``,
+        ``Description``. Intuit's API enforces AccountType / AccountSubType
+        compatibility — callers must pass safe combinations (see
+        coa_apply.map_pclaw_account_to_qbo_type).
+        """
+        url = f"{self.base_url}/v3/company/{self.realm_id}/account?minorversion=65"
+        response = requests.post(
+            url, headers=self._headers(), json=payload, timeout=30
+        )
+        tid = self._record_tid(response)
+        if response.status_code >= 400:
+            raise QBOError(
+                f"QBO returned {response.status_code} creating Account: {response.text}",
+                status_code=response.status_code,
+                body=response.text,
+                intuit_tid=tid,
+            )
+        return response.json()
+
     # --- Customer / Vendor helpers -----------------------------------------
 
     @staticmethod

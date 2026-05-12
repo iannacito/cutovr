@@ -49,12 +49,29 @@
       </div>
     </dl>
     <p class="note" style="margin-top:var(--space-4);">
-      <strong>No QBO writes are performed from this page.</strong> Chart of
-      Accounts creation in QuickBooks is handled outside the automated
-      import flow in this build. After reviewing this preview, contact
-      support to coordinate manual COA setup or hand-off the
-      &ldquo;would be created&rdquo; list to your accountant.
+      <strong>No QBO writes are performed from this page.</strong> The
+      counts above come from a read-only QuickBooks query. Use the button
+      below to move on to the typed-confirmation page where you can apply
+      the &ldquo;would be created&rdquo; rows to QuickBooks.
     </p>
+    {% if preview.would_create_count and qbo_connection and qbo_connection.realm_id %}
+      <div style="margin-top:var(--space-4);">
+        <a class="btn primary" href="{{ url_for('coa_confirm', job_id=job.id) }}">
+          Review &amp; create accounts in QuickBooks &rarr;
+        </a>
+      </div>
+    {% elif not (qbo_connection and qbo_connection.realm_id) %}
+      <p class="note muted" style="margin-top:var(--space-4);">
+        Connect QuickBooks to enable Chart of Accounts creation. Until then
+        the preview above shows the parsed file only.
+      </p>
+    {% elif preview.would_create_count == 0 %}
+      <p class="note success" style="margin-top:var(--space-4);">
+        Every account in the file already exists in QuickBooks. You can
+        continue to the opening trial balance step in the migration
+        checklist.
+      </p>
+    {% endif %}
   </section>
 
   {% if preview.matched %}

@@ -11,7 +11,7 @@ explicitly *not* yet implemented.
 | Report type | upload `report_type` value | QBO behavior | Notes |
 | --- | --- | --- | --- |
 | General Ledger | `general_ledger` | **Importable** | Each PCLaw transaction posts as one QBO JournalEntry after explicit confirmation. Existing behavior; unchanged. |
-| Chart of Accounts | `chart_of_accounts` | **Preview only** | Parsed and compared against the connected QBO company's Account list. Shows matched accounts, would-be-creates, and soft conflicts. No QBO writes from the automated flow. |
+| Chart of Accounts | `chart_of_accounts` | **Preview + create** | Parsed and compared against the connected QBO company's Account list. Shows matched accounts, would-be-creates, and soft conflicts. From the preview, operators can confirm-and-create the missing accounts in QBO behind a typed `CREATE ACCOUNTS` confirmation. |
 | Trial Balance | `trial_balance` | **Validation only** | Parsed, totaled, and flagged if debits do not equal credits. Used to reconcile a posted GL import. Never auto-posted to QBO. |
 | Trust Listing | `trust_listing` | **Validation only** | Parsed by client / matter with trust totals per bank account. Used to reconcile against the QBO trust liability and trust bank account balances. Never auto-posted to QBO. |
 
@@ -117,21 +117,59 @@ neutralize spreadsheet formula injection from PCLaw-supplied text.
 The samples are the bundled `test_data/` demo files and contain only
 obviously-fake data.
 
-## Not (yet) implemented
+## Chart of Accounts creation (new)
 
-Chart of Accounts QBO Account creation through the automated flow is
-deliberately *not* in this pass. The dry-run preview is the safe first
-step: it surfaces the would-be-creates without risk of an accidental
-write into the wrong company. Real account creation requires:
+The COA preview page now leads into a typed-confirmation page
+(`/jobs/<id>/coa-confirm`) and an apply route
+(`/jobs/<id>/coa-apply`). The flow is:
 
-- a confirmation route mirroring the GL `confirm_import=IMPORT` pattern,
-- handling of QBO Account validation rules (AccountType / AccountSubType
-  compatibility, parent-account ordering),
-- per-firm undo semantics that match the GL reversal workflow.
+1. Upload a COA report → preview page shows matched / would-create /
+   soft-conflict counts (unchanged from the previous build).
+2. From the preview, click **Review & create accounts in QuickBooks**.
+3. The confirmation page lists every row that will be created with its
+   resolved QBO `AccountType` / `AccountSubType`, any per-row warnings,
+   and any *blocked* rows (rows where the PCLaw account type cannot be
+   safely mapped — the confirmation is disabled until those are
+   resolved).
+4. Typing `CREATE ACCOUNTS` and submitting triggers `POST /coa-apply`,
+   which:
+   - re-fetches the QBO account list (so a parallel create can't smuggle
+     in a duplicate),
+   - rebuilds the create plan from the original parsed file,
+   - calls `QBOClient.create_account` once per row,
+   - records the result on the job as `coa_create_history` (created Id,
+     name, AcctNum, type plus per-row failures and `intuit_tid` values).
 
-When this is built, the COA preview page will gain an "Apply to QBO"
-button gated behind the same explicit-confirmation pattern the GL
-import uses today.
+**Type mapping.** `coa_apply.map_pclaw_account_to_qbo_type` resolves
+the PCLaw row to a QBO type using a deliberately conservative table:
+
+- Banks, AR / AP, equity, common income / expense, trust bank, trust
+  liability are mapped safely. AR / AP / Undeposited Funds carry a
+  warning (QBO auto-provisions these on every company; creating a
+  parallel one risks mapping bugs later).
+- Trust bank and trust liability carry a separate warning about the
+  legal sensitivity of trust accounts.
+- Retained Earnings carries a warning because QBO manages it
+  automatically.
+- Anything that doesn't match a safe entry — including bare buckets
+  like `Asset` or `Liability` — is **blocked**, not guessed. The
+  operator must edit the CSV with a more specific type and re-upload,
+  or create the account manually in QuickBooks.
+
+**What is still not in this pass.**
+
+- Opening balance posting from the Chart of Accounts. We do not pass
+  any `OpeningBalance` field on `Account` create. Opening balances
+  come from the opening trial balance step (see CUTOVER_WORKFLOW.md),
+  which is parsed today but posting is still planned.
+- Parent / sub-account hierarchies. Every account is created at the
+  top level. The dry-run preview already exposes hierarchy when the
+  CSV ships it; auto-building the parent chain is future work.
+- Reversal / undo of created accounts. QBO `Account.Active=false`
+  hides them but historical posting prevents true deletion. Operators
+  who create the wrong COA today can deactivate each account
+  individually in QBO.
+- AR / AP aging migration. These remain GL-driven (or future work).
 
 A/R aging and A/P aging dedicated parsers are also future work — for
 now those amounts arrive in QBO via the GL import when individual

@@ -50,10 +50,15 @@ explicit steps.
 
 1. **Cutover setup.** Firm admin defines the items above on
    `/cutover`. Persisted per firm.
-2. **Chart of accounts upload.** Upload the PCLaw COA as a Chart of
-   Accounts report. The app already supports a dry-run preview that
+2. **Chart of accounts upload + create.** Upload the PCLaw COA as a
+   Chart of Accounts report. The app supports a dry-run preview that
    matches PCLaw accounts to existing QBO accounts and flags soft
-   conflicts.
+   conflicts. From the preview, the operator can open a typed-confirmation
+   page (`/jobs/<id>/coa-confirm`) and create the missing accounts in
+   QuickBooks. The confirmation phrase is `CREATE ACCOUNTS`. Rows that
+   cannot be safely mapped to a QBO `AccountType` / `AccountSubType` are
+   *blocked* and must be fixed in the CSV (or created manually in QBO)
+   before the confirmation will accept.
 3. **Opening trial balance upload.** Upload the PCLaw TB as of the
    opening balance date. *Today* this is parsed and validated.
    *Planned* — auto-build the opening journal entry from this TB and
@@ -111,8 +116,11 @@ is not yet built are flagged **Posting planned** in the UI.
 The following items require deliberate accounting decisions and QBO
 writes. They are intentionally scoped out of this foundation PR.
 
-* **COA creation in QuickBooks** — promote the COA dry-run preview to
-  actual `Account` creates against the connected QBO realm.
+* **COA creation in QuickBooks** — *done.* See
+  MULTI_REPORT_SUPPORT.md → "Chart of Accounts creation" for the
+  confirmation/apply flow and the type-mapping rules. Limitations:
+  no opening balances on create, no parent/sub-account hierarchy, no
+  automated reversal of created accounts.
 * **Opening trial balance → opening journal entry** — generate a single
   JE that establishes opening balances in QuickBooks as of the opening
   balance date, with explicit confirmation and reversal support.

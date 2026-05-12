@@ -68,18 +68,33 @@
   <section class="card" aria-label="Report type behavior">
     <p class="eyebrow">{{ report_label }}</p>
     {% if report_type == 'chart_of_accounts' %}
-      <h2>Chart of Accounts &mdash; preview only</h2>
+      <h2>Chart of Accounts &mdash; preview, then create</h2>
       <p>
         This job is a Chart of Accounts export. We parse the accounts in
         your file and (once QuickBooks is connected) show a side-by-side
-        preview of which accounts already exist in QBO and which would
-        be created. <strong>No accounts are written to QuickBooks until
-        you explicitly confirm</strong> on the preview page.
+        preview of which accounts already exist in QBO and which would be
+        created. From the preview you can open a typed-confirmation page
+        and create the missing accounts in QuickBooks. <strong>No accounts
+        are written to QuickBooks until you type
+        <code>CREATE ACCOUNTS</code> on the confirmation page.</strong>
       </p>
       <p style="margin-top:var(--space-3);">
         <a class="btn btn-primary" href="{{ url_for('coa_preview', job_id=job.id) }}">Open Chart of Accounts preview</a>
+        {% if job.qbo_connected %}
+          <a class="btn" href="{{ url_for('coa_confirm', job_id=job.id) }}">Review &amp; create in QuickBooks</a>
+        {% endif %}
         <a class="btn" href="{{ url_for('validation_report_csv', job_id=job.id) }}">Download validation report (CSV)</a>
       </p>
+      {% if job.coa_create_history %}
+        {% set last_create = job.coa_create_history[-1] %}
+        <p class="note success" style="margin-top:var(--space-3);">
+          <strong>QuickBooks COA creation:</strong>
+          {{ last_create.created_count }} created{% if last_create.failed_count %},
+          {{ last_create.failed_count }} failed{% endif %}
+          on {{ last_create.created_at[:19].replace('T', ' ') }} UTC
+          (company {{ last_create.company_name or last_create.realm_id }}).
+        </p>
+      {% endif %}
     {% elif report_type == 'trial_balance' %}
       <h2>Trial Balance &mdash; validation only</h2>
       <p>

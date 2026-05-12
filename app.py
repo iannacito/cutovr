@@ -57,6 +57,7 @@ from report_types import (
     build_trust_listing_preflight,
     build_coa_dry_run_preview,
 )
+from coa_apply import build_create_plan, apply_create_plan
 import qbo_error_hint
 import email_sender
 import cutover_workflow
@@ -1899,6 +1900,305 @@ def coa_preview(job_id):
         job=job,
         preview=preview,
         qbo_error=qbo_error,
+        qbo_connection=qbo_conn or {},
+        report_label=REPORT_LABELS[REPORT_CHART_OF_ACCOUNTS],
+    )
+
+
+COA_CREATE_CONFIRMATION_PHRASE = "CREATE ACCOUNTS"
+
+
+def _load_coa_state(job_id):
+    """Return (job, user, coa_rows, qbo, qbo_conn) or short-circuit redirect.
+
+    The COA confirm + apply routes share the same setup: verify the job
+    is a COA job, re-parse the upload if the in-memory cache lost it,
+    and require a QBO connection. Returns a tuple of (state_dict,
+    redirect_response). Exactly one of those is non-None.
+    """
+    job, user = _job_or_403(job_id)
+    if (job.get("report_type") or REPORT_GENERAL_LEDGER) != REPORT_CHART_OF_ACCOUNTS:
+        flash(
+            "Chart of Accounts creation is only available for jobs "
+            "uploaded as a Chart of Accounts report.",
+            "info",
+        )
+        return None, redirect(url_for("job_detail", job_id=job_id))
+
+    coa_rows = job.get("parsed_coa")
+    if not coa_rows:
+        coa_rows = _reparse_report_rows(job, REPORT_CHART_OF_ACCOUNTS)
+    if not coa_rows:
+        flash(
+            "Could not re-read the Chart of Accounts upload. Re-upload "
+            "the file and try again.",
+            "error",
+        )
+        return None, redirect(url_for("coa_preview", job_id=job_id))
+
+    qbo, qbo_conn = _get_qbo_client(job_id, user)
+    if not qbo:
+        flash(
+            "Connect QuickBooks first. Chart of Accounts creation needs "
+            "a live connection so existing accounts can be detected before "
+            "any writes happen.",
+            "error",
+        )
+        return None, redirect(url_for("coa_preview", job_id=job_id))
+
+    return {
+        "job": job,
+        "user": user,
+        "coa_rows": coa_rows,
+        "qbo": qbo,
+        "qbo_conn": qbo_conn,
+    }, None
+
+
+def _build_coa_plan(coa_rows, qbo):
+    """Run the read-only QBO query, build the preview, then the create plan."""
+    qbo_accounts = qbo.get_accounts()
+    preview = build_coa_dry_run_preview(coa_rows, qbo_accounts)
+    plan = build_create_plan(coa_rows, preview)
+    return preview, plan
+
+
+@app.route("/jobs/<job_id>/coa-confirm", methods=["GET", "POST"])
+@login_required
+def coa_confirm(job_id):
+    """Render the typed-confirmation page for creating QBO Accounts.
+
+    Read-only on GET. On POST without the confirmation phrase it
+    re-renders with an error; on POST with the phrase it forwards to
+    the apply route which performs the writes.
+    """
+    state, bail = _load_coa_state(job_id)
+    if bail is not None:
+        return bail
+    job = state["job"]
+    qbo = state["qbo"]
+    qbo_conn = state["qbo_conn"]
+    coa_rows = state["coa_rows"]
+
+    try:
+        preview, plan = _build_coa_plan(coa_rows, qbo)
+    except QBOError as e:
+        _audit(
+            "coa_create_qbo_query_failed",
+            target_type="job", target_id=job_id,
+            details=_audit_details_with_tid(str(e)[:200], e.intuit_tid),
+        )
+        flash(
+            "Could not fetch the QuickBooks Chart of Accounts to build the "
+            "create plan. Try again in a moment."
+            + (f" (Intuit support reference: {e.intuit_tid})" if e.intuit_tid else ""),
+            "error",
+        )
+        return redirect(url_for("coa_preview", job_id=job_id))
+    except Exception as e:  # noqa: BLE001
+        _audit(
+            "coa_create_qbo_query_failed",
+            target_type="job", target_id=job_id, details=str(e)[:200],
+        )
+        flash(
+            "Could not fetch the QuickBooks Chart of Accounts. "
+            "Re-open the preview and try again.",
+            "error",
+        )
+        return redirect(url_for("coa_preview", job_id=job_id))
+
+    confirmation_error = None
+    if request.method == "POST":
+        # CSRF is enforced by the global before_request hook. We only need to
+        # validate the typed confirmation phrase here.
+        phrase = (request.form.get("confirm_create") or "").strip().upper()
+        if phrase != COA_CREATE_CONFIRMATION_PHRASE:
+            confirmation_error = (
+                f"Type {COA_CREATE_CONFIRMATION_PHRASE} exactly to confirm. "
+                "This is a safety check — no QuickBooks accounts have been "
+                "created."
+            )
+            _audit(
+                "coa_create_confirmation_failed",
+                target_type="job", target_id=job_id,
+                details=f"phrase={phrase!r}",
+            )
+        elif plan.has_blockers:
+            confirmation_error = (
+                "Cannot proceed: some rows are blocked from auto-creation. "
+                "Resolve the blocked rows below before confirming."
+            )
+            _audit(
+                "coa_create_confirmation_blocked",
+                target_type="job", target_id=job_id,
+                details=f"blocked_count={len(plan.blocked)}",
+            )
+        else:
+            # Forward to apply with method=POST. We re-build the plan
+            # there from scratch (don't trust a hidden form field) so a
+            # tampered form can't smuggle in extra rows.
+            return redirect(url_for("coa_apply_route", job_id=job_id), code=307)
+
+    _audit(
+        "coa_create_confirmation_shown",
+        target_type="job", target_id=job_id,
+        details=(
+            f"to_create={len(plan.to_create)} blocked={len(plan.blocked)} "
+            f"matched={len(plan.matched)}"
+        ),
+    )
+    return render_template(
+        "coa-confirm.html",
+        job=job,
+        preview=preview,
+        plan=plan.to_dict(),
+        qbo_connection=qbo_conn or {},
+        report_label=REPORT_LABELS[REPORT_CHART_OF_ACCOUNTS],
+        confirmation_phrase=COA_CREATE_CONFIRMATION_PHRASE,
+        confirmation_error=confirmation_error,
+        qbo_env_status=(
+            "production" if (QBO_ENVIRONMENT or "").lower() == "production"
+            else "sandbox"
+        ),
+    )
+
+
+@app.route("/jobs/<job_id>/coa-apply", methods=["POST"])
+@login_required
+def coa_apply_route(job_id):
+    """Execute the COA create plan. POST-only; requires typed confirmation."""
+    state, bail = _load_coa_state(job_id)
+    if bail is not None:
+        return bail
+    job = state["job"]
+    qbo = state["qbo"]
+    qbo_conn = state["qbo_conn"]
+    coa_rows = state["coa_rows"]
+
+    phrase = (request.form.get("confirm_create") or "").strip().upper()
+    if phrase != COA_CREATE_CONFIRMATION_PHRASE:
+        _audit(
+            "coa_create_blocked_no_confirmation",
+            target_type="job", target_id=job_id,
+            details="apply route reached without confirmation phrase",
+        )
+        flash(
+            "Chart of Accounts creation requires explicit typed "
+            f"confirmation ({COA_CREATE_CONFIRMATION_PHRASE}). Nothing was "
+            "created in QuickBooks.",
+            "error",
+        )
+        return redirect(url_for("coa_confirm", job_id=job_id))
+
+    try:
+        preview, plan = _build_coa_plan(coa_rows, qbo)
+    except Exception as e:  # noqa: BLE001
+        tid = getattr(e, "intuit_tid", None)
+        _audit(
+            "coa_create_qbo_query_failed",
+            target_type="job", target_id=job_id,
+            details=_audit_details_with_tid(str(e)[:200], tid),
+        )
+        flash(
+            "Could not refresh the QuickBooks account list before creating. "
+            "Nothing was created. Try again in a moment."
+            + (f" (Intuit support reference: {tid})" if tid else ""),
+            "error",
+        )
+        return redirect(url_for("coa_confirm", job_id=job_id))
+
+    if plan.has_blockers:
+        _audit(
+            "coa_create_blocked",
+            target_type="job", target_id=job_id,
+            details=f"blocked_count={len(plan.blocked)}",
+        )
+        flash(
+            "Cannot create accounts: some rows are blocked from "
+            "auto-creation. Resolve them and re-confirm.",
+            "error",
+        )
+        return redirect(url_for("coa_confirm", job_id=job_id))
+
+    if not plan.to_create:
+        _audit(
+            "coa_create_noop",
+            target_type="job", target_id=job_id,
+            details="every account already exists in QBO",
+        )
+        flash(
+            "Every account in the Chart of Accounts already exists in "
+            "QuickBooks. Nothing to create.",
+            "info",
+        )
+        return redirect(url_for("coa_preview", job_id=job_id))
+
+    _audit(
+        "coa_create_started",
+        target_type="job", target_id=job_id,
+        details=(
+            f"to_create={len(plan.to_create)} "
+            f"realm={qbo_conn.get('realm_id')} "
+            f"company={qbo_conn.get('company_name') or ''}"
+        ),
+    )
+    result = apply_create_plan(qbo, plan)
+
+    created = result["created"]
+    failed = result["failed"]
+    intuit_tids = result["intuit_tids"]
+
+    # Persist the outcome on the job so the checklist + audit trail can
+    # show "previewed / created / completed" without re-running the QBO
+    # query on every page render.
+    coa_history = job.get("coa_create_history") or []
+    coa_history.append({
+        "created_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "realm_id": qbo_conn.get("realm_id"),
+        "company_name": qbo_conn.get("company_name"),
+        "created_count": len(created),
+        "failed_count": len(failed),
+        "created": created,
+        "failed": failed,
+        "intuit_tids": intuit_tids,
+    })
+    job["coa_create_history"] = coa_history
+    if failed:
+        job["status"] = (
+            f"COA: {len(created)} created, {len(failed)} failed"
+        )
+    else:
+        job["status"] = f"COA: {len(created)} accounts created in QuickBooks"
+    _save_job(job_id)
+
+    _audit(
+        "coa_create_completed",
+        target_type="job", target_id=job_id,
+        details=_audit_details_with_tid(
+            f"created={len(created)} failed={len(failed)}",
+            intuit_tids[0] if intuit_tids else None,
+        ),
+    )
+    if failed:
+        flash(
+            f"Created {len(created)} QuickBooks account(s); "
+            f"{len(failed)} failed. Review the per-row errors below.",
+            "warning" if created else "error",
+        )
+    else:
+        flash(
+            f"Created {len(created)} QuickBooks account(s). "
+            "Continue with the opening trial balance step in the migration "
+            "checklist.",
+            "success",
+        )
+    return render_template(
+        "coa-result.html",
+        job=job,
+        plan=plan.to_dict(),
+        created=created,
+        failed=failed,
+        intuit_tids=intuit_tids,
         qbo_connection=qbo_conn or {},
         report_label=REPORT_LABELS[REPORT_CHART_OF_ACCOUNTS],
     )

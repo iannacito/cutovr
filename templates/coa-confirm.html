@@ -1,0 +1,210 @@
+{% extends "_base.html" %}
+{% block title %}Create Chart of Accounts &mdash; {{ job.company }}{% endblock %}
+{% block content %}
+<section class="detail-page">
+  <a href="{{ url_for('coa_preview', job_id=job.id) }}" class="back-link">&larr; Back to preview</a>
+
+  <section class="card detail-hero">
+    <p class="eyebrow">Job {{ job.id }} &middot; Chart of Accounts &middot; Confirm create</p>
+    <h1>{{ job.company }}</h1>
+    <p class="muted">
+      The next step will create new QuickBooks Online <code>Account</code>
+      records. Existing accounts (matched by AcctNum or Name above) are
+      <strong>not</strong> recreated.
+    </p>
+  </section>
+
+  {% if qbo_env_status == 'production' %}
+  <div class="flash error">
+    <strong>Production mode.</strong> This will create real Chart of
+    Accounts records in QuickBooks Online company
+    &ldquo;{{ qbo_connection.company_name or qbo_connection.realm_id }}&rdquo;.
+    Verify the company name above matches your firm before confirming.
+  </div>
+  {% else %}
+  <div class="flash info">
+    <strong>Sandbox mode.</strong> Accounts will be created in the
+    QuickBooks Online Sandbox company
+    &ldquo;{{ qbo_connection.company_name or qbo_connection.realm_id }}&rdquo;.
+  </div>
+  {% endif %}
+
+  <section class="card">
+    <p class="eyebrow">Summary</p>
+    <dl class="summary-grid">
+      <div><dt>Already in QuickBooks (matched)</dt>
+        <dd><span class="badge success">{{ plan.matched_count }}</span></dd></div>
+      <div><dt>To be created</dt>
+        <dd>
+          {% if plan.to_create_count %}
+            <span class="badge warn">{{ plan.to_create_count }}</span>
+          {% else %}
+            <span class="badge success">0</span>
+          {% endif %}
+        </dd></div>
+      <div><dt>Blocked (need manual resolution)</dt>
+        <dd>
+          {% if plan.blocked_count %}
+            <span class="badge error">{{ plan.blocked_count }}</span>
+          {% else %}
+            <span class="badge success">0</span>
+          {% endif %}
+        </dd></div>
+      <div><dt>Soft conflicts</dt>
+        <dd>
+          {% if plan.soft_conflict_count %}
+            <span class="badge warn">{{ plan.soft_conflict_count }}</span>
+          {% else %}
+            <span class="badge success">0</span>
+          {% endif %}
+        </dd></div>
+    </dl>
+  </section>
+
+  {% if plan.blocked %}
+  <section class="card error-panel">
+    <p class="eyebrow" style="color:var(--error);">Blocked &mdash; cannot auto-create</p>
+    <h2>{{ plan.blocked_count }} account(s) need manual resolution</h2>
+    <p>
+      These accounts cannot be safely mapped to a QuickBooks
+      <code>AccountType</code> / <code>AccountSubType</code>. Edit the
+      Chart of Accounts CSV to use a more specific type (e.g. &ldquo;Bank&rdquo;,
+      &ldquo;Accounts Receivable&rdquo;, &ldquo;Expense&rdquo;), re-upload, or create these
+      accounts directly in QuickBooks. <strong>You cannot confirm until
+      this list is empty.</strong>
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Account #</th>
+            <th>Name</th>
+            <th>PCLaw type / detail</th>
+            <th>Reason</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for a in plan.blocked %}
+          <tr>
+            <td><code>{{ a.account_number }}</code></td>
+            <td>{{ a.account_name }}</td>
+            <td>
+              {{ a.pclaw_account_type or '(blank)' }}
+              {% if a.pclaw_detail_type %} / {{ a.pclaw_detail_type }}{% endif %}
+            </td>
+            <td>{{ a.blocked_reason }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if plan.to_create %}
+  <section class="card">
+    <p class="eyebrow">Will be created</p>
+    <h2>{{ plan.to_create_count }} account(s) to create in QuickBooks</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Account #</th>
+            <th>Name</th>
+            <th>QBO type</th>
+            <th>QBO sub-type</th>
+            <th>Active</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for a in plan.to_create %}
+          <tr>
+            <td><code>{{ a.account_number }}</code></td>
+            <td>{{ a.account_name }}</td>
+            <td>{{ a.qbo_account_type }}</td>
+            <td>{{ a.qbo_detail_type or '' }}</td>
+            <td>{{ 'Yes' if a.active else 'No' }}</td>
+            <td>
+              {% if a.warnings %}
+                <ul class="muted" style="margin:0;padding-left:1.1em;">
+                {% for w in a.warnings %}<li>{{ w }}</li>{% endfor %}
+                </ul>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if plan.soft_conflicts %}
+  <section class="card">
+    <p class="eyebrow">Soft conflicts (not blocking)</p>
+    <p>
+      These accounts already exist in QuickBooks under the same name,
+      but the AcctNum differs from PCLaw. We will not recreate them &mdash;
+      verify whether the QBO number or the PCLaw number is canonical
+      before account mapping.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>PCLaw #</th><th>PCLaw name</th><th>QBO #</th><th>QBO name</th></tr></thead>
+        <tbody>
+        {% for a in plan.soft_conflicts %}
+          <tr>
+            <td><code>{{ a.account_number }}</code></td>
+            <td>{{ a.account_name }}</td>
+            <td><code>{{ a.qbo_acct_num }}</code></td>
+            <td>{{ a.qbo_account_name }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="card">
+    <p class="eyebrow">Confirm create</p>
+    <h2>Type to confirm</h2>
+    {% if confirmation_error %}
+      <div class="flash error">{{ confirmation_error }}</div>
+    {% endif %}
+    {% if plan.blocked_count %}
+      <p class="muted">
+        Confirmation disabled because there are blocked rows above.
+      </p>
+    {% elif plan.to_create_count == 0 %}
+      <p class="muted">
+        Nothing to create &mdash; every account already exists in QuickBooks.
+      </p>
+    {% else %}
+      <p>
+        Creating QuickBooks accounts is a real operation. To proceed,
+        type <code>{{ confirmation_phrase }}</code> in the box below and submit.
+      </p>
+      <form method="post" action="{{ url_for('coa_confirm', job_id=job.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label for="confirm_create">Type {{ confirmation_phrase }} to confirm</label>
+        <input
+          type="text"
+          id="confirm_create"
+          name="confirm_create"
+          placeholder="{{ confirmation_phrase }}"
+          autocomplete="off"
+          autocapitalize="characters"
+          required>
+        <p style="margin-top:var(--space-3);">
+          <button class="btn primary" type="submit">
+            Create {{ plan.to_create_count }} account(s) in QuickBooks
+          </button>
+          <a class="btn" href="{{ url_for('coa_preview', job_id=job.id) }}">Cancel</a>
+        </p>
+      </form>
+    {% endif %}
+  </section>
+</section>
+{% endblock %}

@@ -216,14 +216,33 @@ def build_checklist(
                     "before importing data.",
         ))
 
-    # 2. Chart of Accounts uploaded / previewed
+    # 2. Chart of Accounts uploaded / previewed / created
     coa_jobs = [j for j in jobs
                 if (j.get("report_type") or "") == "chart_of_accounts"]
-    if coa_jobs:
+    coa_created_history = [
+        h for j in coa_jobs for h in (j.get("coa_create_history") or [])
+    ]
+    coa_created_total = sum(
+        int(h.get("created_count") or 0) for h in coa_created_history
+    )
+    if coa_created_total > 0:
+        items.append(ChecklistItem(
+            STEP_COA_UPLOAD, "Chart of Accounts created in QuickBooks",
+            STATUS_COMPLETE,
+            summary=(
+                f"{coa_created_total} QuickBooks account(s) created across "
+                f"{len(coa_jobs)} upload(s)."
+            ),
+        ))
+    elif coa_jobs:
         items.append(ChecklistItem(
             STEP_COA_UPLOAD, "Chart of Accounts uploaded / previewed",
-            STATUS_COMPLETE,
-            summary=f"{len(coa_jobs)} chart-of-accounts upload(s) on file.",
+            STATUS_IN_PROGRESS,
+            summary=(
+                f"{len(coa_jobs)} chart-of-accounts upload(s) on file. "
+                "Open the preview and apply missing accounts to QuickBooks "
+                "when ready."
+            ),
         ))
     else:
         items.append(ChecklistItem(
