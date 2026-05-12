@@ -91,40 +91,66 @@
 
   <section class="grid-two" id="intake" style="margin-bottom:var(--space-8);">
     <article class="card">
-      <p class="eyebrow">Upload a PCLaw report</p>
-      <h2>Start a new report upload</h2>
-      <p class="muted" style="margin-bottom:var(--space-5);">Drop a PCLaw CSV export here &mdash; we encrypt it before doing anything else. You can upload multiple reports for the same firm.</p>
-      <form action="{{ url_for('upload') }}" method="post" enctype="multipart/form-data">
+      <p class="eyebrow">Upload all PCLaw reports at once</p>
+      <h2>Bulk upload &mdash; we'll figure out what each file is</h2>
+      <p class="muted" style="margin-bottom:var(--space-4);">
+        Drop in every PCLaw CSV export for this firm in one go. We'll identify each file and organize your migration checklist.
+      </p>
+      <form action="{{ url_for('upload_bulk') }}" method="post" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <label>
           <span>Law firm / company name (as it appears in QuickBooks)</span>
-          <input type="text" name="company_name" placeholder="Smith & Hart LLP" required>
+          <input type="text" name="company_name" placeholder="Smith &amp; Hart LLP" required>
         </label>
         <label>
           <span>Notification email (optional)</span>
           <input type="email" name="email" placeholder="ops@firm.com">
         </label>
         <label>
-          <span>Report type</span>
-          <select name="report_type">
-            <option value="">Auto-detect from CSV headers</option>
-            <option value="general_ledger">Transaction history (General Ledger) &mdash; posts to QuickBooks</option>
-            <option value="chart_of_accounts">Your list of accounts (Chart of Accounts) &mdash; preview before creating</option>
-            <option value="trial_balance">Starting / ending balances (Trial Balance) &mdash; validation &amp; reconciliation</option>
-            <option value="trust_listing">Client trust balances (Trust Listing) &mdash; validation only</option>
-          </select>
-        </label>
-        <label>
-          <span>PCLaw export CSV</span>
-          <input type="file" name="ledger_file" accept=".csv" required>
+          <span>PCLaw exports (one or more CSV files)</span>
+          <input type="file" name="ledger_files" accept=".csv" multiple required>
         </label>
         <p class="muted" style="font-size:.9rem;margin:.25rem 0 var(--space-3);">
-          Only the transaction-history (General Ledger) upload posts journal entries to QuickBooks. The other reports are parsed for review and reconciliation &mdash; nothing posts automatically.
+          Hold Ctrl/Cmd to select multiple files. We accept Chart of Accounts, Trial Balance (opening &amp; ending), General Ledger, and Trust Listing exports. Nothing posts to QuickBooks until you review each one.
         </p>
         <div class="actions-row" style="margin-top:var(--space-4);">
-          <button class="btn btn-primary" type="submit">Upload &amp; encrypt</button>
+          <button class="btn btn-primary" type="submit">Upload all &amp; auto-identify</button>
         </div>
       </form>
+      <details style="margin-top:var(--space-5);">
+        <summary class="muted" style="cursor:pointer;font-size:.95rem;">Prefer to upload one report at a time?</summary>
+        <form action="{{ url_for('upload') }}" method="post" enctype="multipart/form-data" style="margin-top:var(--space-4);">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <label>
+            <span>Law firm / company name (as it appears in QuickBooks)</span>
+            <input type="text" name="company_name" placeholder="Smith &amp; Hart LLP" required>
+          </label>
+          <label>
+            <span>Notification email (optional)</span>
+            <input type="email" name="email" placeholder="ops@firm.com">
+          </label>
+          <label>
+            <span>Report type</span>
+            <select name="report_type">
+              <option value="">Auto-detect from CSV headers</option>
+              <option value="general_ledger">Transaction history (General Ledger) &mdash; posts to QuickBooks</option>
+              <option value="chart_of_accounts">Your list of accounts (Chart of Accounts) &mdash; preview before creating</option>
+              <option value="trial_balance">Starting / ending balances (Trial Balance) &mdash; validation &amp; reconciliation</option>
+              <option value="trust_listing">Client trust balances (Trust Listing) &mdash; validation only</option>
+            </select>
+          </label>
+          <label>
+            <span>PCLaw export CSV</span>
+            <input type="file" name="ledger_file" accept=".csv" required>
+          </label>
+          <p class="muted" style="font-size:.9rem;margin:.25rem 0 var(--space-3);">
+            Only the transaction-history (General Ledger) upload posts journal entries to QuickBooks. The other reports are parsed for review and reconciliation &mdash; nothing posts automatically.
+          </p>
+          <div class="actions-row" style="margin-top:var(--space-4);">
+            <button class="btn" type="submit">Upload single file &amp; encrypt</button>
+          </div>
+        </form>
+      </details>
     </article>
 
     <article class="card">
