@@ -2,10 +2,12 @@
 {% block title %}{{ firm.name }} &mdash; Migration Console{% endblock %}
 {% block content %}
 <section class="page">
+  {% include "_workflow_stepper.html" %}
+
   <div class="hero">
     <p class="eyebrow">{{ firm.name }} &middot; Migration console</p>
     <h1>Move PCLaw to QuickBooks <em>cleanly</em>.</h1>
-    <p>Upload a PCLaw general ledger, connect QuickBooks Online, map accounts, and post journal entries with a complete audit trail. Files are encrypted at rest. Imports are duplicate-protected. Reversals are one click and clearly labeled in QuickBooks.</p>
+    <p>Upload your PCLaw exports, connect QuickBooks Online, match accounts, and post a clean set of journal entries with a full audit trail. Files are encrypted at rest, duplicates are blocked, and every import can be reversed in one click.</p>
     <p style="margin-top:var(--space-3);">
       <a class="btn btn-primary" href="{{ url_for('onboarding') }}">Read the onboarding guide</a>
       <a class="btn" href="{{ url_for('onboarding_template_csv') }}">Download CSV template</a>
@@ -89,13 +91,13 @@
 
   <section class="grid-two" id="intake" style="margin-bottom:var(--space-8);">
     <article class="card">
-      <p class="eyebrow">Step 01 &middot; Intake</p>
-      <h2>Start a migration job</h2>
-      <p class="muted" style="margin-bottom:var(--space-5);">Drop the firm's PCLaw general ledger CSV here. We encrypt it before any processing.</p>
+      <p class="eyebrow">Upload a PCLaw report</p>
+      <h2>Start a new report upload</h2>
+      <p class="muted" style="margin-bottom:var(--space-5);">Drop a PCLaw CSV export here &mdash; we encrypt it before doing anything else. You can upload multiple reports for the same firm.</p>
       <form action="{{ url_for('upload') }}" method="post" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <label>
-          <span>Law firm / company name (as it appears in QBO)</span>
+          <span>Law firm / company name (as it appears in QuickBooks)</span>
           <input type="text" name="company_name" placeholder="Smith & Hart LLP" required>
         </label>
         <label>
@@ -106,10 +108,10 @@
           <span>Report type</span>
           <select name="report_type">
             <option value="">Auto-detect from CSV headers</option>
-            <option value="general_ledger">General Ledger &mdash; importable to QuickBooks</option>
-            <option value="chart_of_accounts">Chart of Accounts &mdash; preview only</option>
-            <option value="trial_balance">Trial Balance &mdash; validation only</option>
-            <option value="trust_listing">Trust Listing &mdash; validation only</option>
+            <option value="general_ledger">Transaction history (General Ledger) &mdash; posts to QuickBooks</option>
+            <option value="chart_of_accounts">Your list of accounts (Chart of Accounts) &mdash; preview before creating</option>
+            <option value="trial_balance">Starting / ending balances (Trial Balance) &mdash; validation &amp; reconciliation</option>
+            <option value="trust_listing">Client trust balances (Trust Listing) &mdash; validation only</option>
           </select>
         </label>
         <label>
@@ -117,7 +119,7 @@
           <input type="file" name="ledger_file" accept=".csv" required>
         </label>
         <p class="muted" style="font-size:.9rem;margin:.25rem 0 var(--space-3);">
-          Only General Ledger uploads post journal entries to QuickBooks. Chart of Accounts shows a dry-run preview; Trial Balance and Trust Listing are parsed for validation and reconciliation only.
+          Only the transaction-history (General Ledger) upload posts journal entries to QuickBooks. The other reports are parsed for review and reconciliation &mdash; nothing posts automatically.
         </p>
         <div class="actions-row" style="margin-top:var(--space-4);">
           <button class="btn btn-primary" type="submit">Upload &amp; encrypt</button>

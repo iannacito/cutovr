@@ -2,16 +2,13 @@
 {% block title %}Migration checklist &mdash; {{ firm.name }}{% endblock %}
 {% block content %}
 <section class="page">
+  {% include "_workflow_stepper.html" %}
+
   <div class="hero">
     <p class="eyebrow">{{ firm.name }} &middot; Migration checklist</p>
     <h1>Where are we in the migration?</h1>
     <p>
-      This page derives status from the work this firm has already done
-      in the app &mdash; uploads, QuickBooks connections, account
-      mappings, dry-runs, and posted imports. Some steps are flagged as
-      <em>Planned</em>: the supporting file can be uploaded today but
-      automated posting (opening JE, trust posting, AR/AP) is delivered
-      in a follow-up release.
+      The checklist below tracks every individual step under the hood &mdash; uploads, QuickBooks connections, account matching, previews, and posted imports. Use the progress bar above to see where you are at a glance, and the detailed list below if you want the full accounting view.
     </p>
     <p style="margin-top:var(--space-3);">
       <a class="btn" href="{{ url_for('cutover_setup') }}">{% if cutover %}Update cutover setup{% else %}Complete cutover setup{% endif %}</a>

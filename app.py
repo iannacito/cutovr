@@ -79,6 +79,7 @@ from ar_ap_strategy import (
 import qbo_error_hint
 import email_sender
 import cutover_workflow
+import customer_workflow
 from rate_limit import RateLimiter, client_ip
 import csv as _csv
 from io import StringIO
@@ -1133,6 +1134,12 @@ def dashboard():
     user = current_user()
     firm_jobs = db.list_jobs_for_firm(user["firm_id"], limit=20)
     cutover, checklist_items, next_step = _build_firm_checklist(user["firm_id"])
+    stages = customer_workflow.build_customer_stages(
+        checklist_items,
+        url_for=url_for,
+        has_jobs=bool(firm_jobs),
+    )
+    current = customer_workflow.current_stage(stages)
     return render_template(
         "dashboard.html",
         firm_jobs=firm_jobs,
@@ -1141,6 +1148,11 @@ def dashboard():
         cutover=cutover,
         checklist_items=checklist_items,
         next_step=next_step,
+        workflow_stages=[s.to_dict() for s in stages],
+        workflow_current=current.to_dict() if current else None,
+        workflow_progress=customer_workflow.progress_percent(stages),
+        workflow_completed=customer_workflow.completed_count(stages),
+        workflow_terms=customer_workflow.FRIENDLY_TERMS,
     )
 
 
@@ -1223,6 +1235,7 @@ def cutover_setup():
             accounting_basis=(existing or {}).get("accounting_basis"),
             clio_involved=bool((existing or {}).get("clio_involved")),
         ),
+        **_workflow_stepper_context(firm_id),
     )
 
 
@@ -1232,12 +1245,22 @@ def migration_checklist():
     """Render the per-firm migration checklist + next-step nudge."""
     user = current_user()
     cutover, items, next_step = _build_firm_checklist(user["firm_id"])
+    firm_jobs = db.list_jobs_for_firm(user["firm_id"], limit=1)
+    stages = customer_workflow.build_customer_stages(
+        items, url_for=url_for, has_jobs=bool(firm_jobs),
+    )
+    current = customer_workflow.current_stage(stages)
     return render_template(
         "migration-checklist.html",
         cutover=cutover,
         checklist_items=items,
         next_step=next_step,
         guidance=cutover_workflow.GUIDANCE_TEXT,
+        workflow_stages=[s.to_dict() for s in stages],
+        workflow_current=current.to_dict() if current else None,
+        workflow_progress=customer_workflow.progress_percent(stages),
+        workflow_completed=customer_workflow.completed_count(stages),
+        workflow_terms=customer_workflow.FRIENDLY_TERMS,
     )
 
 
@@ -1865,6 +1888,7 @@ def job_detail(job_id):
         report_type=report_type,
         report_label=REPORT_LABELS.get(report_type, REPORT_LABELS[REPORT_GENERAL_LEDGER]),
         qbo_behavior=REPORT_QBO_BEHAVIOR.get(report_type, "importable"),
+        **_workflow_stepper_context(_user["firm_id"]),
     )
 
 
@@ -4294,6 +4318,33 @@ def _inject_operator_flag():
     """Make `is_operator` available to every template so the nav can
     conditionally show the Operator link only for allowed emails."""
     return {"is_operator": _is_operator()}
+
+
+def _workflow_stepper_context(firm_id):
+    """Compute the 6-stage customer-facing workflow stepper for a firm.
+
+    Returns a dict that callers spread into render_template() so the
+    `_workflow_stepper.html` partial gets everything it needs. Keeping
+    this out of the global context processor means we only pay for the
+    checklist computation on the handful of pages that actually render
+    the stepper (dashboard, migration checklist, cutover setup, job
+    detail) — not on auth / static pages.
+    """
+    _cutover, items, _next = _build_firm_checklist(firm_id)
+    firm_jobs = db.list_jobs_for_firm(firm_id, limit=1)
+    stages = customer_workflow.build_customer_stages(
+        items,
+        url_for=url_for,
+        has_jobs=bool(firm_jobs),
+    )
+    current = customer_workflow.current_stage(stages)
+    return {
+        "workflow_stages": [s.to_dict() for s in stages],
+        "workflow_current": current.to_dict() if current else None,
+        "workflow_progress": customer_workflow.progress_percent(stages),
+        "workflow_completed": customer_workflow.completed_count(stages),
+        "workflow_terms": customer_workflow.FRIENDLY_TERMS,
+    }
 
 
 @app.route("/operator")

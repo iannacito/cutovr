@@ -1,0 +1,103 @@
+{# ----------------------------------------------------------------------
+   Customer-facing migration progress stepper.
+
+   Renders the 6 stages from customer_workflow.build_customer_stages()
+   as a clean, responsive progress bar with completed / current /
+   upcoming indicators and a top-level "Next step" card with a primary
+   CTA.
+
+   Usage in a template:
+
+       {% include "_workflow_stepper.html" %}
+
+   Required context (provided by app.inject_workflow_stages()):
+
+       workflow_stages     list[WorkflowStage]
+       workflow_current    WorkflowStage | None
+       workflow_progress   int  (0..100)
+       workflow_completed  int
+
+   If `workflow_stages` is missing or empty (e.g. landing / login),
+   this partial renders nothing.
+---------------------------------------------------------------------- #}
+{% if workflow_stages %}
+<aside class="workflow-stepper" aria-label="Migration progress">
+  <div class="workflow-stepper__header">
+    <div>
+      <p class="eyebrow workflow-stepper__eyebrow">
+        Migration progress &middot;
+        {% if workflow_current %}
+          Step {{ workflow_current.index }} of {{ workflow_current.total }}
+        {% else %}
+          Complete
+        {% endif %}
+      </p>
+      <h2 class="workflow-stepper__title">
+        {% if workflow_current %}
+          Next: {{ workflow_current.label }}
+        {% else %}
+          You&rsquo;ve finished every step.
+        {% endif %}
+      </h2>
+      <p class="workflow-stepper__lede">
+        {% if workflow_current %}
+          {{ workflow_current.description }}
+        {% else %}
+          Review the migration checklist for final reconciliation reports.
+        {% endif %}
+      </p>
+    </div>
+    {% if workflow_current and workflow_current.cta_url %}
+      <div class="workflow-stepper__cta">
+        <a class="btn btn-primary" href="{{ workflow_current.cta_url }}">
+          {{ workflow_current.cta_label }} &rarr;
+        </a>
+      </div>
+    {% endif %}
+  </div>
+
+  <div
+    class="workflow-progress"
+    role="progressbar"
+    aria-valuenow="{{ workflow_progress }}"
+    aria-valuemin="0"
+    aria-valuemax="100"
+    aria-label="Migration progress, {{ workflow_completed }} of {{ workflow_stages|length }} stages complete"
+  >
+    <div class="workflow-progress__fill" style="width: {{ workflow_progress }}%;"></div>
+  </div>
+
+  <ol class="workflow-steps" aria-label="Migration stages">
+    {% for stage in workflow_stages %}
+      <li class="workflow-step workflow-step--{{ stage.status }}">
+        <span class="workflow-step__bubble" aria-hidden="true">
+          {% if stage.status == 'complete' %}
+            &#10003;
+          {% else %}
+            {{ stage.index }}
+          {% endif %}
+        </span>
+        <span class="workflow-step__body">
+          <span class="workflow-step__label">{{ stage.short_label }}</span>
+          <span class="workflow-step__state visually-hidden">
+            {% if stage.status == 'complete' %}Completed{% elif stage.status == 'current' %}In progress now{% else %}Upcoming{% endif %}
+          </span>
+        </span>
+      </li>
+    {% endfor %}
+  </ol>
+
+  {% if workflow_current and workflow_current.friendly_terms %}
+    <p class="workflow-stepper__terms">
+      <strong>In plain English:</strong>
+      {% for term in workflow_current.friendly_terms %}
+        <span class="workflow-term">
+          <em>{{ term }}</em>
+          {% set explanation = workflow_terms.get(term) if workflow_terms else None %}
+          {% if explanation %}<span class="workflow-term__hint"> &mdash; {{ explanation }}</span>{% endif %}
+        </span>{% if not loop.last %}; {% endif %}
+      {% endfor %}.
+    </p>
+  {% endif %}
+</aside>
+{% endif %}

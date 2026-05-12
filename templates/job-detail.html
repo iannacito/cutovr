@@ -2,6 +2,8 @@
 {% block title %}{{ job.company }} &mdash; Migration Job{% endblock %}
 {% block content %}
 <section class="detail-page">
+  {% include "_workflow_stepper.html" %}
+
   <a href="{{ url_for('dashboard') }}" class="back-link">&larr; Back to dashboard</a>
 
   {% if job.unmapped_accounts %}
@@ -68,7 +70,7 @@
   <section class="card" aria-label="Report type behavior">
     <p class="eyebrow">{{ report_label }}</p>
     {% if report_type == 'chart_of_accounts' %}
-      <h2>Chart of Accounts &mdash; preview, then create</h2>
+      <h2>Chart of Accounts <small class="muted">(your list of accounts)</small> &mdash; preview, then create</h2>
       <p>
         This job is a Chart of Accounts export. We parse the accounts in
         your file and (once QuickBooks is connected) show a side-by-side
@@ -96,7 +98,7 @@
         </p>
       {% endif %}
     {% elif report_type == 'trial_balance' %}
-      <h2>Trial Balance &mdash; opening balance + reconciliation</h2>
+      <h2>Trial Balance <small class="muted">(starting / ending balance snapshot)</small> &mdash; opening balance + reconciliation</h2>
       <p>
         This job is a Trial Balance export. From here you can preview an
         opening-balance JournalEntry built from the TB (it requires
@@ -120,7 +122,7 @@
         </p>
       {% endif %}
     {% elif report_type == 'trust_listing' %}
-      <h2>Trust Listing &mdash; validation + reconciliation</h2>
+      <h2>Trust Listing <small class="muted">(client trust balances)</small> &mdash; validation + reconciliation</h2>
       <p>
         This job is a Trust Listing export. We parse the client / matter
         rows, total the trust balance per bank account, and reconcile
@@ -145,26 +147,26 @@
   {% set step_imported = job.qbo_results %}
   <section class="card" aria-label="Migration sequence">
     <p class="eyebrow">Migration sequence</p>
-    <h2>From validate to reconcile</h2>
+    <h2>What&rsquo;s left to do here</h2>
     <ol class="migration-steps">
       <li>
-        <strong>1. Validate</strong>
+        <strong>1. Check the file</strong>
         {% if step_validated %}<span class="badge success">Done</span>{% else %}<span class="badge">Pending</span>{% endif %}
-        <p class="muted">We checked your CSV for required columns and balance.</p>
+        <p class="muted">We checked your CSV for missing columns and made sure debits equal credits.</p>
       </li>
       <li>
-        <strong>2. Map accounts</strong>
-        {% if step_mapped %}<span class="badge success">Done</span>{% else %}<span class="badge warn">{{ unmapped_count }} unmapped</span>{% endif %}
+        <strong>2. Match accounts</strong>
+        {% if step_mapped %}<span class="badge success">Done</span>{% else %}<span class="badge warn">{{ unmapped_count }} not matched yet</span>{% endif %}
         <p class="muted">
-          Pair each PCLaw account with a QuickBooks account.
-          <a href="{{ url_for('account_mapping', job_id=job.id) }}">Open mapping</a>.
+          Match each PCLaw account to the right QuickBooks account.
+          <a href="{{ url_for('account_mapping', job_id=job.id) }}">Open the matching screen</a>.
         </p>
       </li>
       <li>
-        <strong>3. Preview import</strong>
+        <strong>3. Preview before posting</strong>
         <p class="muted">
-          See exactly what would be posted &mdash; nothing is sent to QBO.
-          <a class="btn btn-primary" style="margin-top:.4rem;display:inline-block;" href="{{ url_for('preview_import', job_id=job.id) }}">Preview import</a>
+          See exactly what would post &mdash; nothing reaches QuickBooks yet.
+          <a class="btn btn-primary" style="margin-top:.4rem;display:inline-block;" href="{{ url_for('preview_import', job_id=job.id) }}">Preview import (journal entries)</a>
           <a class="btn" style="margin-top:.4rem;display:inline-block;" href="{{ url_for('validation_report_csv', job_id=job.id) }}">Download validation report (CSV)</a>
         </p>
       </li>
@@ -173,22 +175,22 @@
         {% if step_connected %}<span class="badge success">Connected</span>{% else %}<span class="badge">Not connected</span>{% endif %}
       </li>
       <li>
-        <strong>5. Confirm import</strong>
-        {% if step_imported %}<span class="badge success">Posted</span>{% else %}<span class="badge">Pending</span>{% endif %}
+        <strong>5. Post to QuickBooks</strong>
+        {% if step_imported %}<span class="badge success">Posted</span>{% else %}<span class="badge">Not yet</span>{% endif %}
         <p class="muted">
           {% if qbo_env_status == 'production' %}
-            You will be asked to type <code>IMPORT</code> before anything is posted.
+            You&rsquo;ll be asked to type <code>IMPORT</code> before anything is sent &mdash; this is the only step that changes your real QuickBooks.
           {% else %}
-            Sandbox mode: journal entries post to a test QuickBooks company only.
+            Sandbox mode: journal entries are posted to a test QuickBooks company only.
           {% endif %}
         </p>
       </li>
       <li>
-        <strong>6. Reconcile / Reverse</strong>
+        <strong>6. Final balance check (or reverse if needed)</strong>
         {% if step_imported %}
           <a class="btn" style="margin-top:.4rem;display:inline-block;" href="{{ url_for('reconciliation_report_csv', job_id=job.id) }}">Download reconciliation report (CSV)</a>
         {% endif %}
-        <p class="muted">After import, download the receipt or post offsetting reversals.</p>
+        <p class="muted">After posting, save the reconciliation report for your records &mdash; or roll the import back if anything looks off.</p>
       </li>
     </ol>
   </section>

@@ -2,16 +2,18 @@
 {% block title %}Cutover setup &mdash; {{ firm.name }}{% endblock %}
 {% block content %}
 <section class="page">
+  {% include "_workflow_stepper.html" %}
+
   <div class="hero">
     <p class="eyebrow">{{ firm.name }} &middot; Migration setup</p>
-    <h1>Tell us about the cutover</h1>
+    <h1>Tell us about the cutover <small class="muted">(your switchover day)</small></h1>
     <p>
-      A clean PCLaw &rarr; QuickBooks migration depends on a few key
-      dates and decisions. Fill these in once and the rest of the app
-      uses them to make the right defaults &mdash; for opening
-      balances, AR/AP treatment, tax handling, and the migration
-      checklist. Nothing on this page is posted to QuickBooks; this
-      is configuration only.
+      A clean PCLaw &rarr; QuickBooks migration depends on a few simple
+      dates and decisions. The <em>cutover date</em> is the day you stop
+      running the books in PCLaw and start running them in QuickBooks
+      Online. Fill these in once and we&rsquo;ll use them to choose smart
+      defaults for the rest of the migration. Nothing on this page
+      posts to QuickBooks &mdash; it&rsquo;s configuration only.
     </p>
     <p style="margin-top:var(--space-3);">
       <a class="btn" href="{{ url_for('migration_checklist') }}">View migration checklist</a>
