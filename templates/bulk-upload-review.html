@@ -1,0 +1,133 @@
+{% extends "_base.html" %}
+{% block title %}Bulk upload review &mdash; {{ bulk.company }}{% endblock %}
+{% block content %}
+<section class="page">
+  {% include "_workflow_stepper.html" %}
+
+  <div class="hero">
+    <p class="eyebrow">{{ bulk.company }} &middot; Bulk upload review</p>
+    <h1>We organized your files</h1>
+    <p>
+      {{ summary.file_count }} file(s) uploaded &middot;
+      {{ summary.categorized }} identified automatically &middot;
+      {{ summary.needs_review }} need a quick look.
+    </p>
+    <p style="margin-top:var(--space-3);">
+      <a class="btn" href="{{ url_for('migration_checklist') }}">Open the migration checklist &rarr;</a>
+      <a class="btn" href="{{ url_for('dashboard') }}">Back to dashboard</a>
+    </p>
+  </div>
+
+  {% if missing_required_labels %}
+    <div class="card warning-panel" role="status" aria-label="Reports still missing">
+      <h3>Still missing from this firm's migration</h3>
+      <p>
+        Upload these so the checklist can move forward. We'll keep what you've already uploaded.
+      </p>
+      <ul>
+        {% for label in missing_required_labels %}
+          <li>{{ label }}</li>
+        {% endfor %}
+      </ul>
+      <p>
+        <a class="btn btn-primary" href="{{ url_for('dashboard') }}#intake">Upload the missing reports &rarr;</a>
+      </p>
+    </div>
+  {% else %}
+    <div class="card success-panel" role="status" aria-label="All required reports uploaded">
+      <h3>All required reports uploaded</h3>
+      <p>
+        We received every report the migration needs. Continue with the
+        next step on the migration checklist &mdash; nothing posts to
+        QuickBooks until you review each one.
+      </p>
+      <p>
+        <a class="btn btn-primary" href="{{ url_for('migration_checklist') }}">Continue to the migration checklist &rarr;</a>
+      </p>
+    </div>
+  {% endif %}
+
+  <article class="card">
+    <p class="eyebrow">What we found in each file</p>
+    <h2>Per-file detection summary</h2>
+    <div class="table-wrap" style="margin-top:var(--space-4);">
+      <table>
+        <thead>
+          <tr>
+            <th>File name</th>
+            <th>Detected report type</th>
+            <th>Status</th>
+            <th>Why</th>
+            <th>Job</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in results %}
+            <tr>
+              <td><code>{{ r.filename }}</code></td>
+              <td>
+                {% if r.report_label %}
+                  {{ r.report_label }}
+                {% else %}
+                  <em class="muted">Unknown</em>
+                {% endif %}
+                <br>
+                <span class="muted" style="font-size:.85rem;">
+                  {{ confidence_labels.get(r.confidence, r.confidence) }}
+                </span>
+              </td>
+              <td>
+                {% set status_class = 'badge' %}
+                {% if r.status == 'categorized' %}
+                  {% set status_class = 'badge success' %}
+                {% elif r.status in ('needs_review', 'duplicate') %}
+                  {% set status_class = 'badge' %}
+                {% elif r.status in ('unreadable', 'rejected') %}
+                  {% set status_class = 'badge error' %}
+                {% endif %}
+                <span class="{{ status_class }}">{{ status_labels.get(r.status, r.status) }}</span>
+                {% if r.warning %}
+                  <p class="muted" style="margin-top:.35rem;font-size:.85rem;">{{ r.warning }}</p>
+                {% endif %}
+              </td>
+              <td>
+                <span class="muted" style="font-size:.9rem;">{{ r.reason }}</span>
+              </td>
+              <td>
+                {% if r.job_id %}
+                  <a class="btn" href="{{ url_for('job_detail', job_id=r.job_id) }}">Open job &rarr;</a>
+                {% else %}
+                  <span class="muted">&mdash;</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% if r.status in ('needs_review', 'duplicate') or not r.report_type %}
+              <tr>
+                <td colspan="5">
+                  <form action="{{ url_for('bulk_upload_correct', bulk_id=bulk.id) }}" method="post" style="display:flex;gap:.5rem;align-items:flex-end;flex-wrap:wrap;">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="filename" value="{{ r.filename }}">
+                    <label style="margin:0;">
+                      <span style="font-size:.85rem;">Set report type for this file</span>
+                      <select name="report_type">
+                        <option value="">Leave as needs review</option>
+                        {% for rt in report_types %}
+                          <option value="{{ rt }}" {% if r.report_type == rt %}selected{% endif %}>{{ report_label_map.get(rt, rt) }}</option>
+                        {% endfor %}
+                      </select>
+                    </label>
+                    <button class="btn" type="submit">Confirm report type</button>
+                  </form>
+                </td>
+              </tr>
+            {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="muted" style="margin-top:var(--space-4);font-size:.9rem;">
+      Each file is encrypted and saved as its own job. Nothing imports into QuickBooks automatically &mdash; you'll review and confirm each step from the migration checklist.
+    </p>
+  </article>
+</section>
+{% endblock %}

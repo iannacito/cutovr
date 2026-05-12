@@ -80,6 +80,7 @@ import qbo_error_hint
 import email_sender
 import cutover_workflow
 import customer_workflow
+import bulk_upload
 from rate_limit import RateLimiter, client_ip
 import csv as _csv
 from io import StringIO
@@ -404,6 +405,13 @@ def _qbo_production_blockers():
 
 jobs = {}
 qbo_connections = {}  # {job_id: {realm_id, access_token_enc, refresh_token_enc, expires_at, connected_at}}
+
+# In-memory cache of bulk-upload sessions. {bulk_id: {firm_id, created_at,
+# company, results:[{filename, report_type, status, ...}]}}.  Lives only as
+# long as the process — the review screen is a one-shot post-upload step,
+# and each underlying job is already persisted to the DB through the
+# normal per-file upload pipeline.
+bulk_uploads = {}
 
 
 # ---------------------------------------------------------------------------
@@ -1620,52 +1628,68 @@ def readiness_page():
     )
 
 
-@app.route("/upload", methods=["POST"])
-@login_required
-def upload():
-    user = current_user()
-    company = request.form.get("company_name", "").strip()
-    user_email = request.form.get("email", "").strip() or user["email"]
-    file = request.files.get("ledger_file")
-    # report_type is optional for backward compatibility. Missing / blank /
-    # "auto" all mean "detect from headers (and fall back to GL behavior)".
-    raw_report_type = (request.form.get("report_type") or "").strip().lower()
-    user_picked_report_type = raw_report_type if is_valid_report_type(raw_report_type) else None
+def _process_uploaded_csv(
+    file_storage,
+    company: str,
+    user_email: str,
+    user: dict,
+    user_picked_report_type: Optional[str] = None,
+):
+    """Run the existing single-file PCLaw upload pipeline.
 
-    if not company or not file:
-        flash("Company name and PCLaw export file are required.", "error")
-        return redirect(url_for("dashboard"))
+    Returns a dict with keys:
 
-    safe_name = secure_filename(file.filename)
-    # Reject obviously wrong file types early. We only accept .csv from
-    # PCLaw — refusing .exe / .zip / .xlsx / .pdf at the gate is a cheap
-    # safety win and gives a clearer error than a CSV parse failure.
+      ok          (bool)
+      job_id      (str | None)
+      report_type (str | None)
+      detected    (str | None)   — what the auto-detector decided
+      message     (str)          — flash-style status text
+      category    ("success"|"error"|"info")
+      filename    (str)
+
+    Used by both the legacy ``/upload`` route (one file at a time, with
+    flash messages) and the newer ``/upload/bulk`` route (many files at
+    once, aggregated into a review summary).
+
+    The DB / encryption / preflight / persistence behaviour is identical
+    to the original inline route body — this is a refactor extraction,
+    not a behaviour change.
+    """
+    if not file_storage or not file_storage.filename:
+        return {
+            "ok": False,
+            "job_id": None,
+            "report_type": None,
+            "detected": None,
+            "filename": "",
+            "message": "No file was attached.",
+            "category": "error",
+        }
+    safe_name = secure_filename(file_storage.filename)
     if not safe_name.lower().endswith(".csv"):
-        flash(
-            "Only .csv files exported from PCLaw are supported. "
-            "Re-export the General Ledger as CSV and try again.",
-            "error",
-        )
-        return redirect(url_for("dashboard"))
+        return {
+            "ok": False,
+            "job_id": None,
+            "report_type": None,
+            "detected": None,
+            "filename": safe_name or file_storage.filename or "",
+            "message": (
+                "Only .csv files exported from PCLaw are supported. "
+                "Re-export the report as CSV and try again."
+            ),
+            "category": "error",
+        }
     timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-    # Job IDs include 64 bits of cryptographic entropy so they cannot be
-    # guessed by an attacker who knows the upload time. Tenancy is enforced
-    # in `_job_or_403` (which 404s on cross-firm access), but unpredictable
-    # IDs are defense-in-depth against bugs in route guards and accidental
-    # leakage via referer headers / browser history. Filesystem paths still
-    # use the timestamp prefix for human-readable sorting, and the job_id
-    # is also embedded so two simultaneous uploads can't collide.
     job_suffix = secrets.token_urlsafe(12)
     job_id = f"job_{timestamp}_{job_suffix}"
     fs_prefix = f"{timestamp}_{job_suffix}"
 
-    # Save and encrypt uploaded file
     upload_path = UPLOAD_DIR / f"{fs_prefix}_{safe_name}"
-    file.save(upload_path)
+    file_storage.save(upload_path)
     file_sha256 = sha256_of_file(upload_path)
     encrypted_path = UPLOAD_DIR / f"{fs_prefix}_{safe_name}.enc"
     encrypt_file(upload_path, encrypted_path)
-    upload_path.unlink()  # remove unencrypted file
+    upload_path.unlink()
 
     jobs[job_id] = {
         "id": job_id,
@@ -1680,9 +1704,6 @@ def upload():
         "created_at": datetime.utcnow().isoformat(),
         "summary": {},
         "qbo_connected": False,
-        # report_type is filled in below once headers are inspected. We
-        # write it here so the row exists if parsing fails before the
-        # type is known.
         "report_type": user_picked_report_type or REPORT_GENERAL_LEDGER,
         "report_type_user_picked": user_picked_report_type,
     }
@@ -1695,15 +1716,14 @@ def upload():
     _audit("upload", target_type="job", target_id=job_id,
            details=f"{company} / {safe_name}")
 
-    # Decrypt for processing
     temp_path = UPLOAD_DIR / f"{fs_prefix}_temp.csv"
     decrypt_file(encrypted_path, temp_path)
 
+    message = ""
+    category = "success"
+    detected = None
+    effective_report_type: Optional[str] = None
     try:
-        # Read headers up-front so we can route to the right parser. The
-        # legacy GL path (transaction_id + Date/Account/Debit/Credit) is
-        # the default when no report_type is supplied and headers look
-        # like a GL — that keeps existing tests / customers unchanged.
         with temp_path.open("r", newline="", encoding="utf-8-sig") as _f:
             _reader = _csv.DictReader(_f)
             _fieldnames = list(_reader.fieldnames or [])
@@ -1713,10 +1733,6 @@ def upload():
                 1 for _ in _csv.DictReader(temp_path.open("r", newline="", encoding="utf-8-sig"))
             )
 
-        # Decide the effective report type. Explicit user pick always wins
-        # so a firm can force a (e.g.) Trust Listing parse on an unusual
-        # export. Otherwise we auto-detect: if it looks like a GL, behave
-        # exactly like the pre-multi-report code path.
         detected = detect_report_type(_fieldnames)
         if user_picked_report_type:
             effective_report_type = user_picked_report_type
@@ -1744,18 +1760,18 @@ def upload():
             }
             jobs[job_id]["preflight"] = preflight
             if preflight["ready"]:
-                flash(
+                message = (
                     "PCLaw GL file accepted. Review the preflight checklist, "
-                    "then connect QuickBooks to continue.",
-                    "success",
+                    "then connect QuickBooks to continue."
                 )
+                category = "success"
             else:
-                flash(
+                message = (
                     "PCLaw GL file uploaded with warnings. Review the "
                     "preflight checklist on the job page before connecting "
-                    "QuickBooks.",
-                    "error",
+                    "QuickBooks."
                 )
+                category = "error"
         elif effective_report_type == REPORT_CHART_OF_ACCOUNTS:
             coa_rows, _fn, missing = parse_chart_of_accounts(temp_path)
             preflight = build_coa_preflight(coa_rows, _fn, missing)
@@ -1770,15 +1786,13 @@ def upload():
                 "report_type": REPORT_CHART_OF_ACCOUNTS,
             }
             jobs[job_id]["preflight"] = preflight
-            # Cache the parsed COA rows on the job so the dry-run preview
-            # route can re-use them without re-decrypting the upload.
             jobs[job_id]["parsed_coa"] = coa_rows
-            flash(
+            message = (
                 "Chart of Accounts file accepted. Connect QuickBooks to "
                 "see which accounts already exist and which would be "
-                "created. No QBO writes happen until you confirm.",
-                "success" if preflight["ready"] else "error",
+                "created. No QBO writes happen until you confirm."
             )
+            category = "success" if preflight["ready"] else "error"
         elif effective_report_type == REPORT_TRIAL_BALANCE:
             tb_rows, _fn, missing = parse_trial_balance(temp_path)
             preflight = build_trial_balance_preflight(tb_rows, _fn, missing)
@@ -1795,12 +1809,12 @@ def upload():
             }
             jobs[job_id]["preflight"] = preflight
             jobs[job_id]["parsed_trial_balance"] = tb_rows
-            flash(
+            message = (
                 "Trial Balance accepted. This report is parsed for "
                 "validation and reconciliation only — no QuickBooks "
-                "writes are performed for Trial Balance uploads.",
-                "success" if preflight["ready"] else "error",
+                "writes are performed for Trial Balance uploads."
             )
+            category = "success" if preflight["ready"] else "error"
         elif effective_report_type == REPORT_TRUST_LISTING:
             trust_rows, _fn, missing = parse_trust_listing(temp_path)
             preflight = build_trust_listing_preflight(trust_rows, _fn, missing)
@@ -1816,43 +1830,446 @@ def upload():
             }
             jobs[job_id]["preflight"] = preflight
             jobs[job_id]["parsed_trust_listing"] = trust_rows
-            flash(
+            message = (
                 "Trust Listing accepted. This report is parsed for "
                 "validation and reconciliation only — no QuickBooks "
-                "writes are performed for Trust Listing uploads.",
-                "success" if preflight["ready"] else "error",
+                "writes are performed for Trust Listing uploads."
             )
+            category = "success" if preflight["ready"] else "error"
         else:
-            # Legacy "flat CSV" path: same behavior as before multi-report.
             rows = parse_pclaw_csv(temp_path)
             out_path = OUTPUT_DIR / f"{fs_prefix}_qbo_import.csv"
             summary = export_qbo_csv(rows, out_path)
-
             encrypted_out = OUTPUT_DIR / f"{fs_prefix}_qbo_import.csv.enc"
             encrypt_file(out_path, encrypted_out)
             out_path.unlink()
-
             jobs[job_id]["status"] = "Ready for QBO connection"
             jobs[job_id]["summary"] = summary
             jobs[job_id]["output_file"] = f"{fs_prefix}_qbo_import.csv"
             jobs[job_id]["encrypted_output"] = encrypted_out.name
-
-            flash("Migration package prepared successfully. Connect to QuickBooks to complete.", "success")
-    except Exception as e:
+            message = (
+                "Migration package prepared successfully. "
+                "Connect to QuickBooks to complete."
+            )
+            category = "success"
+    except Exception as e:  # noqa: BLE001
         headline, action = friendly_validation_message(e)
         jobs[job_id]["status"] = f"Error: {headline}"
         jobs[job_id]["last_validation_error"] = {
             "headline": headline,
             "action": action,
         }
-        flash(f"{headline} {action}", "error")
+        message = f"{headline} {action}"
+        category = "error"
     finally:
         temp_path.unlink(missing_ok=True)
 
-    # Persist the parsed-state snapshot (summary, output_file, etc.) so the
-    # job survives a restart between upload and import.
     _save_job(job_id)
-    return redirect(url_for("job_detail", job_id=job_id))
+    return {
+        "ok": category != "error",
+        "job_id": job_id,
+        "report_type": effective_report_type,
+        "detected": detected,
+        "filename": safe_name,
+        "message": message,
+        "category": category,
+    }
+
+
+@app.route("/upload", methods=["POST"])
+@login_required
+def upload():
+    user = current_user()
+    company = request.form.get("company_name", "").strip()
+    user_email = request.form.get("email", "").strip() or user["email"]
+    file = request.files.get("ledger_file")
+    # report_type is optional for backward compatibility. Missing / blank /
+    # "auto" all mean "detect from headers (and fall back to GL behavior)".
+    raw_report_type = (request.form.get("report_type") or "").strip().lower()
+    user_picked_report_type = raw_report_type if is_valid_report_type(raw_report_type) else None
+
+    if not company or not file:
+        flash("Company name and PCLaw export file are required.", "error")
+        return redirect(url_for("dashboard"))
+
+    safe_name = secure_filename(file.filename)
+    # Reject obviously wrong file types early. We only accept .csv from
+    # PCLaw — refusing .exe / .zip / .xlsx / .pdf at the gate is a cheap
+    # safety win and gives a clearer error than a CSV parse failure.
+    result = _process_uploaded_csv(
+        file_storage=file,
+        company=company,
+        user_email=user_email,
+        user=user,
+        user_picked_report_type=user_picked_report_type,
+    )
+    if result["message"]:
+        flash(result["message"], result["category"])
+    if not result["job_id"]:
+        return redirect(url_for("dashboard"))
+    return redirect(url_for("job_detail", job_id=result["job_id"]))
+
+
+# Hard cap on how many files we'll accept in a single bulk submission.
+# Even at 25 MB per file the worst case is bounded by MAX_CONTENT_LENGTH
+# on the whole request, but a fixed file-count cap protects against
+# pathological inputs (e.g. 500 empty CSVs).
+_BULK_MAX_FILES = 12
+
+
+@app.route("/upload/bulk", methods=["POST"])
+@login_required
+def upload_bulk():
+    """Bulk upload: accept multiple PCLaw CSV files in a single
+    submission and auto-classify each one.
+
+    The flow:
+      1. For each uploaded file we save it to a temp path, run
+         ``bulk_upload.classify_csv`` against the temp copy, and then
+         hand it off to ``_process_uploaded_csv`` with the classifier's
+         best guess as ``user_picked_report_type`` (unless the customer
+         explicitly chose "auto", in which case we let the legacy
+         per-file detector decide). The per-file pipeline encrypts the
+         file, builds the preflight, and persists the job — exactly the
+         same path the single-file ``/upload`` route uses.
+      2. The aggregate result (one entry per file) is stashed in the
+         ``bulk_uploads`` dict so the review screen can render it.
+      3. We redirect to the review screen so the customer sees what
+         was identified, what needs review, and what is still missing.
+
+    Nothing here imports into QBO. Each per-file job sits in the same
+    "uploaded / awaiting review" state as a single-file upload, and the
+    existing review/confirmation/import gates remain in place.
+    """
+    user = current_user()
+    company = request.form.get("company_name", "").strip()
+    user_email = request.form.get("email", "").strip() or user["email"]
+    files = request.files.getlist("ledger_files") or []
+    # Filter out empty form fields (browsers send an empty FileStorage
+    # when an input has no selection).
+    files = [f for f in files if f and (f.filename or "").strip()]
+
+    if not company:
+        flash("Company name is required for bulk upload.", "error")
+        return redirect(url_for("dashboard") + "#intake")
+    if not files:
+        flash(
+            "Pick one or more PCLaw CSV exports to upload. "
+            "Hold Ctrl/Cmd to select multiple files at once.",
+            "error",
+        )
+        return redirect(url_for("dashboard") + "#intake")
+    if len(files) > _BULK_MAX_FILES:
+        flash(
+            f"Bulk upload accepts up to {_BULK_MAX_FILES} files at a time. "
+            f"Upload the rest in a second batch.",
+            "error",
+        )
+        return redirect(url_for("dashboard") + "#intake")
+
+    # First pass: peek at each file so we can classify before we hand
+    # it off to the persistence pipeline. We don't trust filenames
+    # alone; ``bulk_upload.classify_csv`` combines headers, filename
+    # hints, and content patterns to choose a report type and a
+    # confidence label.
+    bulk_id = f"bulk_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{secrets.token_urlsafe(8)}"
+    aggregated: list[dict] = []
+    for f in files:
+        original_name = f.filename or ""
+        safe_name = secure_filename(original_name)
+        if not safe_name.lower().endswith(".csv"):
+            aggregated.append({
+                "filename": original_name,
+                "report_type": None,
+                "report_label": "",
+                "confidence": bulk_upload.CONFIDENCE_NONE,
+                "status": bulk_upload.STATUS_REJECTED,
+                "reason": (
+                    "Only .csv files exported from PCLaw are supported. "
+                    "Re-export this report as CSV."
+                ),
+                "warning": "",
+                "job_id": None,
+                "job_status": None,
+            })
+            continue
+
+        # Stash to a temp path for header sniffing, then rewind the
+        # stream so ``_process_uploaded_csv`` can save it again.
+        sniff_path = UPLOAD_DIR / (
+            f"bulk_sniff_{secrets.token_urlsafe(8)}_{safe_name}"
+        )
+        try:
+            f.save(sniff_path)
+            classification = bulk_upload.classify_csv(sniff_path, safe_name)
+        except Exception as exc:  # noqa: BLE001
+            classification = bulk_upload.ClassificationResult(
+                filename=safe_name,
+                report_type=None,
+                status=bulk_upload.STATUS_UNREADABLE,
+                confidence=bulk_upload.CONFIDENCE_NONE,
+                reason=f"Could not read the file ({type(exc).__name__}).",
+            )
+        finally:
+            sniff_path.unlink(missing_ok=True)
+            # Reset the stream pointer; werkzeug's FileStorage rewinds
+            # automatically on a fresh ``save`` but some chained reads
+            # leave it at EOF.
+            try:
+                f.stream.seek(0)
+            except Exception:
+                pass
+
+        # We feed the classifier's guess into the per-file pipeline as a
+        # picked report_type ONLY when we're confident enough. Anything
+        # in needs_review / duplicate / unreadable stays in the default
+        # auto-detect path so the job dict still records a report_type
+        # but is also visibly flagged for human attention.
+        picked = (
+            classification.report_type
+            if classification.status == bulk_upload.STATUS_CATEGORIZED
+            and classification.confidence in (
+                bulk_upload.CONFIDENCE_HIGH,
+                bulk_upload.CONFIDENCE_MEDIUM,
+            )
+            else None
+        )
+        try:
+            processed = _process_uploaded_csv(
+                file_storage=f,
+                company=company,
+                user_email=user_email,
+                user=user,
+                user_picked_report_type=picked,
+            )
+        except Exception as exc:  # noqa: BLE001
+            processed = {
+                "ok": False, "job_id": None, "report_type": None,
+                "detected": None, "filename": safe_name,
+                "message": f"Could not save {safe_name}: {type(exc).__name__}",
+                "category": "error",
+            }
+
+        entry = classification.to_dict()
+        entry["job_id"] = processed.get("job_id")
+        entry["job_status"] = None
+        entry["report_type"] = processed.get("report_type") or entry.get("report_type")
+        if entry["report_type"]:
+            entry["report_label"] = REPORT_LABELS.get(
+                entry["report_type"], entry.get("report_label") or ""
+            )
+        if processed.get("job_id"):
+            saved_job = jobs.get(processed["job_id"]) or {}
+            entry["job_status"] = saved_job.get("status")
+            # If the per-file pipeline downgraded the report type (e.g.
+            # detector said COA but the CSV body parsed as GL), surface
+            # the disagreement so the customer can decide.
+            if (
+                processed.get("report_type")
+                and classification.report_type
+                and processed["report_type"] != classification.report_type
+                and entry["status"] == bulk_upload.STATUS_CATEGORIZED
+            ):
+                entry["status"] = bulk_upload.STATUS_NEEDS_REVIEW
+                entry["warning"] = (
+                    "Auto-detection and the parser disagreed on this "
+                    "file — please confirm the report type below."
+                )
+        if processed.get("category") == "error":
+            entry["warning"] = (
+                entry.get("warning") or processed.get("message") or ""
+            )
+            if entry["status"] == bulk_upload.STATUS_CATEGORIZED:
+                entry["status"] = bulk_upload.STATUS_NEEDS_REVIEW
+        aggregated.append(entry)
+
+    # Reconstruct ClassificationResult objects so the collision logic
+    # can run on a uniform shape; resolve_collisions mutates in place.
+    cr_objects: list[bulk_upload.ClassificationResult] = []
+    for e in aggregated:
+        cr_objects.append(bulk_upload.ClassificationResult(
+            filename=e.get("filename") or "",
+            report_type=e.get("report_type"),
+            report_label=e.get("report_label") or "",
+            confidence=e.get("confidence") or bulk_upload.CONFIDENCE_NONE,
+            status=e.get("status") or bulk_upload.STATUS_NEEDS_REVIEW,
+            reason=e.get("reason") or "",
+            warning=e.get("warning") or "",
+        ))
+    bulk_upload.resolve_collisions(cr_objects)
+    for original, cr in zip(aggregated, cr_objects):
+        original["status"] = cr.status
+        original["warning"] = cr.warning
+
+    summary = bulk_upload.summarize_bulk(cr_objects)
+    bulk_uploads[bulk_id] = {
+        "id": bulk_id,
+        "firm_id": user["firm_id"],
+        "user_id": user["id"],
+        "company": company,
+        "email": user_email,
+        "created_at": datetime.utcnow().isoformat(),
+        "results": aggregated,
+        "summary": summary,
+    }
+    _audit(
+        "bulk_upload",
+        target_type="bulk_upload",
+        target_id=bulk_id,
+        details=(
+            f"{company} / {len(files)} files / "
+            f"{summary['categorized']} categorized / "
+            f"{summary['needs_review']} needs review"
+        ),
+    )
+
+    if summary["categorized"]:
+        flash(
+            f"Uploaded {len(files)} file(s). We identified "
+            f"{summary['categorized']} report(s) automatically. "
+            "Review the summary below.",
+            "success" if not summary["needs_review"] else "info",
+        )
+    else:
+        flash(
+            "We couldn't auto-identify any of the uploaded files. "
+            "Pick a report type for each and continue, or re-upload "
+            "with files renamed to include their report type.",
+            "error",
+        )
+    return redirect(url_for("bulk_upload_review", bulk_id=bulk_id))
+
+
+def _bulk_or_404(bulk_id: str):
+    """Return the bulk-upload record if it belongs to the current
+    user's firm, else 404."""
+    user = current_user()
+    if not user:
+        abort(401)
+    bulk = bulk_uploads.get(bulk_id)
+    if not bulk:
+        abort(404)
+    if bulk.get("firm_id") != user["firm_id"]:
+        abort(404)
+    return bulk, user
+
+
+@app.route("/upload/bulk/<bulk_id>", methods=["GET"])
+@login_required
+def bulk_upload_review(bulk_id):
+    """Per-firm review screen for a bulk upload. Shows per-file
+    detection results and what is still missing for the checklist."""
+    bulk, user = _bulk_or_404(bulk_id)
+    # Refresh summary in case manual corrections were applied via the
+    # POST handler since the record was created.
+    cr_objects = [bulk_upload.ClassificationResult(
+        filename=e.get("filename") or "",
+        report_type=e.get("report_type"),
+        report_label=e.get("report_label") or "",
+        confidence=e.get("confidence") or bulk_upload.CONFIDENCE_NONE,
+        status=e.get("status") or bulk_upload.STATUS_NEEDS_REVIEW,
+        reason=e.get("reason") or "",
+        warning=e.get("warning") or "",
+    ) for e in bulk["results"]]
+    summary = bulk_upload.summarize_bulk(cr_objects)
+    bulk["summary"] = summary
+    missing_labels = [
+        REPORT_LABELS.get(rt, rt) for rt in summary["missing_required"]
+    ]
+    return render_template(
+        "bulk-upload-review.html",
+        bulk=bulk,
+        results=bulk["results"],
+        summary=summary,
+        missing_required_labels=missing_labels,
+        report_label_map=REPORT_LABELS,
+        report_types=list(REPORT_TYPES),
+        confidence_labels={
+            bulk_upload.CONFIDENCE_HIGH: "High confidence",
+            bulk_upload.CONFIDENCE_MEDIUM: "Medium confidence",
+            bulk_upload.CONFIDENCE_LOW: "Low confidence",
+            bulk_upload.CONFIDENCE_NONE: "Not identified",
+        },
+        status_labels={
+            bulk_upload.STATUS_CATEGORIZED: "Categorized",
+            bulk_upload.STATUS_NEEDS_REVIEW: "Needs review",
+            bulk_upload.STATUS_DUPLICATE: "Duplicate — pick one",
+            bulk_upload.STATUS_UNREADABLE: "Could not read",
+            bulk_upload.STATUS_REJECTED: "Rejected",
+        },
+        **_workflow_stepper_context(user["firm_id"]),
+    )
+
+
+@app.route("/upload/bulk/<bulk_id>/correct", methods=["POST"])
+@login_required
+def bulk_upload_correct(bulk_id):
+    """Allow the customer to manually pick the report type for a file
+    that the classifier flagged as needs_review / duplicate.
+
+    For categorized jobs (those with a job_id), we update the job's
+    report_type *only when the underlying file has not yet been written
+    to QBO*. Trial Balance / Trust Listing / COA jobs are read-only on
+    QBO; GL jobs that haven't been imported are also safe to retype.
+    """
+    bulk, user = _bulk_or_404(bulk_id)
+    filename = (request.form.get("filename") or "").strip()
+    new_rt = (request.form.get("report_type") or "").strip().lower()
+    if not bulk_upload.is_acceptable_override(new_rt):
+        flash("Unknown report type.", "error")
+        return redirect(url_for("bulk_upload_review", bulk_id=bulk_id))
+    target = None
+    for entry in bulk["results"]:
+        if entry.get("filename") == filename:
+            target = entry
+            break
+    if target is None:
+        flash("That file is no longer in this bulk upload.", "error")
+        return redirect(url_for("bulk_upload_review", bulk_id=bulk_id))
+
+    job_id = target.get("job_id")
+    if job_id:
+        job = jobs.get(job_id)
+        if job and job.get("firm_id") == user["firm_id"]:
+            current_status = (job.get("status") or "").lower()
+            if "imported" in current_status and "not" not in current_status:
+                flash(
+                    "This file's job has already been imported to "
+                    "QuickBooks. Open the job page to make corrections.",
+                    "error",
+                )
+                return redirect(url_for("bulk_upload_review", bulk_id=bulk_id))
+            if new_rt:
+                # Re-parse the encrypted upload under the new report
+                # type so the preflight panel reflects the customer's
+                # choice. We reuse the existing job slot.
+                job["report_type"] = new_rt
+                job["report_type_user_picked"] = new_rt
+                job["report_type_label"] = REPORT_LABELS.get(
+                    new_rt, REPORT_LABELS[REPORT_GENERAL_LEDGER]
+                )
+                job["qbo_behavior"] = REPORT_QBO_BEHAVIOR.get(
+                    new_rt, "importable"
+                )
+                # Note: we don't re-run the parser here to keep this
+                # operation cheap; the job-detail page already re-parses
+                # on demand via ``_reparse_report_rows`` when needed.
+                _save_job(job_id)
+    if new_rt:
+        target["report_type"] = new_rt
+        target["report_label"] = REPORT_LABELS.get(new_rt, "")
+        target["status"] = bulk_upload.STATUS_CATEGORIZED
+        target["confidence"] = bulk_upload.CONFIDENCE_HIGH
+        target["reason"] = "Manually confirmed by the customer."
+        target["warning"] = ""
+    _audit(
+        "bulk_upload_correct",
+        target_type="bulk_upload",
+        target_id=bulk_id,
+        details=f"{filename} -> {new_rt or '(cleared)'}",
+    )
+    flash("Report type updated.", "success")
+    return redirect(url_for("bulk_upload_review", bulk_id=bulk_id))
 
 
 @app.route("/jobs/<job_id>")
