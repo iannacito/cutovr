@@ -1,0 +1,116 @@
+{% extends "_base.html" %}
+{% block title %}COA creation result &mdash; {{ job.company }}{% endblock %}
+{% block content %}
+<section class="detail-page">
+  <a href="{{ url_for('job_detail', job_id=job.id) }}" class="back-link">&larr; Back to job</a>
+
+  <section class="card detail-hero">
+    <p class="eyebrow">Job {{ job.id }} &middot; Chart of Accounts &middot; Create result</p>
+    <h1>{{ job.company }}</h1>
+    {% if created and not failed %}
+      <p class="muted">
+        Created {{ created|length }} QuickBooks account(s). Continue with
+        the opening trial balance step in the migration checklist.
+      </p>
+    {% elif created and failed %}
+      <p class="muted">
+        Partial success: {{ created|length }} created, {{ failed|length }}
+        failed. Resolve the failures below before re-running.
+      </p>
+    {% elif failed %}
+      <p class="muted">
+        No accounts were created. Review the errors below.
+      </p>
+    {% else %}
+      <p class="muted">
+        Nothing to create &mdash; every account already exists.
+      </p>
+    {% endif %}
+  </section>
+
+  {% if created %}
+  <section class="card">
+    <p class="eyebrow">Created in QuickBooks</p>
+    <h2>{{ created|length }} new account(s)</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>QBO Id</th>
+            <th>Account #</th>
+            <th>Name</th>
+            <th>QBO type</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for a in created %}
+          <tr>
+            <td><code>{{ a.qbo_account_id }}</code></td>
+            <td><code>{{ a.qbo_acct_num or a.account_number }}</code></td>
+            <td>{{ a.qbo_account_name }}</td>
+            <td>{{ a.qbo_account_type or '' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if failed %}
+  <section class="card error-panel">
+    <p class="eyebrow" style="color:var(--error);">Failed</p>
+    <h2>{{ failed|length }} account(s) could not be created</h2>
+    <p>
+      Each row below shows what QuickBooks rejected. Common causes:
+      AccountType / AccountSubType mismatch, duplicate Name in a parent
+      hierarchy, or a missing scope on the OAuth token. Fix the underlying
+      issue and re-open the confirmation page to retry.
+      {% if intuit_tids %}
+        Intuit support reference(s): {{ intuit_tids|join(', ') }}.
+      {% endif %}
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Account #</th>
+            <th>Name</th>
+            <th>QBO type / sub-type</th>
+            <th>Error</th>
+            <th>intuit_tid</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for a in failed %}
+          <tr>
+            <td><code>{{ a.account_number }}</code></td>
+            <td>{{ a.account_name }}</td>
+            <td>{{ a.qbo_account_type or '' }} / {{ a.qbo_detail_type or '' }}</td>
+            <td><pre style="white-space:pre-wrap;margin:0;font-size:.85em;">{{ a.error }}</pre></td>
+            <td><code>{{ a.intuit_tid or '' }}</code></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="card">
+    <p class="eyebrow">Next step</p>
+    <h2>What to do now</h2>
+    <p>
+      The Chart of Accounts is the first cutover-data step. With accounts
+      created, the next step is the <strong>opening trial balance</strong>:
+      upload it and (when posting is implemented) post the opening journal
+      entry as of the day before your cutover date. After that, mappings
+      and the general ledger import are unchanged from existing flows.
+    </p>
+    <p>
+      <a class="btn" href="{{ url_for('migration_checklist') }}">Open migration checklist</a>
+      <a class="btn" href="{{ url_for('job_detail', job_id=job.id) }}">Back to this job</a>
+    </p>
+  </section>
+</section>
+{% endblock %}
