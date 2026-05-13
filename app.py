@@ -1446,6 +1446,18 @@ def support():
     return render_template("support.html")
 
 
+@app.route("/quickbooks-guide")
+def quickbooks_guide():
+    """Plain-English orientation to QuickBooks Online for new customers.
+
+    Public so lawyers can read it before signing up or connecting QBO.
+    Covers: what PCLaw Migrate posts, what does not happen automatically,
+    where to find imported data inside QuickBooks Online, and a short
+    after-import review checklist.
+    """
+    return render_template("quickbooks-guide.html")
+
+
 # ---------------------------------------------------------------------------
 # Onboarding / import-prep guide. Public page so customers can read it
 # before signing in. The accompanying CSV downloads are also public — they

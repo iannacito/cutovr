@@ -420,6 +420,9 @@
       <a class="btn btn-primary" href="{{ url_for('reconciliation_report_csv', job_id=job.id) }}">
         Download audit report
       </a>
+      <a class="btn btn-link" href="{{ url_for('quickbooks_guide') }}#after-import">
+        Open QuickBooks and review imported data &rarr;
+      </a>
     </div>
     {% if job.qbo_results %}
       <details class="quiet">

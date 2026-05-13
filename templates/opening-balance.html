@@ -90,12 +90,18 @@
       <tbody>
         {% for line in plan.lines %}
           <tr>
-            <td>{{ line.account_number }}</td>
+            <td>
+              {% if line.account_number %}
+                <code>{{ line.account_number }}</code>
+              {% else %}
+                <span class="muted">No number</span>
+              {% endif %}
+            </td>
             <td>{{ line.account_name }}</td>
             <td>
               {% if line.qbo_account_name %}
-                {{ line.qbo_account_name }}
-                <small class="muted">(#{{ line.qbo_account_id }})</small>
+                {% if line.qbo_acct_num %}<code>{{ line.qbo_acct_num }}</code> &middot; {% endif %}{{ line.qbo_account_name }}
+                <small class="muted">(QBO id #{{ line.qbo_account_id }})</small>
               {% else %}
                 <span class="badge error">unresolved</span>
               {% endif %}

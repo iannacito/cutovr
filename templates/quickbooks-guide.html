@@ -1,0 +1,189 @@
+{% extends "_base.html" %}
+{% block title %}QuickBooks Online guide &mdash; {{ app_name }}{% endblock %}
+{% block meta_description %}A plain-English guide for lawyers new to QuickBooks Online: what PCLaw Migrate posts, what it does not touch, and where to look in QBO after the import.{% endblock %}
+{% block content %}
+<section class="page page--prose">
+  <header class="hero">
+    <p class="eyebrow">QuickBooks Online guide</p>
+    <h1 class="display">New to QuickBooks Online? Read this first.</h1>
+    <p class="muted" style="max-width:68ch;">
+      A short, plain-English orientation for lawyers and firm staff who
+      have never opened QuickBooks Online before. What PCLaw Migrate puts
+      into QuickBooks, what stays untouched, and where to find each piece
+      after the import.
+    </p>
+  </header>
+
+  <section class="card" style="margin-top:var(--space-6);">
+    <p class="eyebrow">In one paragraph</p>
+    <p>
+      QuickBooks Online (QBO) is the cloud accounting system your firm is
+      moving to. Think of it as the system of record for accounts,
+      transactions, customers, vendors, and reports &mdash; the things
+      PCLaw used to hold. PCLaw Migrate copies your historical accounting
+      data from PCLaw into QBO so your bookkeeper or accountant can carry
+      on from there. Nothing is posted to QBO without your explicit
+      confirmation.
+    </p>
+  </section>
+
+  <section style="margin-top:var(--space-8);">
+    <h2>What PCLaw Migrate posts into QuickBooks</h2>
+    <div class="card">
+      <ul class="secure-list">
+        <li>
+          <strong>Chart of accounts.</strong> Your PCLaw account list,
+          shown with both account number and name. New accounts are only
+          created when you type <code>CREATE ACCOUNTS</code>; accounts
+          that already exist in QBO are matched, not duplicated.
+        </li>
+        <li>
+          <strong>Opening balances.</strong> When you run the trial
+          balance step, we post a single balancing journal entry as of
+          the day before your cutover date so QBO starts where PCLaw
+          ended.
+        </li>
+        <li>
+          <strong>Transaction history (journal entries).</strong> Each
+          PCLaw transaction posts as a QuickBooks <em>JournalEntry</em>.
+          Lines carry the account number plus name so the QBO ledger
+          stays readable.
+        </li>
+        <li>
+          <strong>Customers and vendors.</strong> A/R lines need a
+          customer; A/P lines need a vendor. We create them in QBO if
+          they don&rsquo;t exist yet, or reuse the matching record if
+          they do.
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <section style="margin-top:var(--space-8);">
+    <h2>What does <em>not</em> happen automatically</h2>
+    <p class="muted" style="max-width:68ch;">
+      PCLaw Migrate is a careful copy step. It does not replace the
+      judgement of a bookkeeper or accountant.
+    </p>
+    <div class="card">
+      <ul class="secure-list">
+        <li>It does not replace accountant or bookkeeper review.</li>
+        <li>It does not connect or reconcile QuickBooks bank feeds.</li>
+        <li>It does not change, delete, or archive your old PCLaw data.</li>
+        <li>
+          It does not bypass QuickBooks&rsquo; own confirmation gates &mdash;
+          you will see typed-confirmation prompts on every posting step.
+        </li>
+        <li>
+          Trust transactions are <strong>never</strong> auto-posted. We
+          show a reconciliation only; posting trust activity is a
+          per-matter decision your firm makes manually.
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <section style="margin-top:var(--space-8);" id="where-to-find">
+    <h2>Where to find things in QuickBooks after the import</h2>
+    <p class="muted" style="max-width:68ch;">
+      Menu names occasionally change in QuickBooks Online. If your screen
+      doesn&rsquo;t match the wording below, look for the closest label
+      &mdash; the underlying area is the same.
+    </p>
+
+    <div class="card">
+      <h3>Chart of accounts</h3>
+      <p>
+        Open the <strong>Settings</strong> gear (top right) and choose
+        <strong>Chart of accounts</strong>. Each row shows the account
+        number, name, type, and current balance. Sort by number to see
+        them in the same order as your PCLaw export.
+      </p>
+    </div>
+
+    <div class="card" style="margin-top:var(--space-4);">
+      <h3>Journal entries (your imported transactions)</h3>
+      <p>
+        Use the <strong>magnifying-glass search</strong> at the top of
+        QBO and type a transaction number, or open the
+        <strong>Reports</strong> area and run <em>Journal</em> or
+        <em>Transaction Detail by Account</em>. Each PCLaw transaction
+        appears as a single JournalEntry with its original
+        <code>transaction_id</code> in the memo line.
+      </p>
+    </div>
+
+    <div class="card" style="margin-top:var(--space-4);">
+      <h3>Customers and vendors</h3>
+      <p>
+        Customers live under the <strong>Sales</strong> or
+        <strong>Customers</strong> area; vendors live under
+        <strong>Expenses</strong> or <strong>Vendors</strong>. Names
+        created by the import appear there with no profile fields filled
+        in &mdash; your bookkeeper can add billing details later.
+      </p>
+    </div>
+
+    <div class="card" style="margin-top:var(--space-4);">
+      <h3>Reports and balance checks</h3>
+      <p>
+        Open the <strong>Reports</strong> area. The three you&rsquo;ll
+        use most after a migration:
+      </p>
+      <ul class="secure-list">
+        <li><strong>Trial Balance</strong> &mdash; compare against your PCLaw closing TB.</li>
+        <li><strong>Balance Sheet</strong> &mdash; sanity-check asset / liability totals.</li>
+        <li><strong>General Ledger</strong> &mdash; per-account drill-down to spot anything unexpected.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section style="margin-top:var(--space-8);" id="after-import">
+    <h2>After import &mdash; a short checklist</h2>
+    <div class="card">
+      <ol class="secure-list">
+        <li>
+          <strong>Open the Chart of accounts in QBO</strong> and confirm
+          the new accounts look right (number, name, type). Compare
+          against your PCLaw account list.
+        </li>
+        <li>
+          <strong>Spot-check a handful of journal entries</strong>
+          &mdash; pick a few transaction IDs from the import receipt and
+          search for them in QBO.
+        </li>
+        <li>
+          <strong>Compare balances.</strong> Run a Trial Balance in QBO
+          as of your cutover date and compare against the PCLaw closing
+          TB you uploaded.
+        </li>
+        <li>
+          <strong>Invite your bookkeeper or accountant</strong> to QBO so
+          they can review and continue from there. Trust and bank-feed
+          reconciliation are theirs to finish.
+        </li>
+        <li>
+          If something looks wrong, return to the job page in PCLaw
+          Migrate &mdash; the <em>Reverse</em> option posts offsetting
+          entries to undo the import.
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="card" style="margin-top:var(--space-8);background:var(--surface-2);">
+    <p class="eyebrow">Need a refresher on the migration steps?</p>
+    <p>
+      The <a href="{{ url_for('onboarding') }}">onboarding guide</a> walks
+      through preparing your PCLaw exports.
+      {% if user %}
+        The <a href="{{ url_for('migration_checklist') }}">migration checklist</a>
+        tracks where you are in the flow.
+      {% else %}
+        <a href="{{ url_for('login') }}">Sign in</a> to see your migration
+        checklist.
+      {% endif %}
+    </p>
+  </section>
+</section>
+{% endblock %}
