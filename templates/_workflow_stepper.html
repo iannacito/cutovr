@@ -2,13 +2,7 @@
    Customer-facing migration progress stepper.
 
    Renders the 6 stages from customer_workflow.build_customer_stages()
-   as a clean, responsive progress bar with completed / current /
-   upcoming indicators and a top-level "Next step" card with a primary
-   CTA.
-
-   Usage in a template:
-
-       {% include "_workflow_stepper.html" %}
+   as a calm, minimal progress bar with a single primary CTA.
 
    Required context (provided by app.inject_workflow_stages()):
 
@@ -16,40 +10,36 @@
        workflow_current    WorkflowStage | None
        workflow_progress   int  (0..100)
        workflow_completed  int
-
-   If `workflow_stages` is missing or empty (e.g. landing / login),
-   this partial renders nothing.
 ---------------------------------------------------------------------- #}
 {% if workflow_stages %}
 <aside class="workflow-stepper" aria-label="Migration progress">
   <div class="workflow-stepper__header">
     <div>
       <p class="eyebrow workflow-stepper__eyebrow">
-        Migration progress &middot;
         {% if workflow_current %}
-          Step {{ workflow_current.index }} of {{ workflow_current.total }}
+          Migration progress &middot; Step {{ workflow_current.index }} of {{ workflow_current.total }}
         {% else %}
-          Complete
+          Migration progress &middot; Complete
         {% endif %}
       </p>
       <h2 class="workflow-stepper__title">
         {% if workflow_current %}
-          Next: {{ workflow_current.label }}
+          {{ workflow_current.label }}
         {% else %}
-          You&rsquo;ve finished every step.
+          You&rsquo;re finished.
         {% endif %}
       </h2>
       <p class="workflow-stepper__lede">
         {% if workflow_current %}
           {{ workflow_current.description }}
         {% else %}
-          Review the migration checklist for final reconciliation reports.
+          Save the final balance check and the audit report for your records.
         {% endif %}
       </p>
     </div>
     {% if workflow_current and workflow_current.cta_url %}
       <div class="workflow-stepper__cta">
-        <a class="btn btn-primary" href="{{ workflow_current.cta_url }}">
+        <a class="btn btn-primary btn-lg" href="{{ workflow_current.cta_url }}">
           {{ workflow_current.cta_label }} &rarr;
         </a>
       </div>
@@ -88,16 +78,18 @@
   </ol>
 
   {% if workflow_current and workflow_current.friendly_terms %}
-    <p class="workflow-stepper__terms">
-      <strong>In plain English:</strong>
-      {% for term in workflow_current.friendly_terms %}
-        <span class="workflow-term">
-          <em>{{ term }}</em>
-          {% set explanation = workflow_terms.get(term) if workflow_terms else None %}
-          {% if explanation %}<span class="workflow-term__hint"> &mdash; {{ explanation }}</span>{% endif %}
-        </span>{% if not loop.last %}; {% endif %}
-      {% endfor %}.
-    </p>
+    <details class="quiet workflow-stepper__terms" aria-label="Accounting terms in this step">
+      <summary>What this step is called in accounting</summary>
+      <p>
+        {% for term in workflow_current.friendly_terms %}
+          <span class="workflow-term">
+            <em>{{ term }}</em>
+            {% set explanation = workflow_terms.get(term) if workflow_terms else None %}
+            {% if explanation %} &mdash; {{ explanation }}{% endif %}
+          </span>{% if not loop.last %}; {% endif %}
+        {% endfor %}.
+      </p>
+    </details>
   {% endif %}
 </aside>
 {% endif %}

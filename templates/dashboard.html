@@ -1,231 +1,189 @@
 {% extends "_base.html" %}
-{% block title %}{{ firm.name }} &mdash; Migration Console{% endblock %}
+{% block title %}{{ firm.name }} &mdash; Migration{% endblock %}
 {% block content %}
 <section class="page">
   {% include "_workflow_stepper.html" %}
 
-  <div class="hero">
-    <p class="eyebrow">{{ firm.name }} &middot; Migration console</p>
-    <h1>Move PCLaw to QuickBooks <em>cleanly</em>.</h1>
-    <p>Upload your PCLaw exports, connect QuickBooks Online, match accounts, and post a clean set of journal entries with a full audit trail. Files are encrypted at rest, duplicates are blocked, and every import can be reversed in one click.</p>
-    <p style="margin-top:var(--space-3);">
-      <a class="btn btn-primary" href="{{ url_for('onboarding') }}">Read the onboarding guide</a>
-      <a class="btn" href="{{ url_for('onboarding_template_csv') }}">Download CSV template</a>
-    </p>
-  </div>
-
-  <div class="card warning-panel" role="status" aria-label="Private beta guidance" style="margin-bottom:var(--space-6);">
-    <h3>Private beta &mdash; please read before importing</h3>
-    <p>
-      <strong>Do not upload a full client ledger on your first run.</strong>
-      Export a small slice of the GL (one or two transactions), import
-      it, and confirm the journal entries land cleanly in QuickBooks
-      before sending the full file. Always review the
-      <em>Map accounts</em> screen before posting &mdash; a wrong
-      mapping will write to the wrong QuickBooks account and has to
-      be reversed afterward.
-      <a href="{{ url_for('onboarding') }}">See the full onboarding guide.</a>
-    </p>
-  </div>
-
   {% if next_step %}
-    <div class="card{% if next_step.key == 'cutover_setup' %} warning-panel{% endif %}" role="status" aria-label="Next migration step" style="margin-bottom:var(--space-6);">
-      <p class="eyebrow">Next recommended step</p>
-      <h3>{{ next_step.label }}</h3>
-      <p>{{ next_step.summary }}</p>
-      <p style="margin-top:var(--space-3);">
+    <div class="next-card">
+      <div class="next-card__body">
+        <p class="eyebrow">Next recommended step</p>
+        <h3>{{ next_step.label }}</h3>
+        <p>{{ next_step.summary }}</p>
+      </div>
+      <div class="next-card__actions">
         {% if next_step.key == 'cutover_setup' %}
-          <a class="btn btn-primary" href="{{ url_for('cutover_setup') }}">Open cutover setup &rarr;</a>
+          <a class="btn btn-primary btn-lg" href="{{ url_for('cutover_setup') }}">Open cutover setup &rarr;</a>
+        {% else %}
+          <a class="btn btn-primary btn-lg" href="{{ url_for('migration_checklist') }}">Open checklist &rarr;</a>
         {% endif %}
-        <a class="btn" href="{{ url_for('migration_checklist') }}">View full checklist</a>
-        {% if cutover %}
-          <a class="btn" href="{{ url_for('cutover_setup') }}">Edit cutover setup</a>
-        {% endif %}
-      </p>
+      </div>
     </div>
   {% else %}
-    <div class="card success-panel" role="status" style="margin-bottom:var(--space-6);">
-      <h3>Migration checklist: every step complete</h3>
-      <p>Open the <a href="{{ url_for('migration_checklist') }}">checklist</a> to review status and download reconciliation reports.</p>
+    <div class="flash success" role="status" style="margin-bottom:var(--space-6);">
+      <strong>Checklist complete.</strong>
+      Open the <a href="{{ url_for('migration_checklist') }}">checklist</a> to review status and download reconciliation reports.
     </div>
   {% endif %}
 
-  {% if not qbo_configured %}
-    <div class="card warning-panel">
-      <h3>QuickBooks OAuth not configured</h3>
-      <p>Set <code>QBO_CLIENT_ID</code>, <code>QBO_CLIENT_SECRET</code>, <code>QBO_REDIRECT_URI</code>, and <code>QBO_ENVIRONMENT</code> in the environment to enable live QuickBooks connections. Demo mode (upload + parse) works without them.</p>
+  {% if qbo_configured and qbo_is_sandbox %}
+    <div class="flash info" role="status" aria-label="Sandbox testing mode" style="margin-bottom:var(--space-6);">
+      <strong>Sandbox Testing Mode.</strong>
+      You&rsquo;re connected to a QuickBooks <em>sandbox</em> company for safe testing.
+      Nothing posts to a real firm&rsquo;s QuickBooks.
+      Real customer QuickBooks companies require Intuit production approval and production credentials, which this build does not yet have.
+      {% if support_email and "your-domain.example" not in support_email %}
+        Need the sandbox login? <a href="mailto:{{ support_email }}">Email support</a>.
+      {% endif %}
     </div>
-  {% elif qbo_is_sandbox %}
-    <div class="card warning-panel" role="status" aria-label="Sandbox testing mode">
-      <h3>Sandbox Testing Mode</h3>
-      <p>
-        This build is connected to QuickBooks <strong>Sandbox</strong>. When
-        you click <strong>Connect to QuickBooks</strong> on a job, Intuit
-        will ask which company to authorize &mdash; please pick the
-        <strong>sandbox QuickBooks company we provided</strong>, not your
-        firm's real QuickBooks Online account. Real customer QBO companies
-        require Intuit production approval and production credentials,
-        which this build does not yet have. If you sign in with a real
-        QuickBooks Online account, Intuit will show
-        &ldquo;Uh oh, there's a connection problem&rdquo; and the
-        connection will fail safely &mdash; nothing in your real
-        QuickBooks is changed.
-        {% if support_email and "your-domain.example" not in support_email %}
-          Need the sandbox login? Email <a href="mailto:{{ support_email }}">{{ support_email }}</a>.
-        {% endif %}
-      </p>
-    </div>
-  {% else %}
-    <div class="card success-panel" role="status" aria-label="Production mode">
-      <h3>Production Mode</h3>
-      <p>
-        This deploy is in QuickBooks <strong>Production</strong> mode.
-        Clicking <strong>Connect to QuickBooks</strong> on a job will
-        authorize the user's <strong>real QuickBooks Online company</strong>.
-        Imports posted from this deploy are real journal entries in real
-        customer books. Each import requires an explicit
-        &ldquo;type IMPORT to confirm&rdquo; step before anything is posted.
-      </p>
+  {% elif not qbo_configured %}
+    <div class="flash info" role="status" style="margin-bottom:var(--space-6);">
+      <strong>Demo mode.</strong>
+      QuickBooks connection is not set up on this deploy. Uploads and previews work; nothing is sent to QuickBooks.
     </div>
   {% endif %}
 
-  <section class="grid-two" id="intake" style="margin-bottom:var(--space-8);">
+  <section class="grid-two" id="intake" style="margin-bottom:var(--space-12);">
     <article class="card">
-      <p class="eyebrow">Upload all PCLaw reports at once</p>
-      <h2>Bulk upload &mdash; we'll figure out what each file is</h2>
-      <p class="muted" style="margin-bottom:var(--space-4);">
-        Drop in every PCLaw CSV export for this firm in one go. We'll identify each file and organize your migration checklist.
+      <p class="eyebrow">Upload</p>
+      <h2>Upload your PCLaw files</h2>
+      <p class="muted" style="margin-bottom:var(--space-5);">
+        Drop in every PCLaw CSV export at once. We&rsquo;ll identify each one
+        and organize your migration. Nothing posts to QuickBooks until you
+        review it.
       </p>
       <form action="{{ url_for('upload_bulk') }}" method="post" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <label>
-          <span>Law firm / company name (as it appears in QuickBooks)</span>
+          <span>Law firm name <small class="muted">(as it appears in QuickBooks)</small></span>
           <input type="text" name="company_name" placeholder="Smith &amp; Hart LLP" required>
         </label>
         <label>
-          <span>Notification email (optional)</span>
+          <span>Notification email <small class="muted">(optional)</small></span>
           <input type="email" name="email" placeholder="ops@firm.com">
         </label>
         <label>
-          <span>PCLaw exports (one or more CSV files)</span>
+          <span>PCLaw exports</span>
           <input type="file" name="ledger_files" accept=".csv" multiple required>
+          <small class="muted" style="font-size:.85rem;">Hold Ctrl or &#8984; to select multiple CSVs.</small>
         </label>
-        <p class="muted" style="font-size:.9rem;margin:.25rem 0 var(--space-3);">
-          Hold Ctrl/Cmd to select multiple files. We accept Chart of Accounts, Trial Balance (opening &amp; ending), General Ledger, and Trust Listing exports. Nothing posts to QuickBooks until you review each one.
-        </p>
-        <div class="actions-row" style="margin-top:var(--space-4);">
-          <button class="btn btn-primary" type="submit">Upload all &amp; auto-identify</button>
+        <div class="actions-row" style="margin-top:var(--space-5);">
+          <button class="btn btn-primary btn-lg" type="submit">Upload &amp; identify</button>
         </div>
       </form>
-      <details style="margin-top:var(--space-5);">
-        <summary class="muted" style="cursor:pointer;font-size:.95rem;">Prefer to upload one report at a time?</summary>
-        <form action="{{ url_for('upload') }}" method="post" enctype="multipart/form-data" style="margin-top:var(--space-4);">
+
+      <details class="quiet">
+        <summary>Upload one file at a time</summary>
+        <form action="{{ url_for('upload') }}" method="post" enctype="multipart/form-data">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <label>
-            <span>Law firm / company name (as it appears in QuickBooks)</span>
+            <span>Law firm name</span>
             <input type="text" name="company_name" placeholder="Smith &amp; Hart LLP" required>
           </label>
           <label>
-            <span>Notification email (optional)</span>
+            <span>Notification email <small class="muted">(optional)</small></span>
             <input type="email" name="email" placeholder="ops@firm.com">
           </label>
           <label>
             <span>Report type</span>
             <select name="report_type">
-              <option value="">Auto-detect from CSV headers</option>
-              <option value="general_ledger">Transaction history (General Ledger) &mdash; posts to QuickBooks</option>
-              <option value="chart_of_accounts">Your list of accounts (Chart of Accounts) &mdash; preview before creating</option>
-              <option value="trial_balance">Starting / ending balances (Trial Balance) &mdash; validation &amp; reconciliation</option>
-              <option value="trust_listing">Client trust balances (Trust Listing) &mdash; validation only</option>
+              <option value="">Detect automatically</option>
+              <option value="general_ledger">Transaction history <small>(General Ledger)</small></option>
+              <option value="chart_of_accounts">Account list <small>(Chart of Accounts)</small></option>
+              <option value="trial_balance">Starting / final balances <small>(Trial Balance)</small></option>
+              <option value="trust_listing">Client trust balances <small>(Trust Listing)</small></option>
             </select>
           </label>
           <label>
-            <span>PCLaw export CSV</span>
+            <span>PCLaw export</span>
             <input type="file" name="ledger_file" accept=".csv" required>
           </label>
-          <p class="muted" style="font-size:.9rem;margin:.25rem 0 var(--space-3);">
-            Only the transaction-history (General Ledger) upload posts journal entries to QuickBooks. The other reports are parsed for review and reconciliation &mdash; nothing posts automatically.
-          </p>
           <div class="actions-row" style="margin-top:var(--space-4);">
-            <button class="btn" type="submit">Upload single file &amp; encrypt</button>
+            <button class="btn" type="submit">Upload single file</button>
           </div>
         </form>
       </details>
     </article>
 
-    <article class="card">
+    <article class="card card--inset">
       <p class="eyebrow">Workspace</p>
-      <h2>Firm details</h2>
-      <dl class="summary-grid">
-        <div><dt>Firm</dt><dd>{{ firm.name }}</dd></div>
+      <h2>{{ firm.name }}</h2>
+      <dl class="summary-grid" style="margin-top:var(--space-4);">
         <div><dt>Admin</dt><dd>{{ user.email }}</dd></div>
-        <div><dt>Created</dt><dd>{{ firm.created_at[:10] }}</dd></div>
         <div><dt>Jobs</dt><dd>{{ firm_jobs|length }}</dd></div>
+        <div><dt>Created</dt><dd>{{ firm.created_at[:10] }}</dd></div>
+        <div><dt>Storage</dt><dd>Encrypted</dd></div>
       </dl>
-      <p class="note" style="margin-top:var(--space-4);">Every job, encrypted file, and QuickBooks token created here is scoped to this firm workspace.</p>
-      <div class="actions-row" style="margin-top:var(--space-4);">
-        <a class="btn" href="{{ url_for('quickbooks_manage') }}">QuickBooks connections</a>
-        <a class="btn" href="{{ url_for('readiness_page') }}">Go-live readiness</a>
-        <a class="btn" href="{{ url_for('support') }}">Contact support</a>
-        <a class="btn" href="{{ url_for('privacy') }}">Privacy</a>
+      <div class="actions-row" style="margin-top:var(--space-6);">
+        <a class="btn" href="{{ url_for('migration_checklist') }}">Checklist</a>
+        <a class="btn" href="{{ url_for('quickbooks_manage') }}">QuickBooks</a>
+        <a class="btn btn-link" href="{{ url_for('onboarding') }}">Onboarding guide</a>
       </div>
     </article>
   </section>
 
-  <section class="card" id="recent" style="margin-bottom:var(--space-8);">
-    <div class="panel-head">
-      <div>
-        <p class="eyebrow">Step 02 &middot; Recent jobs</p>
-        <h2>Last 20 migrations for this firm</h2>
-      </div>
-      <a class="btn" href="{{ url_for('firm_imports') }}">View import history &rarr;</a>
+  {% if firm_jobs %}
+  <section id="recent" style="margin-bottom:var(--space-10);">
+    <div class="flex-between" style="margin-bottom:var(--space-4);">
+      <h2 style="margin:0;">Recent migrations</h2>
+      <a class="btn btn-link" href="{{ url_for('firm_imports') }}">View all &rarr;</a>
     </div>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr><th>Company</th><th>Status</th><th>Source file</th><th>Created (UTC)</th></tr>
-        </thead>
-        <tbody>
-          {% if firm_jobs %}
+    <div class="card" style="padding:0;">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Company</th><th>Status</th><th>Source file</th><th>Created</th></tr>
+          </thead>
+          <tbody>
             {% for job in firm_jobs %}
             <tr>
               <td><a href="{{ url_for('job_detail', job_id=job.id) }}">{{ job.company }}</a></td>
               <td><span class="badge {% if 'Imported' in (job.status or '') %}success{% elif 'failed' in (job.status or '')|lower or 'blocked' in (job.status or '')|lower %}error{% endif %}">{{ job.status }}</span></td>
               <td><code>{{ job.source_file }}</code></td>
-              <td>{{ job.created_at[:19].replace('T', ' ') }}</td>
+              <td>{{ job.created_at[:10] }}</td>
             </tr>
             {% endfor %}
-          {% else %}
-            <tr><td colspan="4" style="text-align:center;color:var(--ink-muted);padding:var(--space-6);">No jobs yet. Upload a PCLaw general ledger above to start.</td></tr>
-          {% endif %}
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  {% if recent_audit %}
-  <section class="card" id="audit">
-    <div class="panel-head">
-      <div>
-        <p class="eyebrow">Audit</p>
-        <h2>Recent activity (last 10)</h2>
+          </tbody>
+        </table>
       </div>
     </div>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>When (UTC)</th><th>Action</th><th>Target</th><th>Details</th></tr></thead>
-        <tbody>
-          {% for a in recent_audit %}
-            <tr>
-              <td>{{ a.created_at[:19].replace("T", " ") }}</td>
-              <td>{{ a.action }}</td>
-              <td>{% if a.target_type %}{{ a.target_type }}/{{ a.target_id }}{% else %}&mdash;{% endif %}</td>
-              <td><code>{{ a.details or '' }}</code></td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
+  </section>
+  {% endif %}
+
+  <details class="quiet" style="margin-top:var(--space-8);">
+    <summary>Before your first real migration</summary>
+    <p class="muted">
+      For your first run, export a small slice of your PCLaw transaction
+      history (one or two transactions) and confirm it lands correctly in
+      QuickBooks before sending the full file. Always double-check the
+      <em>Match accounts</em> screen before posting &mdash; a wrong match
+      sends records to the wrong account.
+      <a href="{{ url_for('onboarding') }}">Read the onboarding guide</a>.
+    </p>
+  </details>
+
+  {% if recent_audit %}
+  <section style="margin-top:var(--space-10);">
+    <details class="quiet">
+      <summary>Recent activity (last 10)</summary>
+      <div class="card" style="padding:0;margin-top:var(--space-3);">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>When (UTC)</th><th>Action</th><th>Target</th><th>Details</th></tr></thead>
+            <tbody>
+              {% for a in recent_audit %}
+                <tr>
+                  <td>{{ a.created_at[:19].replace("T", " ") }}</td>
+                  <td>{{ a.action }}</td>
+                  <td>{% if a.target_type %}{{ a.target_type }}/{{ a.target_id }}{% else %}&mdash;{% endif %}</td>
+                  <td><code>{{ a.details or '' }}</code></td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </details>
   </section>
   {% endif %}
 </section>

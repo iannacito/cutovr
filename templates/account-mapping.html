@@ -1,20 +1,20 @@
 {% extends "_base.html" %}
-{% block title %}Account mapping &mdash; {{ job.company }}{% endblock %}
+{% block title %}Match accounts &mdash; {{ job.company }}{% endblock %}
 {% block content %}
 <section class="detail-page">
   <a href="{{ url_for('job_detail', job_id=job.id) }}" class="back-link">&larr; Back to job</a>
 
-  <section class="card">
-    <p class="eyebrow">Mapping</p>
-    <h1>Account mapping</h1>
-    <p class="muted">
-      Connect each PCLaw account to a QuickBooks account in
+  <header>
+    <p class="eyebrow">Account mapping &middot; Match accounts</p>
+    <h1 class="display" style="font-size:clamp(1.8rem,3.5vw,2.6rem);">Pair each PCLaw account with QuickBooks.</h1>
+    <p class="muted" style="max-width:60ch;">
+      Match each PCLaw account to a QuickBooks account in
       <strong>{{ qbo_connection.company_name or qbo_connection.realm_id }}</strong>.
-      Saved mappings are stored per firm + QBO company and will be reused on future imports.
+      We&rsquo;ll remember these matches for future imports to the same company.
     </p>
-  </section>
+  </header>
 
-  <section class="card">
+  <section class="card" style="padding:0;">
     <form method="post">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="table-wrap">
@@ -23,27 +23,25 @@
             <tr>
               <th>PCLaw account</th>
               <th>QuickBooks account</th>
-              <th>Source</th>
+              <th>Match</th>
             </tr>
           </thead>
           <tbody>
             {% for r in rows %}
               <tr>
                 <td>
-                  <strong>{{ r.pclaw_name or '(no name)' }}</strong><br>
-                  <span class="muted" style="font-size:0.85em;">number: {{ r.pclaw_number or '—' }}</span>
+                  <strong>{{ r.pclaw_name or '(no name)' }}</strong>
+                  <p class="muted" style="margin:.2rem 0 0;font-size:.85rem;">No. {{ r.pclaw_number or '—' }}</p>
                   <input type="hidden" name="pclaw_num[{{ r.idx }}]" value="{{ r.pclaw_number or '' }}">
                   <input type="hidden" name="pclaw_name[{{ r.idx }}]" value="{{ r.pclaw_name or '' }}">
                 </td>
                 <td>
                   <select name="mapping[{{ r.idx }}]" style="width:100%;">
-                    <option value="">— select QBO account —</option>
+                    <option value="">&mdash; pick QuickBooks account &mdash;</option>
                     {% for a in qbo_accounts %}
                       <option value="{{ a.Id }}"
                         {% if r.current_qbo_id == a.Id %}selected{% endif %}>
-                        {{ a.Name }}
-                        {% if a.AcctNum %}({{ a.AcctNum }}){% endif %}
-                        — {{ a.AccountType }}
+                        {{ a.Name }}{% if a.AcctNum %} ({{ a.AcctNum }}){% endif %} &mdash; {{ a.AccountType }}
                       </option>
                     {% endfor %}
                   </select>
@@ -54,7 +52,7 @@
                   {% elif r.is_suggestion %}
                     <span class="badge">Auto-match</span>
                   {% else %}
-                    <span class="badge error">Unmapped</span>
+                    <span class="badge error">Unmatched</span>
                   {% endif %}
                 </td>
               </tr>
@@ -62,14 +60,15 @@
           </tbody>
         </table>
       </div>
-      <div class="actions-row" style="margin-top:var(--space-4);">
-        <button class="btn btn-primary" type="submit">Save mappings</button>
-        <a href="{{ url_for('job_detail', job_id=job.id) }}" class="btn">Cancel</a>
+      <div style="padding:var(--space-5) var(--space-6);border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:var(--space-4);flex-wrap:wrap;">
+        <p class="muted" style="margin:0;font-size:.9rem;max-width:48ch;">
+          Saved matches override auto-matches. Leave a dropdown blank to keep the auto-match.
+        </p>
+        <div class="actions-row">
+          <a href="{{ url_for('job_detail', job_id=job.id) }}" class="btn btn-link">Cancel</a>
+          <button class="btn btn-primary btn-lg" type="submit">Save matches</button>
+        </div>
       </div>
-      <p class="note" style="margin-top:var(--space-3);">
-        Saved mappings take priority over auto-match. Leave a row's dropdown blank
-        to keep the auto-match (or to leave it unmapped).
-      </p>
     </form>
   </section>
 </section>
