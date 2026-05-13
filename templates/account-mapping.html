@@ -30,8 +30,12 @@
             {% for r in rows %}
               <tr>
                 <td>
-                  <strong>{{ r.pclaw_name or '(no name)' }}</strong>
-                  <p class="muted" style="margin:.2rem 0 0;font-size:.85rem;">No. {{ r.pclaw_number or '—' }}</p>
+                  <strong>
+                    {% if r.pclaw_number %}<code>{{ r.pclaw_number }}</code> &middot; {% endif %}{{ r.pclaw_name or '(no name)' }}
+                  </strong>
+                  {% if not r.pclaw_number %}
+                    <p class="muted" style="margin:.2rem 0 0;font-size:.85rem;">No account number</p>
+                  {% endif %}
                   <input type="hidden" name="pclaw_num[{{ r.idx }}]" value="{{ r.pclaw_number or '' }}">
                   <input type="hidden" name="pclaw_name[{{ r.idx }}]" value="{{ r.pclaw_name or '' }}">
                 </td>

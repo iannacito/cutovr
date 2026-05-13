@@ -67,6 +67,7 @@ class OpeningLine:
     qbo_account_id: Optional[str]
     qbo_account_name: Optional[str]
     qbo_account_type: Optional[str]
+    qbo_acct_num: Optional[str] = None
     blocker: Optional[str] = None      # set when the line can't be posted
 
     def to_dict(self) -> dict:
@@ -224,6 +225,7 @@ def build_opening_balance_plan(
             qbo_account_id=str(qbo_account.get("Id")) if qbo_account else None,
             qbo_account_name=qbo_account.get("Name") if qbo_account else None,
             qbo_account_type=qbo_account.get("AccountType") if qbo_account else None,
+            qbo_acct_num=((qbo_account.get("AcctNum") or "").strip() or None) if qbo_account else None,
             blocker=blocker,
         ))
         total_debit += debit

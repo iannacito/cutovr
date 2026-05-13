@@ -124,12 +124,18 @@
   <section class="card">
     <p class="eyebrow">Accounts</p>
     <h2>PCLaw accounts &rarr; QuickBooks accounts</h2>
+    <p class="muted" style="font-size:.9rem;">
+      Account numbers are shown alongside each name so you can confirm
+      the right account in QuickBooks at a glance.
+    </p>
     <div class="table-wrap">
       <table>
         <thead>
           <tr>
+            <th>PCLaw #</th>
             <th>PCLaw account</th>
             <th>Mapped?</th>
+            <th>QBO #</th>
             <th>QBO account</th>
             <th>QBO id</th>
             <th>Lines</th>
@@ -138,12 +144,28 @@
         <tbody>
           {% for a in preview.accounts %}
           <tr>
-            <td>{{ a.pclaw_display }}</td>
+            <td>
+              {% if a.pclaw_account_number %}
+                <code>{{ a.pclaw_account_number }}</code>
+              {% else %}
+                <span class="muted">No number</span>
+              {% endif %}
+            </td>
+            <td>{{ a.pclaw_account_name or a.pclaw_display }}</td>
             <td>
               {% if a.mapped %}
                 <span class="badge success">Yes</span>
               {% else %}
                 <span class="badge error">No</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if a.qbo_acct_num %}
+                <code>{{ a.qbo_acct_num }}</code>
+              {% elif a.qbo_account_id %}
+                <span class="muted">No number</span>
+              {% else %}
+                &mdash;
               {% endif %}
             </td>
             <td>{{ a.qbo_account_name or '—' }}</td>
@@ -228,7 +250,7 @@
           <tr>
             <td><code>{{ l.transaction_id }}</code></td>
             <td>{{ l.date }}</td>
-            <td>{{ l.account }}</td>
+            <td>{{ l.account }}{% if l.qbo_acct_num %} <small class="muted">&middot; QBO #{{ l.qbo_acct_num }}</small>{% endif %}</td>
             <td>{{ l.posting_type }}</td>
             <td>${{ l.amount }}</td>
             <td class="muted">{{ l.description }}</td>

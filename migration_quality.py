@@ -89,6 +89,11 @@ def build_dry_run_preview(
         for a in qbo_accounts_response.get("QueryResponse", {}).get("Account", [])
         if a.get("Id")
     }
+    qbo_acctnum_by_id = {
+        a.get("Id"): (a.get("AcctNum") or "").strip() or None
+        for a in qbo_accounts_response.get("QueryResponse", {}).get("Account", [])
+        if a.get("Id")
+    }
 
     grouped = group_rows_by_transaction(rows) if rows else OrderedDict()
     unmapped_accounts = sorted(find_unmapped_accounts(rows, mapping, mapping_mode)) if rows else []
@@ -128,10 +133,13 @@ def build_dry_run_preview(
                 display or "(blank)",
                 {
                     "pclaw_display": display or "(blank)",
+                    "pclaw_account_number": (r.get("account_number") or "").strip() or None,
+                    "pclaw_account_name": (r.get("account_name") or "").strip() or None,
                     "mapping_key": key or "",
                     "mapped": mapped,
                     "qbo_account_id": qbo_id,
                     "qbo_account_name": qbo_name_by_id.get(qbo_id) if qbo_id else None,
+                    "qbo_acct_num": qbo_acctnum_by_id.get(qbo_id) if qbo_id else None,
                     "line_count": 0,
                 },
             )
@@ -152,6 +160,7 @@ def build_dry_run_preview(
                     "date": r.get("date"),
                     "account": display,
                     "qbo_account_id": qbo_id,
+                    "qbo_acct_num": qbo_acctnum_by_id.get(qbo_id) if qbo_id else None,
                     "posting_type": "Debit" if debit else "Credit",
                     "amount": _dollar(debit if debit else credit),
                     "description": (r.get("description") or "")[:120],
