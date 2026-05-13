@@ -43,6 +43,13 @@
           {{ workflow_current.cta_label }} &rarr;
         </a>
       </div>
+    {% elif not workflow_current %}
+      {# Migration is fully complete — surface the summary page. #}
+      <div class="workflow-stepper__cta">
+        <a class="btn btn-primary btn-lg" href="{{ url_for('migration_summary_page') }}">
+          Open migration summary &rarr;
+        </a>
+      </div>
     {% endif %}
   </div>
 

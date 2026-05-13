@@ -222,7 +222,11 @@ def _stage_cta(
     if stage_key == STAGE_IMPORT:
         return ("Open the checklist", u("migration_checklist", "/migration-checklist"))
     if stage_key == STAGE_RECONCILE:
-        return ("Open the checklist", u("migration_checklist", "/migration-checklist"))
+        # Last stage: send the customer to the final migration summary,
+        # which is the completion / confidence view. The checklist link
+        # is still reachable from the summary page itself.
+        return ("Open migration summary",
+                u("migration_summary_page", "/migration-summary"))
     return ("", "")
 
 
