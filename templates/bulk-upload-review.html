@@ -5,7 +5,7 @@
   {% include "_workflow_stepper.html" %}
 
   <div class="hero">
-    <p class="eyebrow">{{ bulk.company }}</p>
+    <p class="eyebrow">Step 2 of 6 &middot; Upload review</p>
     <h1>We organized your files.</h1>
     <p class="meta-row" style="margin-top:var(--space-4);">
       <span><strong>{{ summary.file_count }}</strong> uploaded</span>
@@ -27,7 +27,7 @@
         </ul>
       </div>
       <div class="next-card__actions">
-        <a class="btn btn-primary btn-lg" href="{{ url_for('dashboard') }}#intake">Upload missing files &rarr;</a>
+        <a class="btn btn-primary btn-lg" href="#add-more-reports">Upload missing files &rarr;</a>
       </div>
     </div>
   {% else %}
@@ -39,9 +39,30 @@
       </div>
       <div class="next-card__actions">
         <a class="btn btn-primary btn-lg" href="{{ url_for('migration_checklist') }}">Continue &rarr;</a>
+        <a class="btn" href="#add-more-reports">Add more reports</a>
       </div>
     </div>
   {% endif %}
+
+  <section class="card" id="add-more-reports" style="margin-bottom:var(--space-8);">
+    <p class="eyebrow">Forgot one?</p>
+    <h3 style="margin:var(--space-1) 0 var(--space-2);">Upload additional reports</h3>
+    <p class="muted" style="max-width:60ch;margin-bottom:var(--space-4);">
+      Add more PCLaw CSV exports to this migration without starting over.
+      We&rsquo;ll identify each one and update the checklist.
+    </p>
+    <form action="{{ url_for('bulk_upload_append', bulk_id=bulk.id) }}" method="post" enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>
+        <span>Additional PCLaw exports</span>
+        <input type="file" name="ledger_files" accept=".csv" multiple required>
+        <small class="muted" style="font-size:.85rem;">Hold Ctrl or &#8984; to select multiple CSVs.</small>
+      </label>
+      <div class="actions-row" style="margin-top:var(--space-4);">
+        <button class="btn btn-primary" type="submit">Add to this migration</button>
+      </div>
+    </form>
+  </section>
 
   <section>
     <h2 style="margin-bottom:var(--space-4);">Per-file detection summary</h2>

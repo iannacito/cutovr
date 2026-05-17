@@ -106,8 +106,9 @@ def p3_checklist_has_single_dominant_next_step():
     r = c.get("/migration-checklist")
     assert r.status_code == 200
     body = r.get_data(as_text=True)
-    # "Next step:" copy retained for cutover_workflow integration.
+    # "Next step:" retains legacy wording AND the new step-of-6 framing.
     assert "Next step:" in body
+    assert "Step " in body and " of 6" in body
     # Dominant primary CTA on the next-step card.
     assert 'class="btn btn-primary btn-lg"' in body, \
         "checklist should expose a single dominant primary CTA"
@@ -151,8 +152,9 @@ def p4_job_detail_dominant_next_step_card():
     ]
     assert any(cta in body for cta in cta_candidates), \
         f"expected one of dominant next-step CTAs, got body[:1200]={body[:1200]!r}"
-    # The detailed migration sequence is still discoverable.
-    assert "Migration sequence" in body
+    # The detailed migration sequence is still discoverable (tucked
+    # behind a "See all six migration steps" disclosure).
+    assert ("six migration steps" in body) or ("Migration sequence" in body)
     print("P4 OK: job-detail surfaces a dominant next-step card")
 
 

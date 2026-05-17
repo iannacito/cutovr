@@ -7,7 +7,11 @@
   {% if next_step %}
     <div class="next-card">
       <div class="next-card__body">
-        <p class="eyebrow">Next step: {{ next_step.label }}</p>
+        {% if workflow_current %}
+          <p class="eyebrow">Step {{ workflow_current.index }} of {{ workflow_current.total }} &middot; Next step: {{ next_step.label }}</p>
+        {% else %}
+          <p class="eyebrow">Next step: {{ next_step.label }}</p>
+        {% endif %}
         <h3>{{ next_step.label }}</h3>
         <p>{{ next_step.summary }}</p>
       </div>
@@ -25,6 +29,11 @@
       Confirm the final balance check against PCLaw and save the audit report.
     </div>
   {% endif %}
+
+  <div class="actions-row" style="margin-bottom:var(--space-6);">
+    <a class="btn" href="{{ url_for('dashboard') }}#intake">Add more reports</a>
+    <a class="btn btn-link" href="{{ url_for('firm_imports') }}">View all uploaded reports &rarr;</a>
+  </div>
 
   <section style="margin-bottom:var(--space-10);">
     <h2>Steps in your migration</h2>
@@ -86,16 +95,15 @@
     </ul>
   </details>
 
-  <section class="card" style="margin-top:var(--space-6);background:var(--surface-2);">
-    <p class="eyebrow">New to QuickBooks Online?</p>
-    <p class="muted" style="max-width:64ch;">
-      A short, plain-English orientation: what we post into QuickBooks,
-      what stays untouched, and where to find each piece in QBO after the
-      import.
+  <details class="quiet" style="margin-top:var(--space-6);">
+    <summary>New to QuickBooks Online?</summary>
+    <p class="muted" style="max-width:64ch;margin-top:var(--space-3);">
+      Read a short, plain-English orientation: what we post into QuickBooks,
+      what stays untouched, and where to find each piece after the import.
     </p>
     <p style="margin-top:var(--space-3);">
       <a class="btn btn-link" href="{{ url_for('quickbooks_guide') }}">Open the QuickBooks Online guide &rarr;</a>
     </p>
-  </section>
+  </details>
 </section>
 {% endblock %}

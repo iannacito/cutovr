@@ -5,14 +5,19 @@
   <a href="{{ url_for('job_detail', job_id=job.id) }}" class="back-link">&larr; Back to job</a>
 
   <section class="card detail-hero">
-    <p class="eyebrow">Job {{ job.id }} &middot; Trial Balance &middot; Opening balance JE</p>
+    <p class="eyebrow">Step 4 of 6 &middot; Starting balances</p>
     <h1>{{ job.company }}</h1>
     <p class="muted">
-      This page builds a single balancing <code>JournalEntry</code> that
-      seeds QuickBooks with the opening balances from the uploaded
-      trial balance. <strong>Nothing is posted to QuickBooks until you
-      type <code>{{ confirmation_phrase }}</code> and submit.</strong>
+      Review the starting balances. Nothing posts to QuickBooks until you
+      type <code>{{ confirmation_phrase }}</code> below.
     </p>
+    <details class="quiet" style="margin-top:var(--space-3);">
+      <summary>What this step does</summary>
+      <p class="muted" style="margin-top:var(--space-2);">
+        We build a single balanced journal entry that seeds QuickBooks
+        with the starting balances from the trial balance you uploaded.
+      </p>
+    </details>
   </section>
 
   {% if qbo_error %}
