@@ -5,13 +5,19 @@
   <a href="{{ url_for('job_detail', job_id=job.id) }}" class="back-link">&larr; Back to job</a>
 
   <header>
-    <p class="eyebrow">Account mapping &middot; Match accounts</p>
+    <p class="eyebrow">Step 3 of 6 &middot; Match accounts</p>
     <h1 class="display" style="font-size:clamp(1.8rem,3.5vw,2.6rem);">Pair each PCLaw account with QuickBooks.</h1>
     <p class="muted" style="max-width:60ch;">
       Match each PCLaw account to a QuickBooks account in
       <strong>{{ qbo_connection.company_name or qbo_connection.realm_id }}</strong>.
-      We&rsquo;ll remember these matches for future imports to the same company.
     </p>
+    <details class="quiet" style="margin-top:var(--space-3);">
+      <summary>About Account mapping</summary>
+      <p class="muted" style="max-width:60ch;margin-top:var(--space-2);">
+        We&rsquo;ll remember these matches for future imports to the same QuickBooks company,
+        so you only do this once.
+      </p>
+    </details>
   </header>
 
   <section class="card" style="padding:0;">

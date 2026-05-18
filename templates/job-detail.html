@@ -122,9 +122,15 @@
   {% set step_imported = job.qbo_results %}
 
   {# Dominant primary CTA card — what to do next ---------------------- #}
+  {% if not step_validated %}{% set _detail_step = 2 %}
+  {% elif not step_mapped %}{% set _detail_step = 3 %}
+  {% elif not step_connected %}{% set _detail_step = 3 %}
+  {% elif not step_imported %}{% set _detail_step = 4 %}
+  {% else %}{% set _detail_step = 6 %}
+  {% endif %}
   <section class="next-card">
     <div class="next-card__body">
-      <p class="eyebrow">Next step</p>
+      <p class="eyebrow">Step {{ _detail_step }} of 6 &middot; Do this next</p>
       {% if not step_validated %}
         <h3>Fix the file before going further.</h3>
         <p>The CSV is missing required columns or doesn&rsquo;t balance. Re-export and re-upload.</p>
@@ -157,10 +163,12 @@
     </div>
   </section>
 
-  {# Compact step list — at a glance ---------------------------------- #}
-  <section>
-    <h2>Migration sequence</h2>
-    <div class="card">
+  {# Compact step list — collapsed by default so customers see only the
+     primary "next step" card. The full list is useful for accountants but
+     not for the typical lawyer flow. -------------------------------- #}
+  <details class="quiet">
+    <summary>See all six migration steps (Migration sequence)</summary>
+    <div class="card" style="margin-top:var(--space-3);">
       <ol class="migration-steps">
         <li>
           <strong>1. Check the file</strong>
@@ -212,7 +220,7 @@
         </li>
       </ol>
     </div>
-  </section>
+  </details>
   {% endif %}
 
   {# ---- Preflight summary (collapsed) -------------------------------- #}

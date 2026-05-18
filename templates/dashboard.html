@@ -7,7 +7,11 @@
   {% if next_step %}
     <div class="next-card">
       <div class="next-card__body">
-        <p class="eyebrow">Next recommended step</p>
+        {% if workflow_current %}
+          <p class="eyebrow">Step {{ workflow_current.index }} of {{ workflow_current.total }} &middot; Next recommended step</p>
+        {% else %}
+          <p class="eyebrow">Next recommended step</p>
+        {% endif %}
         <h3>{{ next_step.label }}</h3>
         <p>{{ next_step.summary }}</p>
       </div>
@@ -45,12 +49,10 @@
 
   <section class="grid-two" id="intake" style="margin-bottom:var(--space-12);">
     <article class="card">
-      <p class="eyebrow">Upload</p>
-      <h2>Upload your PCLaw files</h2>
+      <p class="eyebrow">Step 2 of 6 &middot; Upload</p>
+      <h2>Upload your PCLaw reports</h2>
       <p class="muted" style="margin-bottom:var(--space-5);">
-        Drop in every PCLaw CSV export at once. We&rsquo;ll identify each one
-        and organize your migration. Nothing posts to QuickBooks until you
-        review it.
+        Pick your PCLaw CSV exports and upload them all at once.
       </p>
       <form action="{{ url_for('upload_bulk') }}" method="post" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -71,6 +73,9 @@
           <button class="btn btn-primary btn-lg" type="submit">Upload &amp; identify</button>
         </div>
       </form>
+      <p class="muted" style="margin-top:var(--space-4);font-size:.85rem;">
+        Forgot a report? You can add more on the next screen &mdash; no need to start over.
+      </p>
 
       <details class="quiet">
         <summary>Upload one file at a time</summary>
