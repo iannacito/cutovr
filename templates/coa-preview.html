@@ -111,6 +111,13 @@
   <section class="card">
     <p class="eyebrow">Not in QuickBooks yet</p>
     <h2>{{ preview.would_create_count }} accounts would need to be created</h2>
+    <p class="muted" style="margin-bottom:var(--space-3);">
+      Status meanings: <span class="badge success">Ready</span> we can
+      create this account safely; <span class="badge warn">Needs review</span>
+      QuickBooks usually auto-provisions this kind of account;
+      <span class="badge error">Needs account type</span> we could not
+      classify the row — set the type manually below before applying.
+    </p>
     <div class="table-wrap">
       <table>
         <thead>
@@ -119,18 +126,69 @@
             <th>Name</th>
             <th>Type</th>
             <th>Detail type</th>
-            <th>Active</th>
+            <th>Status</th>
+            <th>Manual correction</th>
           </tr>
         </thead>
         <tbody>
         {% for a in preview.would_create %}
+          {% set ov = coa_type_overrides.get(a.account_number) or coa_type_overrides.get((a.account_name or '').lower()) %}
+          {% set plan_entry = none %}
+          {% for e in plan.to_create %}{% if e.account_number == a.account_number and e.account_name == a.account_name %}{% set plan_entry = e %}{% endif %}{% endfor %}
+          {% for e in plan.blocked %}{% if e.account_number == a.account_number and e.account_name == a.account_name %}{% set plan_entry = e %}{% endif %}{% endfor %}
           <tr>
             <td><code>{{ a.account_number }}</code></td>
             <td>{{ a.account_name }}</td>
-            <td>{{ a.account_type or '' }}</td>
+            <td>
+              {{ a.account_type or '' }}
+              {% if ov %}<br><small class="muted">override: {{ ov.account_type }}</small>{% endif %}
+            </td>
             <td>{{ a.detail_type or '' }}</td>
-            <td>{{ 'Yes' if a.active else 'No' }}</td>
+            <td>
+              {% if plan_entry and plan_entry.decision == 'blocked' %}
+                <span class="badge error" title="{{ plan_entry.blocked_reason }}">Needs account type</span>
+              {% elif plan_entry and plan_entry.decision == 'warn' %}
+                <span class="badge warn">Needs review</span>
+              {% else %}
+                <span class="badge success">Ready</span>
+              {% endif %}
+            </td>
+            <td>
+              <details>
+                <summary class="muted">Set type manually</summary>
+                <form method="post" action="{{ url_for('coa_override_route', job_id=job.id) }}" class="inline-form" style="margin-top:var(--space-2);">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="account_number" value="{{ a.account_number }}">
+                  <input type="hidden" name="account_name" value="{{ a.account_name }}">
+                  <label>
+                    <span class="muted">Account type</span>
+                    <select name="account_type" required>
+                      <option value="">— pick —</option>
+                      {% for t in coa_override_account_types %}
+                        <option value="{{ t }}" {% if ov and ov.account_type == t %}selected{% endif %}>{{ t }}</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <label>
+                    <span class="muted">Detail type (optional)</span>
+                    <input type="text" name="detail_type" value="{{ ov.detail_type if ov else '' }}" placeholder="e.g. AccountsPayable">
+                  </label>
+                  <button type="submit" class="btn">Save override</button>
+                  {% if ov %}
+                    <button type="submit" name="clear" value="1" class="btn">Clear</button>
+                  {% endif %}
+                </form>
+              </details>
+            </td>
           </tr>
+          {% if plan_entry and plan_entry.decision == 'blocked' and plan_entry.blocked_reason %}
+          <tr><td colspan="6"><div class="flash error" style="margin:0;">{{ plan_entry.blocked_reason }}</div></td></tr>
+          {% endif %}
+          {% if plan_entry and plan_entry.warnings %}
+            {% for w in plan_entry.warnings %}
+            <tr><td colspan="6"><div class="flash" style="margin:0;">{{ w }}</div></td></tr>
+            {% endfor %}
+          {% endif %}
         {% endfor %}
         </tbody>
       </table>

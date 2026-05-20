@@ -27,6 +27,96 @@
     <div class="flash error">{{ confirmation_error }}</div>
   {% endif %}
 
+  {% if tb_coa_validation %}
+  <section class="card {% if not tb_coa_validation.ready %}error-panel{% endif %}">
+    <p class="eyebrow">Chart of Accounts readiness</p>
+    {% if not tb_coa_validation.has_coa %}
+      <h2>No Chart of Accounts on file</h2>
+      <p>
+        Starting balances depend on the firm's Chart of Accounts. Upload
+        and finalize the Account List first — once each account has a type
+        and (where applicable) a QuickBooks match, return here to post the
+        starting balances.
+      </p>
+      <p>
+        <a class="btn primary" href="{{ url_for('dashboard') }}#intake">Upload Chart of Accounts</a>
+      </p>
+    {% elif tb_coa_validation.ready %}
+      <h2><span class="badge success">Ready</span> Chart of Accounts looks good</h2>
+      <p class="muted">
+        Every Trial Balance row resolves to a Chart of Accounts row with a
+        recognized type, and special accounts (Accounts Receivable, Accounts
+        Payable, Trust Bank, Client Trust Liability) are consistent with the
+        QuickBooks account they map to.
+      </p>
+    {% else %}
+      <h2><span class="badge error">Not ready</span> Resolve on the Chart of Accounts step</h2>
+      <p>
+        The Trial Balance can't post until the items below are fixed on the
+        Chart of Accounts step. We don't auto-balance, we don't silently
+        map to a different payable / receivable account, and we don't post
+        to accounts QuickBooks doesn't know about yet.
+      </p>
+      <ul>
+        {% for b in tb_coa_validation.blockers %}<li>{{ b }}</li>{% endfor %}
+      </ul>
+      {% if coa_job_id %}
+        <p>
+          <a class="btn primary" href="{{ url_for('coa_preview', job_id=coa_job_id) }}">Open Chart of Accounts review</a>
+        </p>
+      {% endif %}
+    {% endif %}
+
+    {% if tb_coa_validation.rows %}
+    <details {% if not tb_coa_validation.ready %}open{% endif %} style="margin-top:var(--space-3);">
+      <summary>Per-row status ({{ tb_coa_validation.rows | length }} rows)</summary>
+      <div class="table-wrap" style="margin-top:var(--space-2);">
+        <table>
+          <thead>
+            <tr>
+              <th>Account #</th>
+              <th>Account name</th>
+              <th>COA type</th>
+              <th>QBO type</th>
+              <th>Status</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for row in tb_coa_validation.rows %}
+            <tr>
+              <td><code>{{ row.account_number }}</code></td>
+              <td>{{ row.account_name }}</td>
+              <td>{{ row.coa_account_type or '' }}</td>
+              <td>{{ row.qbo_account_type or '' }}</td>
+              <td>
+                {% if row.status in ['ready', 'created_in_qbo'] %}
+                  <span class="badge success">{{ row.status_label }}</span>
+                {% elif row.status == 'type_mismatch' %}
+                  <span class="badge error">{{ row.status_label }}</span>
+                {% else %}
+                  <span class="badge warn">{{ row.status_label }}</span>
+                {% endif %}
+              </td>
+              <td>{% if row.reason %}<small class="muted">{{ row.reason }}</small>{% endif %}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+    {% endif %}
+    {% if tb_coa_validation.warnings %}
+      <div class="flash" style="margin-top:var(--space-3);">
+        <strong>Warnings (direction-of-posting):</strong>
+        <ul>
+          {% for w in tb_coa_validation.warnings %}<li>{{ w }}</li>{% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+  </section>
+  {% endif %}
+
   <section class="card">
     <p class="eyebrow">Plan summary</p>
     <dl class="summary-grid">
@@ -133,6 +223,11 @@
       <p class="muted">
         Posting is disabled until the plan is unblocked. Resolve the
         items above and reload this page.
+      </p>
+    {% elif tb_coa_validation and not tb_coa_validation.ready %}
+      <p class="muted">
+        Posting is disabled until the Chart of Accounts is ready. Open
+        the Chart of Accounts review above, then return here.
       </p>
     {% else %}
       <form method="post" action="{{ url_for('opening_balance_preview', job_id=job.id) }}">

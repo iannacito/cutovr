@@ -249,6 +249,39 @@ def map_pclaw_account_to_qbo_type(row: dict) -> dict:
             "match_hint": None,
         }
 
+    # 2.5. Name-vs-type cross-check. The helper email surfaced this exact
+    # failure: an Accounts Payable row was about to be mapped to a
+    # different (generic) payable account. When the account name strongly
+    # implies AR / AP / Trust but the resolved QBO AccountType is the
+    # generic Liability / Asset bucket, refuse to auto-map. The operator
+    # must either fix the CSV type column or set a manual override.
+    name_norm_for_check = _norm(name)
+    special_name_expectations = (
+        ("accountspayable", "Accounts Payable", "AccountsPayable"),
+        ("accountsreceivable", "Accounts Receivable", "AccountsReceivable"),
+    )
+    for keyword, expected_type, expected_detail in special_name_expectations:
+        if keyword in name_norm_for_check and (
+            resolved_type != expected_type
+            or (resolved_detail and resolved_detail != expected_detail)
+        ):
+            return {
+                "account_type": None,
+                "detail_type": None,
+                "decision": "blocked",
+                "warnings": [],
+                "blocked_reason": (
+                    f"Account name '{name}' looks like a QuickBooks "
+                    f"{expected_type} account, but the resolved type is "
+                    f"'{resolved_type}/{resolved_detail}'. QuickBooks "
+                    "Accounts Receivable and Accounts Payable cannot be "
+                    "auto-mapped to a generic Liability or Asset — set "
+                    f"the account type to '{expected_type}' on the COA "
+                    "step (or rename the account) and re-preview."
+                ),
+                "match_hint": None,
+            }
+
     # 3. Special-case warnings on safe-but-risky types.
     if resolved_detail in _AUTO_PROVISIONED_SUBTYPES:
         warnings.append(
@@ -338,16 +371,27 @@ class CreatePlan:
         }
 
 
-def build_create_plan(coa_rows: list[dict], preview: dict) -> CreatePlan:
+def build_create_plan(
+    coa_rows: list[dict],
+    preview: dict,
+    type_overrides: Optional[dict[str, dict]] = None,
+) -> CreatePlan:
     """Combine the dry-run preview with the type-mapping table.
 
     ``preview`` is the output of ``report_types.build_coa_dry_run_preview``.
     Rows that already match an existing QBO account are passed through as
     ``matched`` (never re-created). Rows in ``would_create`` are resolved
     through the type-mapper and bucketed into ``to_create`` or ``blocked``.
+
+    ``type_overrides`` is an optional ``{account_number: {account_type, detail_type}}``
+    map of operator-supplied corrections. When provided, the override is
+    layered onto the COA row before the type-mapper runs — so an account
+    the parser couldn't classify (or classified wrong, per the helper
+    email) can be set explicitly and unblock the create plan.
     """
     matched = list(preview.get("matched", []) or [])
     soft_conflicts = list(preview.get("conflicts", []) or [])
+    type_overrides = type_overrides or {}
 
     # Index would_create entries by (account_number, account_name) so we can
     # match them back to the original coa_rows for type-mapping. The dry-run
@@ -370,6 +414,23 @@ def build_create_plan(coa_rows: list[dict], preview: dict) -> CreatePlan:
         name = (row.get("account_name") or "").strip()
         if (num, name) not in would_create_keys:
             continue  # already matched in QBO — preview handled it
+
+        # Layer operator override on top of the parsed row when one exists.
+        override = type_overrides.get(num) if num else None
+        if not override and name:
+            override = type_overrides.get(name.lower())
+        if override:
+            row = {
+                **row,
+                "account_type": (
+                    override.get("account_type")
+                    or row.get("account_type")
+                ),
+                "detail_type": (
+                    override.get("detail_type")
+                    or row.get("detail_type")
+                ),
+            }
 
         decision = map_pclaw_account_to_qbo_type(row)
         entry = CreatePlanEntry(
