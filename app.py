@@ -70,6 +70,11 @@ from opening_balance import (
     build_opening_je_payload,
 )
 from tb_reconciliation import build_ending_tb_reconciliation
+from tb_coa_validation import (
+    validate_tb_against_coa,
+    STATUS_READY as TBV_STATUS_READY,
+    STATUS_CREATED_IN_QBO as TBV_STATUS_CREATED_IN_QBO,
+)
 from trust_reconciliation import build_trust_listing_reconciliation
 from ar_ap_strategy import (
     validate_ar_ap_strategy,
@@ -2490,19 +2495,46 @@ def coa_preview(job_id):
                 "coa_preview_qbo_query_failed",
                 target_type="job", target_id=job_id, details=str(exc)[:200],
             )
-    preview = build_coa_dry_run_preview(coa_rows or [], qbo_accounts)
-    hierarchy_plan = build_hierarchy_plan(coa_rows or [], qbo_accounts)
+    overrides = dict(job.get("coa_type_overrides") or {})
+    # Apply overrides to the COA rows for preview so the operator sees the
+    # corrected types reflected in the preview / type-mapping output.
+    coa_rows_for_preview = []
+    for r in (coa_rows or []):
+        num = (r.get("account_number") or "").strip()
+        nl = (r.get("account_name") or "").strip().lower()
+        ov = overrides.get(num) or overrides.get(nl)
+        if ov:
+            coa_rows_for_preview.append({
+                **r,
+                "account_type": ov.get("account_type") or r.get("account_type"),
+                "detail_type": ov.get("detail_type") or r.get("detail_type"),
+            })
+        else:
+            coa_rows_for_preview.append(r)
+    preview = build_coa_dry_run_preview(coa_rows_for_preview, qbo_accounts)
+    hierarchy_plan = build_hierarchy_plan(coa_rows_for_preview, qbo_accounts)
+    # Build the create plan so the preview page can render per-row decisions
+    # (blocked / warn / ok) — this is what the manual-override form keys
+    # off, and what surfaces the AR/AP misclassification block from
+    # coa_apply.map_pclaw_account_to_qbo_type.
+    create_plan = build_create_plan(coa_rows_for_preview, preview,
+                                    type_overrides=overrides)
     _audit("coa_preview_view", target_type="job", target_id=job_id,
            details=(
                f"matched={preview['matched_count']} "
                f"would_create={preview['would_create_count']} "
-               f"hierarchy_blocked={len(hierarchy_plan.blocked)}"
+               f"hierarchy_blocked={len(hierarchy_plan.blocked)} "
+               f"blocked={len(create_plan.blocked)} "
+               f"overrides={len(overrides)}"
            ))
     return render_template(
         "coa-preview.html",
         job=job,
         preview=preview,
         hierarchy=hierarchy_plan.to_dict(),
+        plan=create_plan.to_dict(),
+        coa_type_overrides=overrides,
+        coa_override_account_types=COA_OVERRIDE_ACCOUNT_TYPES,
         qbo_error=qbo_error,
         qbo_connection=qbo_conn or {},
         report_label=REPORT_LABELS[REPORT_CHART_OF_ACCOUNTS],
@@ -2559,7 +2591,7 @@ def _load_coa_state(job_id):
     }, None
 
 
-def _build_coa_plan(coa_rows, qbo):
+def _build_coa_plan(coa_rows, qbo, type_overrides=None):
     """Run the read-only QBO query, build the preview, then the create plan.
 
     Also resolves the parent/sub-account hierarchy and folds any
@@ -2567,11 +2599,31 @@ def _build_coa_plan(coa_rows, qbo):
     blocked list so the confirmation page refuses to create them.
     Hierarchy creation order is annotated on the plan dict so the
     confirmation UI can render parent-first semantics.
+
+    ``type_overrides`` are layered onto the COA rows before mapping so
+    operator corrections (see /jobs/<id>/coa-override) reach the create
+    plan as well as the preview.
     """
     qbo_accounts = qbo.get_accounts()
-    preview = build_coa_dry_run_preview(coa_rows, qbo_accounts)
-    plan = build_create_plan(coa_rows, preview)
-    hierarchy_plan = build_hierarchy_plan(coa_rows, qbo_accounts)
+    overrides = type_overrides or {}
+    # Layer overrides so preview + hierarchy reflect the same corrections
+    # the create plan will use. Keep the lookup tolerant of name vs number.
+    coa_rows_eff = []
+    for r in coa_rows:
+        num = (r.get("account_number") or "").strip()
+        nl = (r.get("account_name") or "").strip().lower()
+        ov = overrides.get(num) or overrides.get(nl)
+        if ov:
+            coa_rows_eff.append({
+                **r,
+                "account_type": ov.get("account_type") or r.get("account_type"),
+                "detail_type": ov.get("detail_type") or r.get("detail_type"),
+            })
+        else:
+            coa_rows_eff.append(r)
+    preview = build_coa_dry_run_preview(coa_rows_eff, qbo_accounts)
+    plan = build_create_plan(coa_rows_eff, preview, type_overrides=overrides)
+    hierarchy_plan = build_hierarchy_plan(coa_rows_eff, qbo_accounts)
     if hierarchy_plan.has_blockers:
         # Promote hierarchy blockers (orphan parent, cycle) into the
         # CreatePlan.blocked list so plan.has_blockers gates the apply.
@@ -2620,7 +2672,10 @@ def coa_confirm(job_id):
     coa_rows = state["coa_rows"]
 
     try:
-        preview, plan, hierarchy_plan = _build_coa_plan(coa_rows, qbo)
+        preview, plan, hierarchy_plan = _build_coa_plan(
+            coa_rows, qbo,
+            type_overrides=job.get("coa_type_overrides") or {},
+        )
     except QBOError as e:
         _audit(
             "coa_create_qbo_query_failed",
@@ -2731,7 +2786,10 @@ def coa_apply_route(job_id):
         return redirect(url_for("coa_confirm", job_id=job_id))
 
     try:
-        preview, plan, hierarchy_plan = _build_coa_plan(coa_rows, qbo)
+        preview, plan, hierarchy_plan = _build_coa_plan(
+            coa_rows, qbo,
+            type_overrides=job.get("coa_type_overrides") or {},
+        )
     except Exception as e:  # noqa: BLE001
         tid = getattr(e, "intuit_tid", None)
         _audit(
@@ -2938,6 +2996,173 @@ def _latest_other_job_report(firm_id: int, report_type: str, exclude_job_id: str
     return []
 
 
+# ---------------------------------------------------------------------------
+# Chart of Accounts → Trial Balance cross-validation helpers.
+#
+# The helper email called out that the Trial Balance step must rely on a
+# finalized Chart of Accounts, with operator-corrected account types where
+# the parser was uncertain. These helpers + the /coa-override route below
+# are the COA-first plumbing the opening-balance route consumes.
+# ---------------------------------------------------------------------------
+
+
+def _firm_latest_coa_state(firm_id: int) -> dict:
+    """Collect the firm's latest Chart-of-Accounts artifacts in one place.
+
+    Returns a dict with:
+      * ``coa_rows``: parsed COA rows from the newest COA job (possibly
+        re-parsed from the encrypted upload), or an empty list if the
+        firm has not uploaded a COA yet.
+      * ``coa_job``: the underlying job row (for audit references) or
+        None.
+      * ``coa_type_overrides``: operator-set type corrections, keyed
+        by account number then lowercased name (see
+        /jobs/<id>/coa-override).
+      * ``coa_create_history``: aggregated history of QBO accounts
+        created across all of the firm's COA jobs (used to surface the
+        "Created in QBO" badge on the TB step).
+    """
+    coa_jobs = _firm_latest_jobs_by_type(firm_id, REPORT_CHART_OF_ACCOUNTS)
+    coa_job = None
+    coa_rows: list[dict] = []
+    for j in coa_jobs:
+        live = jobs.get(j["id"])
+        rows = (live or {}).get("parsed_coa")
+        if not rows:
+            rows = _reparse_report_rows(live or j, REPORT_CHART_OF_ACCOUNTS)
+        if rows:
+            coa_rows = rows
+            coa_job = live or j
+            break
+
+    overrides: dict = {}
+    create_history: list[dict] = []
+    for j in coa_jobs:
+        live = jobs.get(j["id"]) or j
+        ov = live.get("coa_type_overrides") or {}
+        for k, v in ov.items():
+            overrides.setdefault(k, v)
+        for h in (live.get("coa_create_history") or []):
+            create_history.append(h)
+
+    return {
+        "coa_rows": coa_rows,
+        "coa_job": coa_job,
+        "coa_type_overrides": overrides,
+        "coa_create_history": create_history,
+    }
+
+
+# Allowed QBO AccountType values the override form accepts. We deliberately
+# keep this short and curated rather than letting the operator type any
+# string — the helper email specifically guarded against AR/AP/Trust
+# mis-classification, and the create-plan validator already enforces
+# AccountType/DetailType validity downstream.
+COA_OVERRIDE_ACCOUNT_TYPES = (
+    "Bank",
+    "Accounts Receivable",
+    "Other Current Asset",
+    "Fixed Asset",
+    "Other Asset",
+    "Accounts Payable",
+    "Credit Card",
+    "Other Current Liability",
+    "Long Term Liability",
+    "Equity",
+    "Income",
+    "Other Income",
+    "Cost of Goods Sold",
+    "Expense",
+    "Other Expense",
+)
+
+
+@app.route("/jobs/<job_id>/coa-override", methods=["POST"])
+@login_required
+def coa_override_route(job_id):
+    """Operator-supplied account-type correction for a single COA row.
+
+    Form fields:
+      * ``account_number`` (required) — the COA row to override.
+        Optional, but rows without a number key on the lowercased name.
+      * ``account_name`` (optional fallback when no number).
+      * ``account_type`` (required) — one of ``COA_OVERRIDE_ACCOUNT_TYPES``.
+      * ``detail_type`` (optional) — free-text QBO AccountSubType. Empty
+        is allowed; the type-mapper will fall back to the default
+        sub-type for the chosen account type.
+      * ``clear`` — when set, removes any existing override for the
+        keyed row instead of writing a new one.
+
+    Persists the override on the COA job dict under
+    ``coa_type_overrides`` and reloads the preview page so the operator
+    sees the correction applied. The route is POST-only so a stray GET
+    can't mutate state.
+    """
+    job, _user = _job_or_403(job_id)
+    if (job.get("report_type") or REPORT_GENERAL_LEDGER) != REPORT_CHART_OF_ACCOUNTS:
+        flash(
+            "Account-type overrides are only available on Chart of "
+            "Accounts jobs.",
+            "info",
+        )
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    account_number = (request.form.get("account_number") or "").strip()
+    account_name = (request.form.get("account_name") or "").strip()
+    account_type = (request.form.get("account_type") or "").strip()
+    detail_type = (request.form.get("detail_type") or "").strip()
+    clear = bool(request.form.get("clear"))
+
+    if not account_number and not account_name:
+        flash(
+            "Account-type override needs at least an account number or "
+            "an account name.",
+            "error",
+        )
+        return redirect(url_for("coa_preview", job_id=job_id))
+
+    if not clear and account_type not in COA_OVERRIDE_ACCOUNT_TYPES:
+        flash(
+            "Pick a QuickBooks AccountType from the dropdown — free-text "
+            "values are not allowed.",
+            "error",
+        )
+        return redirect(url_for("coa_preview", job_id=job_id))
+
+    key = account_number or account_name.lower()
+    overrides = dict(job.get("coa_type_overrides") or {})
+    if clear:
+        overrides.pop(key, None)
+        _audit(
+            "coa_type_override_cleared",
+            target_type="job", target_id=job_id,
+            details=f"key={key!r}",
+        )
+        flash("Cleared the manual account-type override for that row.", "info")
+    else:
+        overrides[key] = {
+            "account_type": account_type,
+            "detail_type": detail_type,
+            "account_number": account_number,
+            "account_name": account_name,
+        }
+        _audit(
+            "coa_type_override_set",
+            target_type="job", target_id=job_id,
+            details=(
+                f"key={key!r} account_type={account_type!r} "
+                f"detail_type={detail_type!r}"
+            ),
+        )
+        flash(
+            f"Saved manual account type '{account_type}' for "
+            f"{account_number or account_name}.",
+            "success",
+        )
+    job["coa_type_overrides"] = overrides
+    return redirect(url_for("coa_preview", job_id=job_id))
+
+
 @app.route("/jobs/<job_id>/opening-balance", methods=["GET", "POST"])
 @login_required
 def opening_balance_preview(job_id):
@@ -3004,6 +3229,22 @@ def opening_balance_preview(job_id):
         account_mappings=account_mappings,
     )
 
+    # COA-first validation: cross-check every TB account against the
+    # firm's latest Chart of Accounts (parsed + operator overrides +
+    # QBO accounts + create-history). The helper email's central ask:
+    # the TB step must not be allowed to proceed when the COA isn't
+    # finalized, an account type is blank, or an AR/AP mismatch hasn't
+    # been resolved.
+    coa_state = _firm_latest_coa_state(user["firm_id"])
+    tb_coa_validation = validate_tb_against_coa(
+        tb_rows,
+        coa_state["coa_rows"],
+        qbo_accounts,
+        account_mappings=account_mappings,
+        coa_create_history=coa_state["coa_create_history"],
+        coa_type_overrides=coa_state["coa_type_overrides"],
+    )
+
     confirmation_error: Optional[str] = None
     if request.method == "POST":
         phrase = (request.form.get("confirm_post") or "").strip().upper()
@@ -3028,6 +3269,24 @@ def opening_balance_preview(job_id):
                 target_type="job", target_id=job_id,
                 details=f"blocker_count={len(plan.blockers)}",
             )
+        elif not tb_coa_validation.ready:
+            # COA-first gate. The blockers list will contain a one-line
+            # rollup per category (missing-from-COA, needs-type, type-
+            # mismatch) so the operator sees the right next action.
+            confirmation_error = (
+                "Cannot post: the Chart of Accounts is not ready. "
+                + " ".join(tb_coa_validation.blockers)
+                + " Resolve on the Chart of Accounts step, then return "
+                "to the starting-balances step."
+            )
+            _audit(
+                "opening_balance_blocked_by_coa",
+                target_type="job", target_id=job_id,
+                details=(
+                    f"counts={tb_coa_validation.counts} "
+                    f"has_coa={tb_coa_validation.has_coa}"
+                ),
+            )
         elif not qbo:
             confirmation_error = (
                 "Connect QuickBooks before confirming. Nothing was posted."
@@ -3039,6 +3298,8 @@ def opening_balance_preview(job_id):
         "opening-balance.html",
         job=job,
         plan=plan.to_dict(),
+        tb_coa_validation=tb_coa_validation.to_dict(),
+        coa_job_id=(coa_state["coa_job"] or {}).get("id"),
         qbo_connection=qbo_conn or {},
         qbo_error=qbo_error,
         confirmation_phrase=OPENING_BALANCE_CONFIRMATION_PHRASE,
