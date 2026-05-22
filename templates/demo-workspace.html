@@ -23,6 +23,32 @@
     </div>
   {% endif %}
 
+  {% if preflight_items %}
+    <article class="card" data-testid="demo-preflight" style="margin-bottom:var(--space-6);{% if preflight_blocking %}border-color:var(--danger,#b91c1c);{% endif %}">
+      <h2 style="margin-top:0;">Demo preflight</h2>
+      <p class="muted" style="max-width:60ch;">
+        Quick checklist to glance at before you walk a customer through the
+        flow. Anything red here will derail the demo &mdash; fix those
+        first.
+      </p>
+      <ul class="demo-preflight-list" style="list-style:none;padding-left:0;line-height:1.9;">
+        {% for key, label, status, detail in preflight_items %}
+          <li data-testid="preflight-{{ key }}" data-status="{{ status }}" style="margin-bottom:var(--space-2);">
+            {% if status == 'ok' %}
+              <span aria-label="OK" style="color:#15803d;font-weight:700;">&#10003;</span>
+            {% elif status == 'warn' %}
+              <span aria-label="Warning" style="color:#b45309;font-weight:700;">&#9888;</span>
+            {% else %}
+              <span aria-label="Missing" style="color:#b91c1c;font-weight:700;">&#10007;</span>
+            {% endif %}
+            <strong>{{ label }}.</strong>
+            <span class="muted">{{ detail }}</span>
+          </li>
+        {% endfor %}
+      </ul>
+    </article>
+  {% endif %}
+
   <article class="card" style="margin-bottom:var(--space-6);">
     <h2>Connected QuickBooks company</h2>
     {% if qbo_company_name or qbo_realm_id %}
@@ -103,9 +129,10 @@
     </p>
     <ul style="line-height:2;">
       <li><a href="{{ url_for('demo_sample_csv', report='chart-of-accounts') }}">Chart of Accounts (demo)</a></li>
-      <li><a href="{{ url_for('demo_sample_csv', report='trial-balance') }}">Starting Trial Balance (demo)</a></li>
+      <li><a href="{{ url_for('demo_sample_csv', report='trial-balance') }}">Starting Trial Balance &mdash; opening balances (demo)</a></li>
       <li><a href="{{ url_for('demo_sample_csv', report='general-ledger') }}">Transaction History &mdash; General Ledger (demo)</a></li>
       <li><a href="{{ url_for('demo_sample_csv', report='trust-listing') }}">Client Trust Listing (demo)</a></li>
+      <li><a href="{{ url_for('demo_sample_csv', report='ending-trial-balance') }}">Final balance check &mdash; Ending Trial Balance (demo)</a></li>
     </ul>
   </article>
 

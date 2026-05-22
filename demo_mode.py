@@ -166,6 +166,14 @@ DEMO_COA_HEADER = [
 # Trial balance: every row balances against ``DEMO_CHART_OF_ACCOUNTS_ROWS``
 # after the GL transactions are posted. Hard-coded rather than recomputed
 # so the demo dataset is auditable at a glance.
+#
+# This file plays the role of *both* the "opening trial balance" upload
+# (Step 2) and the "ending trial balance" upload (Step 6). Because the
+# bundled GL is internally balanced (debits == credits) the opening and
+# ending balances coincide — every entry it posts is a transfer between
+# accounts rather than a net increase in equity. Treating it as
+# opening+ending keeps the demo dataset minimal and auditable while
+# still exercising both upload steps.
 DEMO_TRIAL_BALANCE_ROWS = [
     # (number, name, debit_balance, credit_balance)
     ("1000", "Operating Bank", "24250.00", "0.00"),
@@ -183,6 +191,13 @@ DEMO_TRIAL_BALANCE_ROWS = [
 ]
 
 DEMO_TB_HEADER = ["account_number", "account_name", "debit_balance", "credit_balance"]
+
+
+# Ending Trial Balance ("Final balance check"): same numeric rows as the
+# opening TB above, since the demo GL is internally balanced. Kept as a
+# separate sample so the demo workspace can offer the customer-facing
+# Step 6 ("Final balance check") report under its own name.
+DEMO_ENDING_TB_ROWS = DEMO_TRIAL_BALANCE_ROWS
 
 
 # General-ledger template. Two-sided so debits == credits. Account numbers
@@ -304,6 +319,11 @@ def render_chart_of_accounts_csv() -> str:
 
 def render_trial_balance_csv() -> str:
     return _render_csv(DEMO_TB_HEADER, DEMO_TRIAL_BALANCE_ROWS)
+
+
+def render_ending_trial_balance_csv() -> str:
+    """Return the demo Ending Trial Balance ("Final balance check") CSV."""
+    return _render_csv(DEMO_TB_HEADER, DEMO_ENDING_TB_ROWS)
 
 
 def render_general_ledger_csv(run_id: str) -> str:

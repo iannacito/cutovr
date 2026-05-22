@@ -61,17 +61,36 @@
           <a href="{{ load_error.job_url }}" class="btn btn-link">Back to job</a>
         </div>
       {% elif load_error.category == 'missing_source' %}
-        <h2 style="margin-top:0;">We need the PCLaw file again to list your accounts</h2>
-        <p>
-          Your job and its QuickBooks connection are intact, but the original
-          PCLaw export is no longer on file for this job. Re-uploading just
-          this report finishes the match step &mdash; nothing you&rsquo;ve already
-          mapped or imported is lost.
-        </p>
-        <div class="actions-row" style="margin-top:var(--space-4);">
-          <a href="{{ load_error.reupload_url or load_error.job_url }}" class="btn btn-primary btn-lg" data-testid="reupload-cta">Re-upload PCLaw export</a>
-          <a href="{{ load_error.job_url }}" class="btn btn-link">Back to job</a>
-        </div>
+        {% if load_error.demo_enabled and load_error.demo_start_url %}
+          <h2 style="margin-top:0;">This demo job is from an older run</h2>
+          <p>
+            This job was created before the latest demo-data persistence fixes,
+            so the PCLaw account list we need for Step&nbsp;3 is no longer on
+            file. Starting a fresh demo takes about a minute &mdash; the new
+            run will have all the reports it needs.
+          </p>
+          <div class="actions-row" style="margin-top:var(--space-4);">
+            <a href="{{ load_error.demo_start_url }}" class="btn btn-primary btn-lg" data-testid="demo-restart-cta">Start a fresh demo run</a>
+            <a href="{{ load_error.reupload_url or load_error.job_url }}" class="btn" data-testid="reupload-cta">Re-upload PCLaw export</a>
+            <a href="{{ load_error.job_url }}" class="btn btn-link">Back to job</a>
+          </div>
+          <p class="muted" style="margin-top:var(--space-3);font-size:.9rem;">
+            Tip: from the demo workspace you can re-download all bundled
+            sample reports for the new run and walk the full flow from Step&nbsp;1.
+          </p>
+        {% else %}
+          <h2 style="margin-top:0;">We need the PCLaw file again to list your accounts</h2>
+          <p>
+            Your job and its QuickBooks connection are intact, but the original
+            PCLaw export is no longer on file for this job. Re-uploading just
+            this report finishes the match step &mdash; nothing you&rsquo;ve already
+            mapped or imported is lost.
+          </p>
+          <div class="actions-row" style="margin-top:var(--space-4);">
+            <a href="{{ load_error.reupload_url or load_error.job_url }}" class="btn btn-primary btn-lg" data-testid="reupload-cta">Re-upload PCLaw export</a>
+            <a href="{{ load_error.job_url }}" class="btn btn-link">Back to job</a>
+          </div>
+        {% endif %}
       {% elif load_error.category == 'service_unavailable' or load_error.category == 'network' %}
         <h2 style="margin-top:0;">QuickBooks is temporarily unavailable</h2>
         <p>
