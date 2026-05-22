@@ -190,16 +190,44 @@ def _stage_status(
     return STAGE_STATUS_UPCOMING
 
 
+def _required_uploads_present(by_key: Dict[str, ChecklistItem]) -> bool:
+    """True if the firm has uploaded the core reports Step 2 needs.
+
+    "Uploaded" here means at least `in_progress` — the file is on file
+    even if the downstream QBO posting hasn't happened yet. We need this
+    distinction because the Upload stage doesn't roll up to `complete`
+    until the QBO posting steps land, but the user can absolutely move
+    on to Step 3 (Match accounts) as soon as the source files are in.
+
+    Required for Step 3 to be useful: the chart of accounts (so there's
+    something to map) plus the opening trial balance and the general
+    ledger (so the matching applies to real records). Trust and ending
+    TB are optional at this point and don't gate progress.
+    """
+    needed = (STEP_COA_UPLOAD, STEP_OPENING_TB, STEP_GL_UPLOAD)
+    for key in needed:
+        item = by_key.get(key)
+        if item is None or item.status == STATUS_NOT_STARTED:
+            return False
+    return True
+
+
 def _stage_cta(
     stage_key: str,
     url_for: Optional[Callable[..., str]],
     has_jobs: bool,
+    ready_to_advance: bool = False,
 ) -> tuple:
     """Return (cta_label, cta_url) for the *current* stage.
 
     url_for is optional so this module is unit-testable without Flask.
     When unavailable we return relative paths that match the existing
     routes — these are not used in tests, only as a defensive fallback.
+
+    `ready_to_advance` is consulted only for the Upload stage. When the
+    user has all three core reports on file but the Upload stage hasn't
+    rolled up to `complete` yet, we steer them to Step 3 instead of
+    nagging them to upload more.
     """
     def u(endpoint: str, fallback: str) -> str:
         if url_for is None:
@@ -212,6 +240,9 @@ def _stage_cta(
     if stage_key == STAGE_SETUP:
         return ("Start setup", u("cutover_setup", "/cutover"))
     if stage_key == STAGE_UPLOAD:
+        if ready_to_advance:
+            return ("Next: Match accounts",
+                    u("migration_checklist", "/migration-checklist"))
         if has_jobs:
             return ("Upload another report", u("dashboard", "/dashboard") + "#intake")
         return ("Upload your reports", u("dashboard", "/dashboard") + "#intake")
@@ -288,6 +319,8 @@ def build_customer_stages(
             current_index = i
             break
 
+    ready_to_advance = _required_uploads_present(by_key)
+
     for i, stage in enumerate(stages):
         if current_index is None:
             stage.status = STAGE_STATUS_COMPLETE
@@ -296,12 +329,45 @@ def build_customer_stages(
         elif i == current_index:
             stage.status = STAGE_STATUS_CURRENT
             stage.cta_label, stage.cta_url = _stage_cta(
-                stage.key, url_for, has_jobs=has_jobs
+                stage.key, url_for, has_jobs=has_jobs,
+                ready_to_advance=ready_to_advance,
             )
         else:
             stage.status = STAGE_STATUS_UPCOMING
 
     return stages
+
+
+def upload_stage_missing_reports(
+    checklist_items: Iterable[ChecklistItem],
+) -> List[str]:
+    """Return human labels for required reports still missing from Step 2.
+
+    Used by the migration-checklist template to render a short
+    "what's still needed" list next to the Step 2 CTA so users who
+    haven't uploaded everything yet see a concrete next action instead
+    of jargon.
+    """
+    by_key = {item.key: item for item in checklist_items}
+    label_for = {
+        STEP_COA_UPLOAD: "Account list (chart of accounts)",
+        STEP_OPENING_TB: "Starting balances (opening trial balance)",
+        STEP_GL_UPLOAD: "Transaction history (general ledger)",
+    }
+    missing: List[str] = []
+    for key, label in label_for.items():
+        item = by_key.get(key)
+        if item is None or item.status == STATUS_NOT_STARTED:
+            missing.append(label)
+    return missing
+
+
+def upload_stage_ready_to_advance(
+    checklist_items: Iterable[ChecklistItem],
+) -> bool:
+    """Public wrapper around _required_uploads_present for templates / tests."""
+    by_key = {item.key: item for item in checklist_items}
+    return _required_uploads_present(by_key)
 
 
 def current_stage(stages: List[WorkflowStage]) -> Optional[WorkflowStage]:
