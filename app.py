@@ -4212,10 +4212,21 @@ def import_to_qbo(job_id):
         # Always fetch QBO accounts first so we can either map or fall back.
         try:
             qbo_accounts = qbo.get_accounts()
-        except requests.HTTPError as e:
+        except QBOError as e:
+            tid_suffix = f" (Intuit support reference: {e.intuit_tid})" if e.intuit_tid else ""
+            status_suffix = f" ({e.status_code})" if e.status_code else ""
+            _audit(
+                "import_qbo_accounts_error",
+                target_type="job",
+                target_id=job_id,
+                details=_audit_details_with_tid(
+                    f"status={e.status_code} body={e.body}", e.intuit_tid
+                ),
+            )
             flash(
-                f"Could not query QBO accounts ({e.response.status_code}). "
-                "The access token may have expired — reconnect and try again.",
+                f"Could not query QuickBooks accounts{status_suffix}. "
+                "The access token may have expired — reconnect and try again."
+                f"{tid_suffix}",
                 "error",
             )
             return redirect(url_for("job_detail", job_id=job_id))
@@ -4702,6 +4713,32 @@ def reconciliation_report_csv(job_id):
     )
 
 
+def _render_account_mapping_error(*, job, qbo_conn, category, status_code, intuit_tid):
+    """Render the account-mapping template in an error state.
+
+    Keeps the user on the Match accounts screen — instead of redirecting
+    them off to the job page with a generic flash — and shows a CTA tuned
+    to the failure category (reconnect, retry, contact support). The
+    intuit_tid (when present) is surfaced as an opaque diagnostic id so
+    support can correlate with Intuit. No tokens or secrets are exposed.
+    """
+    return render_template(
+        "account-mapping.html",
+        job=job,
+        qbo_connection=qbo_conn or {},
+        rows=[],
+        qbo_accounts=[],
+        load_error={
+            "category": category,
+            "status_code": status_code,
+            "intuit_tid": intuit_tid,
+            "reconnect_url": url_for("connect_qbo", job_id=job["id"]),
+            "retry_url": url_for("account_mapping", job_id=job["id"]),
+            "job_url": url_for("job_detail", job_id=job["id"]),
+        },
+    )
+
+
 @app.route("/jobs/<job_id>/account-mapping", methods=["GET", "POST"])
 @login_required
 def account_mapping(job_id):
@@ -4725,36 +4762,70 @@ def account_mapping(job_id):
     job, user = _job_or_403(job_id)
     qbo_conn = _get_qbo_connection(job_id)
     if not qbo_conn:
-        flash("Connect this job to QuickBooks first.", "error")
-        return redirect(url_for("job_detail", job_id=job_id))
+        # No QBO connection at all — send the user to connect, not to a
+        # confusing error page on the job detail.
+        flash(
+            "Connect QuickBooks to this job before matching accounts.",
+            "error",
+        )
+        return redirect(url_for("connect_qbo", job_id=job_id))
 
-    # Refresh tokens if needed; show a clean error if refresh fails.
+    # Refresh tokens if needed. If the saved refresh token is dead, render
+    # the account-mapping screen in an error state with a Reconnect CTA so
+    # the user has a clear next step right where they are.
     try:
         qbo, qbo_conn = _get_qbo_client(job_id, user)
     except QBOAuthExpired as e:
-        _audit("qbo_token_refresh_failed", target_type="job", target_id=job_id, details=str(e))
-        flash("QuickBooks connection expired. Please reconnect.", "error")
-        return redirect(url_for("job_detail", job_id=job_id))
+        tid = getattr(e, "intuit_tid", None)
+        _audit(
+            "qbo_token_refresh_failed",
+            target_type="job",
+            target_id=job_id,
+            details=_audit_details_with_tid(str(e), tid),
+        )
+        return _render_account_mapping_error(
+            job=job,
+            qbo_conn=qbo_conn,
+            category=qbo_error_hint.CATEGORY_AUTH,
+            status_code=None,
+            intuit_tid=tid,
+        )
 
     realm_id = qbo_conn["realm_id"]
 
     # Fetch QBO accounts (the dropdown source of truth). Any QBO error here
-    # — flaky network, throttle, brief Intuit outage — should send the user
-    # back to the job page with a friendly message instead of a traceback.
+    # — expired auth, missing scope, throttle, brief Intuit outage — renders
+    # the page in an error state with the right CTA, rather than the user
+    # getting bounced back to a generic flash.
     try:
         qbo_accounts_resp = qbo.get_accounts()
     except QBOError as e:
-        tid_suffix = f" (Intuit support reference: {e.intuit_tid})" if e.intuit_tid else ""
-        flash(f"Could not query QBO accounts: {e}{tid_suffix}", "error")
-        return redirect(url_for("job_detail", job_id=job_id))
+        category = qbo_error_hint.classify(e.status_code, e.body)
+        _audit(
+            "account_mapping_qbo_error",
+            target_type="job",
+            target_id=job_id,
+            details=_audit_details_with_tid(
+                f"status={e.status_code} category={category} body={e.body}",
+                e.intuit_tid,
+            ),
+        )
+        return _render_account_mapping_error(
+            job=job,
+            qbo_conn=qbo_conn,
+            category=category,
+            status_code=e.status_code,
+            intuit_tid=e.intuit_tid,
+        )
     except Exception as e:  # noqa: BLE001 — last-resort net for unexpected client errors
         _audit("account_mapping_qbo_error", target_type="job", target_id=job_id, details=str(e))
-        flash(
-            "Could not load QuickBooks accounts right now. Please try again "
-            "in a moment, or reconnect QuickBooks if the problem persists.",
-            "error",
+        return _render_account_mapping_error(
+            job=job,
+            qbo_conn=qbo_conn,
+            category=qbo_error_hint.CATEGORY_UNKNOWN,
+            status_code=None,
+            intuit_tid=None,
         )
-        return redirect(url_for("job_detail", job_id=job_id))
     qbo_accounts = qbo_accounts_resp.get("QueryResponse", {}).get("Account", [])
 
     if request.method == "POST":

@@ -175,3 +175,44 @@ def parse(raw_error: str, intuit_tid: Optional[str] = None) -> dict:
         "status_code": status_code,
         "intuit_tid": intuit_tid,
     }
+
+
+# Categories the account-mapping (and other) screens use to pick the right
+# recovery UI. Stable strings — templates and tests reference them directly.
+CATEGORY_AUTH = "auth"
+CATEGORY_PERMISSION = "permission"
+CATEGORY_RATE_LIMIT = "rate_limit"
+CATEGORY_SERVICE_UNAVAILABLE = "service_unavailable"
+CATEGORY_NETWORK = "network"
+CATEGORY_UNKNOWN = "unknown"
+
+
+def classify(status_code: Optional[int], body: Optional[str]) -> str:
+    """Bucket a QBO failure into a recovery category.
+
+    The category drives which CTA the UI shows the user. We deliberately
+    keep the buckets coarse — lawyers don't need to read QBO error codes;
+    they need to know "reconnect" vs. "try again" vs. "contact support".
+
+    status_code may be None (e.g. DNS / TCP failure with no HTTP response).
+    body is the raw response text and is treated as untrusted — only used
+    for substring matching.
+    """
+    text = (body or "").lower()
+
+    if status_code is None:
+        return CATEGORY_NETWORK
+
+    if (status_code == 401
+            or "invalid grant" in text
+            or "invalid_grant" in text
+            or "token expired" in text
+            or "authenticationfailed" in text):
+        return CATEGORY_AUTH
+    if status_code == 403:
+        return CATEGORY_PERMISSION
+    if status_code == 429 or "throttle" in text or "throttleexceeded" in text:
+        return CATEGORY_RATE_LIMIT
+    if status_code in (500, 502, 503, 504) or "service unavailable" in text:
+        return CATEGORY_SERVICE_UNAVAILABLE
+    return CATEGORY_UNKNOWN

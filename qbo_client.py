@@ -76,11 +76,27 @@ class QBOClient:
     def query(self, sql):
         encoded_query = quote(sql)
         url = f"{self.base_url}/v3/company/{self.realm_id}/query?query={encoded_query}&minorversion=65"
-        response = requests.get(url, headers=self._headers(), timeout=30)
-        # Capture the Intuit transaction id even on non-2xx responses, then
-        # preserve raise_for_status semantics callers already depend on.
-        self._record_tid(response)
-        response.raise_for_status()
+        try:
+            response = requests.get(url, headers=self._headers(), timeout=30)
+        except requests.RequestException as e:
+            # Network-level failure (DNS, TLS, connection reset, timeout).
+            # No HTTP response so no intuit_tid is available.
+            raise QBOError(
+                f"Could not reach QuickBooks while running a query: {e}",
+                status_code=None,
+                body=None,
+                intuit_tid=None,
+            ) from e
+        # Capture the Intuit transaction id even on non-2xx responses so the
+        # caller can include it in audit / user-facing diagnostics.
+        tid = self._record_tid(response)
+        if response.status_code >= 400:
+            raise QBOError(
+                f"QBO returned {response.status_code} on query: {response.text}",
+                status_code=response.status_code,
+                body=response.text,
+                intuit_tid=tid,
+            )
         return response.json()
 
     def get_accounts(self):
