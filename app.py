@@ -258,11 +258,15 @@ def _security_headers(resp):
     return resp
 
 BASE_DIR = Path(__file__).resolve().parent
-UPLOAD_DIR = BASE_DIR / "uploads"
-OUTPUT_DIR = BASE_DIR / "processed"
+# Storage directories. On Render (or any deploy where the project tree is
+# ephemeral), set UPLOAD_DIR / OUTPUT_DIR to a path on the persistent disk
+# (e.g. /var/data/uploads, /var/data/processed). Falling back to the project
+# tree keeps local development a no-config experience.
+UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR") or (BASE_DIR / "uploads"))
+OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR") or (BASE_DIR / "processed"))
 DATA_DIR = BASE_DIR / "data"
-UPLOAD_DIR.mkdir(exist_ok=True)
-OUTPUT_DIR.mkdir(exist_ok=True)
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR.mkdir(exist_ok=True)
 
 # Persistent import history (SQLite). DB path can be overridden so production
@@ -1720,6 +1724,29 @@ def readiness_page():
     )
 
 
+def _extract_pclaw_accounts_from_gl_rows(gl_rows):
+    """Return the unique [(account_number, account_name)] list found in
+    GL rows, in first-seen order. Output shape matches what the
+    Match-accounts screen consumes: [{"number": str|None, "name": str|None}].
+
+    Persisting this list at upload time is what allows account mapping to
+    survive loss of the encrypted source CSV (e.g. ephemeral storage on a
+    redeployed Render instance). Without it the user would be told to
+    re-upload — but every account they care about is already known.
+    """
+    seen = {}
+    for r in gl_rows or []:
+        num = (r.get("account_number") or "").strip() or None
+        name = (r.get("account_name") or "").strip() or None
+        if num is None and name is None:
+            continue
+        key = (num, name)
+        if key in seen:
+            continue
+        seen[key] = {"number": num, "name": name}
+    return list(seen.values())
+
+
 def _process_uploaded_csv(
     file_storage,
     company: str,
@@ -1851,6 +1878,10 @@ def _process_uploaded_csv(
                 "report_type": REPORT_GENERAL_LEDGER,
             }
             jobs[job_id]["preflight"] = preflight
+            # Snapshot the unique pclaw (account_number, account_name) pairs
+            # so the Match-accounts screen can render even if the encrypted
+            # source CSV is lost (e.g. ephemeral disk after redeploy).
+            jobs[job_id]["pclaw_accounts"] = _extract_pclaw_accounts_from_gl_rows(_gl_rows)
             if preflight["ready"]:
                 message = (
                     "PCLaw GL file accepted. Review the preflight checklist, "
@@ -4713,6 +4744,78 @@ def reconciliation_report_csv(job_id):
     )
 
 
+def _load_pclaw_accounts_for_mapping(job, job_id, user):
+    """Return the unique pclaw account list this job needs for matching.
+
+    Resolution order (most-durable first):
+
+      1. ``job["pclaw_accounts"]`` snapshot stored at upload time. Survives
+         loss of the encrypted CSV (ephemeral disk, deleted .enc, etc.).
+      2. Re-parse the encrypted CSV under ``UPLOAD_DIR``. When this works
+         we ALSO backfill the snapshot so future visits don't depend on
+         the file. Legacy jobs uploaded before the snapshot column
+         existed pick up their snapshot lazily this way.
+
+    Return values:
+
+      * ``list[dict]`` — the resolved accounts (possibly empty if the CSV
+        is non-GL: caller should redirect to the job page in that case).
+      * ``None`` — both sources are unavailable. Caller should render the
+        Match-accounts screen in a precise recovery state.
+    """
+    snapshot = job.get("pclaw_accounts")
+    if snapshot:
+        return list(snapshot)
+
+    enc_name = job.get("encrypted_file")
+    if not enc_name:
+        _audit("account_mapping_missing_file", target_type="job", target_id=job_id)
+        return None
+    encrypted_in = UPLOAD_DIR / enc_name
+    if not encrypted_in.exists():
+        _audit("account_mapping_missing_file", target_type="job", target_id=job_id)
+        return None
+
+    temp_csv = UPLOAD_DIR / f"temp_mapping_{job_id}.csv"
+    try:
+        try:
+            decrypt_file(encrypted_in, temp_csv)
+        except Exception as e:  # noqa: BLE001
+            _audit(
+                "account_mapping_decrypt_error",
+                target_type="job", target_id=job_id, details=str(e),
+            )
+            return None
+        try:
+            with temp_csv.open("r", newline="", encoding="utf-8-sig") as f:
+                reader = _csv.DictReader(f)
+                if not is_gl_format(reader.fieldnames or []):
+                    return []
+                gl_rows = list(reader)
+        except (UnicodeDecodeError, _csv.Error) as e:
+            _audit(
+                "account_mapping_csv_error",
+                target_type="job", target_id=job_id, details=str(e),
+            )
+            return None
+    finally:
+        temp_csv.unlink(missing_ok=True)
+
+    pclaw_accounts = _extract_pclaw_accounts_from_gl_rows(gl_rows)
+    # Backfill the persisted snapshot so a future redeploy that loses the
+    # encrypted file doesn't lock the user out of matching.
+    try:
+        live = jobs.get(job_id)
+        if live is not None:
+            live["pclaw_accounts"] = pclaw_accounts
+        job["pclaw_accounts"] = pclaw_accounts
+        db.save_job_state(job_id, {"status": job.get("status") or "",
+                                    "pclaw_accounts": pclaw_accounts})
+    except Exception:  # noqa: BLE001 — backfill is best-effort
+        pass
+    return pclaw_accounts
+
+
 def _render_account_mapping_error(*, job, qbo_conn, category, status_code, intuit_tid):
     """Render the account-mapping template in an error state.
 
@@ -4735,6 +4838,7 @@ def _render_account_mapping_error(*, job, qbo_conn, category, status_code, intui
             "reconnect_url": url_for("connect_qbo", job_id=job["id"]),
             "retry_url": url_for("account_mapping", job_id=job["id"]),
             "job_url": url_for("job_detail", job_id=job["id"]),
+            "reupload_url": url_for("job_detail", job_id=job["id"]),
         },
     )
 
@@ -4881,61 +4985,38 @@ def account_mapping(job_id):
         return redirect(url_for("account_mapping", job_id=job_id))
 
     # Build the list of unique PCLaw accounts in this job's source CSV.
-    # Defensive paths cover: encrypted file deleted (e.g. job purged
-    # between visits), corrupt ciphertext (key rotated since upload),
-    # CSV decode errors (encoding edge cases). All redirect cleanly.
-    encrypted_in = UPLOAD_DIR / job["encrypted_file"]
-    temp_csv = UPLOAD_DIR / f"temp_mapping_{job_id}.csv"
-    if not encrypted_in.exists():
-        _audit("account_mapping_missing_file", target_type="job", target_id=job_id)
+    #
+    # Preferred source: the snapshot persisted to the DB at upload time
+    # (``pclaw_accounts_json``). This survives loss of the encrypted CSV —
+    # which on Render happens any time the ephemeral project tree is reset
+    # by a redeploy, since uploads/ is *not* on the persistent disk unless
+    # UPLOAD_DIR is pointed at /var/data.
+    #
+    # Fallback source: re-parse the encrypted CSV. If the snapshot is also
+    # absent (legacy jobs uploaded before this column existed) we still
+    # render the precise recovery CTA below rather than a dead-end flash.
+    pclaw_accounts = _load_pclaw_accounts_for_mapping(job, job_id, user)
+    if pclaw_accounts is None:
+        # Truly unrecoverable: no snapshot AND no usable source CSV. Render
+        # the Match-accounts screen in an error state so the user has a
+        # clear, specific next step right where they are.
+        return _render_account_mapping_error(
+            job=job,
+            qbo_conn=qbo_conn,
+            category="missing_source",
+            status_code=None,
+            intuit_tid=None,
+        )
+    if not pclaw_accounts:
+        # File parsed cleanly but the job doesn't have the rich GL columns
+        # (transaction_id + account_number). Account mapping is only
+        # meaningful for GL exports.
         flash(
-            "The original upload for this job is no longer available. "
-            "Re-upload the PCLaw export to continue.",
-            "error",
+            "Account mapping is only available for the rich PCLaw GL "
+            "format (with transaction_id and account_number columns).",
+            "info",
         )
         return redirect(url_for("job_detail", job_id=job_id))
-    try:
-        decrypt_file(encrypted_in, temp_csv)
-    except Exception as e:  # noqa: BLE001
-        _audit("account_mapping_decrypt_error", target_type="job", target_id=job_id, details=str(e))
-        flash(
-            "We could not read the saved upload for this job. Please "
-            "re-upload the PCLaw export to continue.",
-            "error",
-        )
-        # Best-effort cleanup of any partial output.
-        temp_csv.unlink(missing_ok=True)
-        return redirect(url_for("job_detail", job_id=job_id))
-    try:
-        try:
-            with temp_csv.open("r", newline="", encoding="utf-8-sig") as f:
-                reader = _csv.DictReader(f)
-                if not is_gl_format(reader.fieldnames or []):
-                    flash(
-                        "Account mapping is only available for the rich PCLaw GL "
-                        "format (with transaction_id and account_number columns).",
-                        "info",
-                    )
-                    return redirect(url_for("job_detail", job_id=job_id))
-                seen = {}
-                for r in reader:
-                    num = (r.get("account_number") or "").strip() or None
-                    name = (r.get("account_name") or "").strip() or None
-                    key = (num, name)
-                    if key in seen:
-                        continue
-                    seen[key] = {"number": num, "name": name}
-            pclaw_accounts = list(seen.values())
-        except (UnicodeDecodeError, _csv.Error) as e:
-            _audit("account_mapping_csv_error", target_type="job", target_id=job_id, details=str(e))
-            flash(
-                "The saved upload looks corrupt or is in an unexpected format. "
-                "Please re-upload the PCLaw export to continue.",
-                "error",
-            )
-            return redirect(url_for("job_detail", job_id=job_id))
-    finally:
-        temp_csv.unlink(missing_ok=True)
 
     # Existing saved mappings keyed for fast template lookup.
     saved_mappings = db.list_account_mappings(user["firm_id"], realm_id)
