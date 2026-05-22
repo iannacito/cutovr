@@ -9,7 +9,7 @@
     <h1 class="display" style="font-size:clamp(1.8rem,3.5vw,2.6rem);">Pair each PCLaw account with QuickBooks.</h1>
     <p class="muted" style="max-width:60ch;">
       Match each PCLaw account to a QuickBooks account in
-      <strong>{{ qbo_connection.company_name or qbo_connection.realm_id }}</strong>.
+      <strong>{{ qbo_connection.company_name or qbo_connection.realm_id or 'your QuickBooks company' }}</strong>.
     </p>
     <details class="quiet" style="margin-top:var(--space-3);">
       <summary>About Account mapping</summary>
@@ -20,6 +20,81 @@
     </details>
   </header>
 
+  {% if load_error %}
+    {# Account list could not be fetched from QuickBooks. We keep the user
+       on this screen and offer a CTA matched to the failure category. #}
+    <section class="card" data-testid="account-mapping-error" style="padding:var(--space-6);border-color:var(--danger,#b91c1c);">
+      {% if load_error.category == 'auth' %}
+        <h2 style="margin-top:0;">QuickBooks needs to be reconnected</h2>
+        <p>
+          We couldn&rsquo;t load your QuickBooks accounts because the saved
+          authorization is no longer valid. This usually happens after a
+          QuickBooks password change or when a connection has gone idle for
+          a long time.
+        </p>
+        <div class="actions-row" style="margin-top:var(--space-4);">
+          <a href="{{ load_error.reconnect_url }}" class="btn btn-primary btn-lg" data-testid="reconnect-cta">Reconnect QuickBooks</a>
+          <a href="{{ load_error.job_url }}" class="btn btn-link">Back to job</a>
+        </div>
+      {% elif load_error.category == 'permission' %}
+        <h2 style="margin-top:0;">QuickBooks couldn&rsquo;t share this company&rsquo;s account list</h2>
+        <p>
+          QuickBooks accepted the request but declined to return the chart
+          of accounts for this company. The most common cause is that the
+          connected QuickBooks user no longer has access to the company,
+          or the connection was authorized against a different company
+          than the one you want to import into.
+        </p>
+        <div class="actions-row" style="margin-top:var(--space-4);">
+          <a href="{{ load_error.reconnect_url }}" class="btn btn-primary btn-lg" data-testid="reconnect-cta">Reconnect QuickBooks</a>
+          <a href="mailto:support@pclaw-qbo.example?subject=QuickBooks%20account%20access%20issue" class="btn btn-link">Contact support</a>
+        </div>
+      {% elif load_error.category == 'rate_limit' %}
+        <h2 style="margin-top:0;">QuickBooks is asking us to slow down</h2>
+        <p>
+          QuickBooks is temporarily limiting how often we can ask for your
+          account list. Wait about a minute, then try again — your
+          connection is healthy.
+        </p>
+        <div class="actions-row" style="margin-top:var(--space-4);">
+          <a href="{{ load_error.retry_url }}" class="btn btn-primary btn-lg" data-testid="retry-cta">Try again</a>
+          <a href="{{ load_error.job_url }}" class="btn btn-link">Back to job</a>
+        </div>
+      {% elif load_error.category == 'service_unavailable' or load_error.category == 'network' %}
+        <h2 style="margin-top:0;">QuickBooks is temporarily unavailable</h2>
+        <p>
+          We couldn&rsquo;t reach QuickBooks just now. This is almost always
+          a brief Intuit-side hiccup. Try again in a minute or two — no
+          changes have been made.
+        </p>
+        <div class="actions-row" style="margin-top:var(--space-4);">
+          <a href="{{ load_error.retry_url }}" class="btn btn-primary btn-lg" data-testid="retry-cta">Try again</a>
+          <a href="{{ load_error.job_url }}" class="btn btn-link">Back to job</a>
+        </div>
+      {% else %}
+        <h2 style="margin-top:0;">We couldn&rsquo;t load your QuickBooks accounts</h2>
+        <p>
+          Something went wrong while loading your QuickBooks chart of
+          accounts. Try again — if it keeps happening, reconnect
+          QuickBooks or contact support with the diagnostic id below.
+        </p>
+        <div class="actions-row" style="margin-top:var(--space-4);">
+          <a href="{{ load_error.retry_url }}" class="btn btn-primary btn-lg" data-testid="retry-cta">Try again</a>
+          <a href="{{ load_error.reconnect_url }}" class="btn" data-testid="reconnect-cta">Reconnect QuickBooks</a>
+          <a href="{{ load_error.job_url }}" class="btn btn-link">Back to job</a>
+        </div>
+      {% endif %}
+
+      {% if load_error.intuit_tid or load_error.status_code %}
+        <p class="muted" style="margin-top:var(--space-5);font-size:.85rem;">
+          Diagnostic details (share with support if needed):
+          {% if load_error.status_code %}<span data-testid="error-status">HTTP {{ load_error.status_code }}</span>{% endif %}
+          {% if load_error.status_code and load_error.intuit_tid %} &middot; {% endif %}
+          {% if load_error.intuit_tid %}<span data-testid="error-tid">Intuit reference {{ load_error.intuit_tid }}</span>{% endif %}
+        </p>
+      {% endif %}
+    </section>
+  {% else %}
   <section class="card" style="padding:0;">
     <form method="post">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -81,5 +156,6 @@
       </div>
     </form>
   </section>
+  {% endif %}
 </section>
 {% endblock %}
