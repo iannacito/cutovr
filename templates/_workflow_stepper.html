@@ -13,6 +13,13 @@
 ---------------------------------------------------------------------- #}
 {% if workflow_stages %}
 <aside class="workflow-stepper" aria-label="Migration progress">
+  {% if workflow_current and workflow_current.back_url %}
+    <div class="workflow-stepper__back" aria-label="Back to previous step">
+      <a class="btn btn-link workflow-stepper__back-link" href="{{ workflow_current.back_url }}">
+        &larr; {{ workflow_current.back_label }}
+      </a>
+    </div>
+  {% endif %}
   <div class="workflow-stepper__header">
     <div>
       <p class="eyebrow workflow-stepper__eyebrow">
