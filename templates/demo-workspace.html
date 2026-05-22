@@ -1,0 +1,113 @@
+{% extends "_base.html" %}
+{% block title %}Demo workspace &mdash; {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page">
+  <header style="margin-bottom:var(--space-6);">
+    <p class="eyebrow">Internal demo workspace</p>
+    <h1>PCLaw Migrate &mdash; demo workspace</h1>
+    <p class="muted">
+      Use this page to drive a repeatable product demo against one dedicated
+      QuickBooks Online demo company. Starting a new demo here resets the
+      <em>app</em> workspace only &mdash; it does not delete anything from
+      QuickBooks.
+    </p>
+  </header>
+
+  {% if not demo_mode_enabled %}
+    <div class="flash info" role="status" style="margin-bottom:var(--space-6);">
+      <strong>Operator view.</strong>
+      This deploy does not have <code>DEMO_MODE=true</code>, so demo
+      controls are visible to you as an internal operator but hidden from
+      normal customers. For demos at scale, point a dedicated staging
+      service at this page with <code>DEMO_MODE=true</code>.
+    </div>
+  {% endif %}
+
+  <article class="card" style="margin-bottom:var(--space-6);">
+    <h2>Connected QuickBooks company</h2>
+    {% if qbo_company_name or qbo_realm_id %}
+      <p>
+        <strong>{{ qbo_company_name or "(name not available)" }}</strong>
+        {% if qbo_realm_id %}
+          <small class="muted">&mdash; realm <code>{{ qbo_realm_id }}</code></small>
+        {% endif %}
+        <small class="muted">&mdash; QBO environment <code>{{ qbo_environment }}</code></small>
+      </p>
+      <p class="muted" style="margin-top:var(--space-3);">
+        Always demo against the same dedicated QuickBooks demo company.
+        If the wrong company is connected, go to
+        <a href="{{ url_for('quickbooks_manage') }}">QuickBooks</a>,
+        disconnect, then reconnect to the correct demo company before
+        starting a new demo.
+      </p>
+    {% else %}
+      <p class="muted">
+        No QuickBooks company is connected for this firm yet. Connect one
+        from the <a href="{{ url_for('quickbooks_manage') }}">QuickBooks</a>
+        page and come back here.
+      </p>
+    {% endif %}
+  </article>
+
+  <article class="card" style="margin-bottom:var(--space-6);">
+    <h2>Current demo run</h2>
+    {% if run_id %}
+      <p>
+        Active demo run id: <code>{{ run_id }}</code>
+      </p>
+      <p class="muted">
+        Sample transaction CSVs you download below will embed this run id
+        in transaction ids, memos, customer names, and vendor names so the
+        same demo can be re-run against the same QBO company without
+        triggering duplicate-import blocks.
+      </p>
+    {% else %}
+      <p class="muted">No active demo run yet. Click <em>Start a new demo</em> below to create one.</p>
+    {% endif %}
+
+    <form action="{{ url_for('demo_start_new') }}" method="post" style="margin-top:var(--space-4);">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn btn-primary btn-lg" type="submit">Start a new demo</button>
+    </form>
+
+    <p class="muted" style="margin-top:var(--space-3);font-size:.9rem;">
+      <strong>What this does:</strong> archives all prior jobs for this firm in
+      the app and mints a new demo run id. <strong>This does not delete
+      anything from QuickBooks Online.</strong> Any data created by prior
+      demo runs will still be in the connected QBO company until you clean
+      it up there.
+    </p>
+  </article>
+
+  <article class="card" style="margin-bottom:var(--space-6);">
+    <h2>Step-by-step demo flow</h2>
+    <ol style="line-height:1.8;">
+      <li><strong>Step 1.</strong> Click <em>Start a new demo</em> above to reset the app workspace.</li>
+      <li><strong>Step 2.</strong> Confirm the right QuickBooks demo company is connected (see panel above).</li>
+      <li><strong>Step 3.</strong> Download the sample PCLaw reports below.</li>
+      <li><strong>Step 4.</strong> Go to the <a href="{{ url_for('dashboard') }}">dashboard</a>, upload the reports, and review the Chart of Accounts.</li>
+      <li><strong>Step 5.</strong> Post starting balances from the opening-balance review screen.</li>
+      <li><strong>Step 6.</strong> Import transaction history (general ledger) to QuickBooks.</li>
+      <li><strong>Step 7.</strong> Show the migration summary on the job detail / checklist pages.</li>
+    </ol>
+  </article>
+
+  <article class="card">
+    <h2>Demo sample reports</h2>
+    <p class="muted" style="margin-bottom:var(--space-4);">
+      These files are generated on demand for the current demo run id.
+      Account numbers stay stable across runs (so the same QBO Chart of
+      Accounts is reused rather than duplicated), but transaction-level
+      data carries the demo run id so duplicate-import protection still
+      lets the import through.
+    </p>
+    <ul style="line-height:2;">
+      <li><a href="{{ url_for('demo_sample_csv', report='chart-of-accounts') }}">Chart of Accounts (demo)</a></li>
+      <li><a href="{{ url_for('demo_sample_csv', report='trial-balance') }}">Starting Trial Balance (demo)</a></li>
+      <li><a href="{{ url_for('demo_sample_csv', report='general-ledger') }}">Transaction History &mdash; General Ledger (demo)</a></li>
+      <li><a href="{{ url_for('demo_sample_csv', report='trust-listing') }}">Client Trust Listing (demo)</a></li>
+    </ul>
+  </article>
+
+</section>
+{% endblock %}
