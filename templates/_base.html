@@ -33,6 +33,9 @@
           {% if is_operator %}
             <a href="{{ url_for('operator_dashboard') }}">Operator</a>
           {% endif %}
+          {% if demo_visible %}
+            <a href="{{ url_for('demo_workspace') }}">Demo</a>
+          {% endif %}
           <a href="{{ url_for('support') }}">Support</a>
           <form action="{{ url_for('logout') }}" method="post" style="display:inline;">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

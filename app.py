@@ -13,6 +13,7 @@ import requests
 
 from app_db import AppDB
 import branding
+import demo_mode
 import operator_panel
 import readiness
 from pclaw_parser import parse_pclaw_csv, export_qbo_csv
@@ -5171,8 +5172,20 @@ def operator_required(view):
 @app.context_processor
 def _inject_operator_flag():
     """Make `is_operator` available to every template so the nav can
-    conditionally show the Operator link only for allowed emails."""
-    return {"is_operator": _is_operator()}
+    conditionally show the Operator link only for allowed emails.
+
+    Also injects ``demo_mode_enabled`` (deploy-level flag) and
+    ``demo_visible`` (per-request flag combining deploy + operator
+    status) so the nav can show a Demo link without leaking the
+    affordance to normal production customers.
+    """
+    user = current_user()
+    is_op = _is_operator()
+    return {
+        "is_operator": is_op,
+        "demo_mode_enabled": demo_mode.is_demo_mode_enabled(),
+        "demo_visible": demo_mode.demo_visible_for_user(user, is_op),
+    }
 
 
 def _workflow_stepper_context(firm_id):
@@ -5229,6 +5242,175 @@ def operator_firm_detail(firm_id):
     if not detail:
         abort(404)
     return render_template("operator-firm.html", **detail)
+
+
+# ---------------------------------------------------------------------------
+# Demo mode
+#
+# A dedicated "Demo workspace" page that exposes:
+#
+#   - A "Start new demo" reset that archives prior demo jobs for this firm
+#     so the dashboard renders a clean slate. Does NOT touch QuickBooks.
+#   - Downloads of internally-balanced, run-id-salted sample reports that
+#     can be uploaded into the normal flow without colliding with prior
+#     demo runs against the same QBO sandbox/demo company.
+#
+# Everything below is hidden (route 404s, nav link absent) unless either
+# DEMO_MODE=true on this deploy OR the logged-in user is an operator.
+# That way normal production customers never see demo controls.
+# ---------------------------------------------------------------------------
+
+
+def _demo_required(view):
+    """Same shape as login_required + operator_required but for demo mode.
+
+    Returns 404 (not 403) for non-demo users so an unauthorised visitor
+    cannot confirm whether the demo workspace exists on this deploy.
+    """
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        user = current_user()
+        if not user:
+            # Don't reveal whether the demo page exists; pretend it doesn't.
+            abort(404)
+        if not demo_mode.demo_visible_for_user(user, _is_operator()):
+            abort(404)
+        return view(*args, **kwargs)
+    return wrapper
+
+
+def _current_demo_run_id(firm_id: int) -> Optional[str]:
+    """Return the most recent demo run id stored in the firm's session, or
+    None if no demo has been started in this session. We persist this in
+    the user's Flask session rather than on the firm row to keep the demo
+    feature side-effect-free against the existing schema.
+    """
+    runs = session.get("_demo_runs") or {}
+    return runs.get(str(firm_id))
+
+
+def _set_demo_run_id(firm_id: int, run_id: str) -> None:
+    runs = session.get("_demo_runs") or {}
+    runs[str(firm_id)] = run_id
+    session["_demo_runs"] = runs
+
+
+@app.route("/demo")
+@_demo_required
+def demo_workspace():
+    """Demo control panel. Visible only when DEMO_MODE=true or the
+    logged-in user is an operator.
+    """
+    user = current_user()
+    firm = db.get_firm(user["firm_id"])
+    run_id = _current_demo_run_id(user["firm_id"])
+
+    # Pull the most-recent QBO connection for any of this firm's jobs so
+    # we can surface the connected realm prominently. Without this the
+    # demo operator can't easily tell which QBO company is wired up.
+    firm_jobs = db.list_jobs_for_firm(user["firm_id"], limit=10)
+    qbo_company_name = None
+    qbo_realm_id = None
+    for j in firm_jobs:
+        conn = db.get_qbo_connection(j["id"])
+        if conn:
+            qbo_company_name = conn.get("company_name")
+            qbo_realm_id = conn.get("realm_id")
+            break
+
+    return render_template(
+        "demo-workspace.html",
+        firm=firm,
+        run_id=run_id,
+        qbo_company_name=qbo_company_name,
+        qbo_realm_id=qbo_realm_id,
+        qbo_environment=QBO_ENVIRONMENT,
+        demo_mode_enabled=demo_mode.is_demo_mode_enabled(),
+    )
+
+
+@app.route("/demo/start", methods=["POST"])
+@_demo_required
+def demo_start_new():
+    """Reset the firm's app-side demo workspace and mint a new run id.
+
+    Side effects:
+      - Archives every job for the firm (status -> "Archived (demo reset
+        <run-id>)") so the dashboard / migration-checklist render a fresh
+        state. Real audit/import history is preserved.
+      - Writes an audit row.
+
+    Explicitly NOT side effects:
+      - No QuickBooks Online records are deleted, voided, or modified.
+      - No firm/user/QBO-connection rows are deleted.
+    """
+    user = current_user()
+    run_id = demo_mode.new_demo_run_id()
+    result = demo_mode.reset_demo_workspace(db, user["firm_id"], run_id)
+    _set_demo_run_id(user["firm_id"], run_id)
+    _audit(
+        "demo_workspace_reset",
+        target_type="firm",
+        target_id=str(user["firm_id"]),
+        details=f"run_id={run_id} archived_jobs={result['archived_jobs']}",
+    )
+    flash(
+        f"New demo started (run id {run_id}). "
+        f"{result['archived_jobs']} prior job(s) archived in the app. "
+        "Nothing was deleted from QuickBooks.",
+        "success",
+    )
+    return redirect(url_for("demo_workspace"))
+
+
+# Map a short report-type slug to (filename, MIME, builder-callable). The
+# callable takes the current demo run id (may be None for the COA which
+# does not need salting) and returns the CSV body as a string.
+_DEMO_SAMPLE_REPORTS = {
+    "chart-of-accounts": (
+        "demo_chart_of_accounts.csv",
+        lambda _run: demo_mode.render_chart_of_accounts_csv(),
+    ),
+    "trial-balance": (
+        "demo_trial_balance.csv",
+        lambda _run: demo_mode.render_trial_balance_csv(),
+    ),
+    "general-ledger": (
+        "demo_general_ledger.csv",
+        lambda run: demo_mode.render_general_ledger_csv(run),
+    ),
+    "trust-listing": (
+        "demo_trust_listing.csv",
+        lambda run: demo_mode.render_trust_listing_csv(run),
+    ),
+}
+
+
+@app.route("/demo/sample/<report>.csv")
+@_demo_required
+def demo_sample_csv(report):
+    """Download one of the bundled demo report files for the current run.
+
+    GL / trust-listing CSVs embed the current demo run id so each run is
+    duplicate-safe against the same QBO company. COA / trial-balance
+    keep stable account numbers so QBO doesn't accumulate duplicate
+    accounts across demos.
+    """
+    entry = _DEMO_SAMPLE_REPORTS.get(report)
+    if not entry:
+        abort(404)
+    filename, builder = entry
+    user = current_user()
+    run_id = _current_demo_run_id(user["firm_id"]) or demo_mode.new_demo_run_id()
+    body = builder(run_id)
+    return Response(
+        body,
+        mimetype="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 if __name__ == "__main__":
