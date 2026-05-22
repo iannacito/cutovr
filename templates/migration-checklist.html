@@ -6,12 +6,13 @@
 
   {% if next_step %}
     {% set at_upload_stage = workflow_current and workflow_current.key == 'upload' %}
+    {% set at_match_stage = workflow_current and workflow_current.key == 'match' %}
     <div class="next-card">
       <div class="next-card__body">
         {% if at_upload_stage and upload_ready_to_advance %}
           <p class="eyebrow">Step 2 of 6 &middot; Reports uploaded</p>
-          <h3>Continue to Step 3: Match accounts</h3>
-          <p>Your account list, starting balances, and transaction history are on file. You can move on whenever you&rsquo;re ready.</p>
+          <h3>Start Step 3: Match accounts</h3>
+          <p>Your account list, starting balances, and transaction history are on file. We&rsquo;ll take you straight to the QuickBooks matching screen.</p>
         {% elif at_upload_stage %}
           <p class="eyebrow">Step 2 of 6 &middot; Upload reports</p>
           <h3>Upload these to keep going</h3>
@@ -21,6 +22,10 @@
               {% for label in upload_missing_reports %}<li>{{ label }}</li>{% endfor %}
             </ul>
           {% endif %}
+        {% elif at_match_stage %}
+          <p class="eyebrow">Step 3 of 6 &middot; Match accounts</p>
+          <h3>Start Step 3: Match accounts</h3>
+          <p>Connect QuickBooks Online and pair each PCLaw account with the right QuickBooks account.</p>
         {% elif workflow_current %}
           <p class="eyebrow">Step {{ workflow_current.index }} of {{ workflow_current.total }} &middot; Next step: {{ next_step.label }}</p>
           <h3>{{ next_step.label }}</h3>
@@ -35,7 +40,9 @@
         {% if next_step.key == 'cutover_setup' %}
           <a class="btn btn-primary btn-lg" href="{{ url_for('cutover_setup') }}">Open cutover setup &rarr;</a>
         {% elif at_upload_stage and upload_ready_to_advance %}
-          <a class="btn btn-primary btn-lg" href="{{ url_for('dashboard') }}">Next: Match accounts &rarr;</a>
+          <a class="btn btn-primary btn-lg" href="{{ url_for('match_accounts_entry') }}">Start Step 3: Match accounts &rarr;</a>
+        {% elif at_match_stage %}
+          <a class="btn btn-primary btn-lg" href="{{ url_for('match_accounts_entry') }}">Start Step 3: Match accounts &rarr;</a>
         {% else %}
           <a class="btn btn-primary btn-lg" href="{{ url_for('dashboard') }}#intake">Go to upload &rarr;</a>
         {% endif %}
