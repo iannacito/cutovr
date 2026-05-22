@@ -75,6 +75,7 @@ from tb_coa_validation import (
     STATUS_READY as TBV_STATUS_READY,
     STATUS_CREATED_IN_QBO as TBV_STATUS_CREATED_IN_QBO,
 )
+from unmapped_account_guidance import classify_unmapped_accounts
 from trust_reconciliation import build_trust_listing_reconciliation
 from ar_ap_strategy import (
     validate_ar_ap_strategy,
@@ -4212,22 +4213,39 @@ def import_to_qbo(job_id):
 
             unmapped = find_unmapped_accounts(rows, mapping, mapping_mode)
             if unmapped:
-                # Beginner-safe: don't silently fake success. Send the user
-                # to the mapping page so they can resolve it in one click.
+                # Beginner-safe: don't silently fake success. The import
+                # block is correct safety behavior — we never create or
+                # silently remap QBO accounts here — but the raw "Cannot
+                # import" flash assumes the operator knows what to do.
+                # Build a context-aware CTA based on whether the firm
+                # has uploaded their Account List yet and whether they've
+                # already mirrored it into QuickBooks.
+                coa_ctx = _firm_latest_coa_state(user["firm_id"])
+                guidance = classify_unmapped_accounts(
+                    unmapped_keys=unmapped,
+                    mapping_mode=mapping_mode,
+                    coa_rows=coa_ctx.get("coa_rows") or [],
+                    coa_create_history=coa_ctx.get("coa_create_history") or [],
+                    job_id=job_id,
+                    company_name=qbo_conn.get("company_name"),
+                    environment=QBO_ENVIRONMENT,
+                )
                 job["status"] = "Import blocked: unmapped accounts"
-                _save_job(job_id)
                 _audit("import_blocked", target_type="job", target_id=job_id,
-                       details=f"unmapped accounts: {sorted(unmapped)}")
-                # Stash the unmapped list on the job so the detail page can
-                # render a one-click link to the mapping UI.
+                       details=(
+                           f"unmapped accounts: {sorted(unmapped)} "
+                           f"action={guidance.action}"
+                       ))
+                # Stash both the raw list (back-compat for older banners /
+                # API consumers) and the structured guidance the
+                # job-detail page renders.
                 job["unmapped_accounts"] = sorted(unmapped)
+                job["unmapped_account_guidance"] = guidance.to_dict()
                 _save_job(job_id)
+                accounts_display = "; ".join(a.display for a in guidance.accounts)
                 flash(
-                    "Cannot import: these PCLaw accounts have no match in your QBO "
-                    f"sandbox (matching by {mapping_mode}): "
-                    + "; ".join(sorted(unmapped))
-                    + ". Open the account mapping page (button below) to pick a "
-                      "matching QBO account for each.",
+                    f"{guidance.headline} Accounts missing in "
+                    f"{guidance.company_label}: {accounts_display}.",
                     "error",
                 )
                 return redirect(url_for("job_detail", job_id=job_id))
@@ -4303,6 +4321,7 @@ def import_to_qbo(job_id):
 
             job["status"] = f"Imported {len(created)} journal entries to QuickBooks"
             job["unmapped_accounts"] = None
+            job["unmapped_account_guidance"] = None
             job["last_error"] = None
             _save_job(job_id)
             _audit("import_success", target_type="job", target_id=job_id,

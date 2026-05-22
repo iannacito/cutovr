@@ -283,12 +283,17 @@ def main():
         assert appmod.jobs[job_id5]["status"] == "Import blocked: unmapped accounts"
         assert appmod.jobs[job_id5].get("unmapped_accounts"), appmod.jobs[job_id5].get("unmapped_accounts")
         assert len(posted) == before, "no JEs should have been posted"
-        # Job-detail page surfaces the mapping link
+        # Job-detail page surfaces the new structured CTA banner. Firm D
+        # never uploaded an Account List, so the primary CTA should point
+        # at the upload flow; the manual-matching link is still available
+        # as a secondary fallback so this assertion stays meaningful for
+        # token-mapping coverage.
         r = c5.get(f"/jobs/{job_id5}")
         body = r.data.decode()
-        assert "Open the account mapping page" in body
+        assert "These accounts are not in QuickBooks yet" in body
+        assert "Upload Account List" in body
         assert f"/jobs/{job_id5}/account-mapping" in body
-        print("T5 OK: missing accounts blocked, banner links to mapping page")
+        print("T5 OK: missing accounts blocked, banner offers upload + match CTAs")
 
         # === T6: cross-firm access to mapping is 404 ======================
         c6 = appmod.app.test_client()
