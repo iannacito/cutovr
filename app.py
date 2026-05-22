@@ -81,6 +81,7 @@ from trust_reconciliation import build_trust_listing_reconciliation
 from ar_ap_strategy import (
     validate_ar_ap_strategy,
     AR_AP_STRATEGY_CHOICES,
+    STRATEGY_SKIP as AR_AP_STRATEGY_SKIP,
     guidance_for_strategy,
 )
 import qbo_error_hint
@@ -1237,6 +1238,15 @@ def cutover_setup():
         return redirect(url_for("migration_checklist"))
 
     ar_ap_strategy = (existing or {}).get("ar_ap_strategy") if existing else ""
+    # On demo deploys, default the AR/AP strategy to "skip" so the demo
+    # workflow stays clean for lawyers who aren't accountants. We only
+    # apply this when the firm has no explicit choice on file yet — any
+    # saved value (including a deliberate "Not decided yet" picked later)
+    # is preserved unchanged.
+    ar_ap_strategy_default = ""
+    if not ar_ap_strategy and demo_mode.is_demo_mode_enabled():
+        ar_ap_strategy_default = AR_AP_STRATEGY_SKIP
+    effective_strategy = ar_ap_strategy or ar_ap_strategy_default
     return render_template(
         "cutover.html",
         cutover=existing or {},
@@ -1244,8 +1254,9 @@ def cutover_setup():
         country_choices=cutover_workflow.COUNTRY_CHOICES,
         accounting_basis_choices=cutover_workflow.ACCOUNTING_BASIS_CHOICES,
         ar_ap_strategy_choices=AR_AP_STRATEGY_CHOICES,
+        ar_ap_strategy_default=ar_ap_strategy_default,
         ar_ap_guidance=guidance_for_strategy(
-            ar_ap_strategy,
+            effective_strategy,
             country=(existing or {}).get("country"),
             accounting_basis=(existing or {}).get("accounting_basis"),
             clio_involved=bool((existing or {}).get("clio_involved")),
@@ -1265,6 +1276,8 @@ def migration_checklist():
         items, url_for=url_for, has_jobs=bool(firm_jobs),
     )
     current = customer_workflow.current_stage(stages)
+    upload_ready = customer_workflow.upload_stage_ready_to_advance(items)
+    upload_missing = customer_workflow.upload_stage_missing_reports(items)
     return render_template(
         "migration-checklist.html",
         cutover=cutover,
@@ -1276,6 +1289,8 @@ def migration_checklist():
         workflow_progress=customer_workflow.progress_percent(stages),
         workflow_completed=customer_workflow.completed_count(stages),
         workflow_terms=customer_workflow.FRIENDLY_TERMS,
+        upload_ready_to_advance=upload_ready,
+        upload_missing_reports=upload_missing,
     )
 
 

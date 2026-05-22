@@ -5,19 +5,37 @@
   {% include "_workflow_stepper.html" %}
 
   {% if next_step %}
+    {% set at_upload_stage = workflow_current and workflow_current.key == 'upload' %}
     <div class="next-card">
       <div class="next-card__body">
-        {% if workflow_current %}
+        {% if at_upload_stage and upload_ready_to_advance %}
+          <p class="eyebrow">Step 2 of 6 &middot; Reports uploaded</p>
+          <h3>Continue to Step 3: Match accounts</h3>
+          <p>Your account list, starting balances, and transaction history are on file. You can move on whenever you&rsquo;re ready.</p>
+        {% elif at_upload_stage %}
+          <p class="eyebrow">Step 2 of 6 &middot; Upload reports</p>
+          <h3>Upload these to keep going</h3>
+          <p>We&rsquo;ll keep what you&rsquo;ve already sent.</p>
+          {% if upload_missing_reports %}
+            <ul class="secure-list" style="margin-top:var(--space-3);">
+              {% for label in upload_missing_reports %}<li>{{ label }}</li>{% endfor %}
+            </ul>
+          {% endif %}
+        {% elif workflow_current %}
           <p class="eyebrow">Step {{ workflow_current.index }} of {{ workflow_current.total }} &middot; Next step: {{ next_step.label }}</p>
+          <h3>{{ next_step.label }}</h3>
+          <p>{{ next_step.summary }}</p>
         {% else %}
           <p class="eyebrow">Next step: {{ next_step.label }}</p>
+          <h3>{{ next_step.label }}</h3>
+          <p>{{ next_step.summary }}</p>
         {% endif %}
-        <h3>{{ next_step.label }}</h3>
-        <p>{{ next_step.summary }}</p>
       </div>
       <div class="next-card__actions">
         {% if next_step.key == 'cutover_setup' %}
           <a class="btn btn-primary btn-lg" href="{{ url_for('cutover_setup') }}">Open cutover setup &rarr;</a>
+        {% elif at_upload_stage and upload_ready_to_advance %}
+          <a class="btn btn-primary btn-lg" href="{{ url_for('dashboard') }}">Next: Match accounts &rarr;</a>
         {% else %}
           <a class="btn btn-primary btn-lg" href="{{ url_for('dashboard') }}#intake">Go to upload &rarr;</a>
         {% endif %}

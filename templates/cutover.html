@@ -90,12 +90,16 @@
       <p class="muted" style="margin-bottom:var(--space-4);">{{ guidance.ar_ap }}</p>
       <label>
         <span>How you&rsquo;d like to handle these</span>
+        {% set ar_ap_selected = cutover.ar_ap_strategy or ar_ap_strategy_default or '' %}
         <select name="ar_ap_strategy">
-          <option value="">Not decided yet</option>
+          <option value="" {% if not ar_ap_selected %}selected{% endif %}>Not decided yet</option>
           {% for code, label in ar_ap_strategy_choices %}
-            <option value="{{ code }}" {% if cutover.ar_ap_strategy == code %}selected{% endif %}>{{ label }}</option>
+            <option value="{{ code }}" {% if ar_ap_selected == code %}selected{% endif %}>{{ label }}</option>
           {% endfor %}
         </select>
+        {% if ar_ap_strategy_default and not cutover.ar_ap_strategy %}
+          <small class="muted">Pre-selected for the demo &mdash; switch this back anytime before saving.</small>
+        {% endif %}
       </label>
       {% if ar_ap_guidance %}
         <div class="card card--inset" style="margin-top:var(--space-3);">
