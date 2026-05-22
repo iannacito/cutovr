@@ -24,6 +24,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, asdict
 from typing import List, Optional
+from urllib.parse import urlparse
 
 
 # Items in this list are the source of truth for both /healthz keys and
@@ -143,13 +144,77 @@ def collect_checks(request_host: Optional[str] = None,
         redirect_hint = "QBO_REDIRECT_URI must use https:// in production."
     else:
         redirect_hint = ""
+    # The redirect URI is not a secret — it's published to Intuit Developer
+    # — and the whole point of surfacing it is to compare against what's
+    # registered there. Always include the configured value in `detail` so
+    # the operator can copy-paste it for an exact match.
     checks.append(Check(
         key="qbo_redirect_uri_https",
         label="QBO_REDIRECT_URI is public + HTTPS",
         ok=redirect_ok,
         severity=SEVERITY_REQUIRED,
         hint=redirect_hint,
-        detail=redirect_uri if redirect_ok else "",
+        detail=redirect_uri or "(unset)",
+    ))
+
+    # Path-shape check: Intuit OAuth must end at /oauth/callback. A common
+    # cause of the "redirect_uri ... invalid" error is a typo here.
+    try:
+        redirect_parsed = urlparse(redirect_uri) if redirect_uri else None
+    except Exception:
+        redirect_parsed = None
+    redirect_path = redirect_parsed.path if redirect_parsed else ""
+    path_ok = bool(redirect_uri) and redirect_path.rstrip("/") == "/oauth/callback"
+    if not redirect_uri:
+        path_hint = "Set QBO_REDIRECT_URI; the path must end with /oauth/callback."
+    elif not path_ok:
+        path_hint = (
+            "QBO_REDIRECT_URI path should end with /oauth/callback to match the app's "
+            "OAuth route. Current path: " + (redirect_path or "(empty)")
+        )
+    else:
+        path_hint = ""
+    checks.append(Check(
+        key="qbo_redirect_uri_path_ok",
+        label="QBO_REDIRECT_URI path ends with /oauth/callback",
+        ok=path_ok,
+        severity=SEVERITY_REQUIRED,
+        hint=path_hint,
+        detail=redirect_path or "(no path)",
+    ))
+
+    # Host-match check (recommended): if PUBLIC_APP_URL is set, the redirect
+    # URI host should match it. Helps catch the case where the operator
+    # updated their custom domain but forgot to update QBO_REDIRECT_URI to
+    # match — Intuit will then reject the OAuth round-trip.
+    public_url_for_host = os.environ.get("PUBLIC_APP_URL", "").strip()
+    if public_url_for_host and redirect_uri:
+        try:
+            public_host = (urlparse(public_url_for_host).hostname or "").lower()
+            redirect_host = (redirect_parsed.hostname or "").lower() if redirect_parsed else ""
+        except Exception:
+            public_host = ""
+            redirect_host = ""
+        host_match_ok = bool(public_host) and public_host == redirect_host
+        host_detail = f"PUBLIC_APP_URL host: {public_host or '(unknown)'} / redirect host: {redirect_host or '(unknown)'}"
+        host_hint = ("" if host_match_ok else
+                     "QBO_REDIRECT_URI host does not match PUBLIC_APP_URL. Update one so they "
+                     "point at the same domain, then re-register the redirect URI in Intuit Developer.")
+    else:
+        # Without PUBLIC_APP_URL we can't make a definitive comparison; treat
+        # as informational/pass so we don't fail readiness for a config we
+        # can't evaluate. The host check is only meaningful when the operator
+        # has declared a canonical URL.
+        host_match_ok = True
+        host_detail = "PUBLIC_APP_URL not set; skipping host comparison"
+        host_hint = ""
+    checks.append(Check(
+        key="qbo_redirect_uri_host_matches_public_url",
+        label="QBO_REDIRECT_URI host matches PUBLIC_APP_URL",
+        ok=host_match_ok,
+        severity=SEVERITY_RECOMMENDED,
+        hint=host_hint,
+        detail=host_detail,
     ))
 
     qbo_environment = os.environ.get("QBO_ENVIRONMENT", "sandbox").lower()

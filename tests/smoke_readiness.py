@@ -78,6 +78,8 @@ def t1_collect_checks_all_green():
         "qbo_client_id_set",
         "qbo_client_secret_set",
         "qbo_redirect_uri_https",
+        "qbo_redirect_uri_path_ok",
+        "qbo_redirect_uri_host_matches_public_url",
         "qbo_real_import_enabled",
         "support_email_set",
         "security_email_set",
@@ -93,6 +95,7 @@ def t1_collect_checks_all_green():
     for key in (
         "secret_key_set", "encryption_key_set", "qbo_client_id_set",
         "qbo_client_secret_set", "qbo_redirect_uri_https",
+        "qbo_redirect_uri_path_ok", "qbo_redirect_uri_host_matches_public_url",
         "qbo_real_import_enabled", "support_email_set",
         "security_email_set", "privacy_contact_email_set",
         "custom_domain_present", "health_endpoint_ok",
