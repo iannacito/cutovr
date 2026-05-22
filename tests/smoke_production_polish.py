@@ -257,8 +257,11 @@ def t6_account_mapping_resilience():
         assert "No account mappings were changed" in body or "Saved" in body, body[:400]
 
         # Now simulate the encrypted file being purged between visits
-        # (e.g. by an out-of-band cleanup script). Page must redirect
-        # gracefully, not crash with FileNotFoundError.
+        # (e.g. by an out-of-band cleanup script OR an ephemeral-disk
+        # redeploy on Render). With the persisted account snapshot in
+        # place the page must still render the matching table — that's
+        # the whole point of the snapshot. We also assert the old
+        # dead-end flash is gone.
         job = appmod.db.get_job(job_id)
         enc_path = appmod.UPLOAD_DIR / job["encrypted_file"]
         backup = enc_path.with_suffix(enc_path.suffix + ".bak")
@@ -266,7 +269,27 @@ def t6_account_mapping_resilience():
         try:
             r = c.get(f"/jobs/{job_id}/account-mapping", follow_redirects=True)
             assert r.status_code == 200, r.status_code
-            assert b"original upload for this job is no longer available" in r.data, r.data[:400]
+            assert b"original upload for this job is no longer available" not in r.data, \
+                r.data[:400]
+            assert b"Account mapping" in r.data or b"Match accounts" in r.data, \
+                r.data[:400]
+        finally:
+            backup.rename(enc_path)
+
+        # Additionally, clear the persisted snapshot AND the encrypted
+        # file to exercise the legacy-job recovery path: the page must
+        # render the in-place re-upload CTA, not a 500 and not the old
+        # dead-end flash.
+        live = appmod.jobs.get(job_id)
+        if live is not None:
+            live.pop("pclaw_accounts", None)
+        appmod.db.save_job_state(job_id, {"status": "uploaded", "pclaw_accounts": None})
+        enc_path.rename(backup)
+        try:
+            r = c.get(f"/jobs/{job_id}/account-mapping", follow_redirects=False)
+            assert r.status_code == 200, r.status_code
+            assert b'data-testid="reupload-cta"' in r.data, r.data[:400]
+            assert b"original upload for this job is no longer available" not in r.data
         finally:
             backup.rename(enc_path)
 

@@ -32,6 +32,15 @@ services:
         value: /var/data/import_history.sqlite3
       - key: APP_DB
         value: /var/data/app.sqlite3
+      # Encrypted source CSVs and processed export CSVs must live on the
+      # persistent disk too. Without these, uploads/ and processed/ inside
+      # the project tree are wiped on every redeploy, which surfaces to
+      # users as "the original upload for this job is no longer available"
+      # mid-workflow.
+      - key: UPLOAD_DIR
+        value: /var/data/uploads
+      - key: OUTPUT_DIR
+        value: /var/data/processed
       - key: APP_ENV
         value: production    # enables Secure cookies + requires SECRET_KEY
       - key: PYTHON_VERSION

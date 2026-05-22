@@ -265,6 +265,11 @@ class AppDB:
         # whose shape varies by report_type. Stored as JSON TEXT so the
         # rest of the schema stays flat.
         add_col("jobs", "preflight_json TEXT")
+        # Persisted unique (account_number, account_name) list extracted at
+        # upload time. Lets the Match-accounts screen survive loss of the
+        # encrypted source CSV (e.g. ephemeral storage on a redeployed Render
+        # instance) — the file isn't required to enumerate accounts again.
+        add_col("jobs", "pclaw_accounts_json TEXT")
 
         # cutover_settings: AR/AP migration strategy (Task 4 in the
         # migration-workflow completion PR). Default empty so existing
@@ -497,6 +502,13 @@ class AppDB:
             values.append(
                 json.dumps(job_dict["preflight"]) if job_dict["preflight"] is not None else None
             )
+        if "pclaw_accounts" in job_dict:
+            fields.append("pclaw_accounts_json")
+            values.append(
+                json.dumps(job_dict["pclaw_accounts"])
+                if job_dict["pclaw_accounts"] is not None
+                else None
+            )
 
         set_clause = ", ".join(f"{f} = ?" for f in fields)
         values.append(job_id)
@@ -552,6 +564,7 @@ class AppDB:
             ("unmapped_accounts_json", "unmapped_accounts"),
             ("last_error_json", "last_error"),
             ("preflight_json", "preflight"),
+            ("pclaw_accounts_json", "pclaw_accounts"),
         ]:
             v = row[src] if src in row.keys() else None
             if v:

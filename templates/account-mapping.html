@@ -60,6 +60,18 @@
           <a href="{{ load_error.retry_url }}" class="btn btn-primary btn-lg" data-testid="retry-cta">Try again</a>
           <a href="{{ load_error.job_url }}" class="btn btn-link">Back to job</a>
         </div>
+      {% elif load_error.category == 'missing_source' %}
+        <h2 style="margin-top:0;">We need the PCLaw file again to list your accounts</h2>
+        <p>
+          Your job and its QuickBooks connection are intact, but the original
+          PCLaw export is no longer on file for this job. Re-uploading just
+          this report finishes the match step &mdash; nothing you&rsquo;ve already
+          mapped or imported is lost.
+        </p>
+        <div class="actions-row" style="margin-top:var(--space-4);">
+          <a href="{{ load_error.reupload_url or load_error.job_url }}" class="btn btn-primary btn-lg" data-testid="reupload-cta">Re-upload PCLaw export</a>
+          <a href="{{ load_error.job_url }}" class="btn btn-link">Back to job</a>
+        </div>
       {% elif load_error.category == 'service_unavailable' or load_error.category == 'network' %}
         <h2 style="margin-top:0;">QuickBooks is temporarily unavailable</h2>
         <p>
