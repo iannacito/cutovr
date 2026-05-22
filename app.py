@@ -1605,6 +1605,7 @@ def healthz():
         "qbo_redirect_uri_set": bool(QBO_REDIRECT_URI) and not QBO_REDIRECT_URI.startswith("http://localhost"),
         "branding_support_email_set": not branding.is_placeholder_email(branding.SUPPORT_EMAIL),
         "branding_security_email_set": not branding.is_placeholder_email(branding.SECURITY_EMAIL),
+        "demo_mode_enabled": demo_mode.is_demo_mode_enabled(),
     }
     # Merge in the structured go-live readiness booleans. Only booleans
     # are exposed here; hints + details stay behind login at /readiness.
@@ -5264,14 +5265,23 @@ def operator_firm_detail(firm_id):
 def _demo_required(view):
     """Same shape as login_required + operator_required but for demo mode.
 
-    Returns 404 (not 403) for non-demo users so an unauthorised visitor
-    cannot confirm whether the demo workspace exists on this deploy.
+    When the deploy itself is a demo deploy (DEMO_MODE=true), an
+    unauthenticated visitor is redirected to /login?next=/demo — the
+    deploy is openly a demo deploy and the login redirect makes the
+    "you need to sign in first" path obvious to the demo operator.
+
+    Otherwise (production-config'd deploy where only operators see the
+    demo affordance) we 404 unauthenticated visitors so we don't
+    confirm the workspace exists.
     """
     @wraps(view)
     def wrapper(*args, **kwargs):
         user = current_user()
         if not user:
-            # Don't reveal whether the demo page exists; pretend it doesn't.
+            if demo_mode.is_demo_mode_enabled():
+                flash("Please log in to access the demo workspace.", "info")
+                return redirect(url_for("login", next=request.path))
+            # Production deploy: don't reveal that /demo exists.
             abort(404)
         if not demo_mode.demo_visible_for_user(user, _is_operator()):
             abort(404)

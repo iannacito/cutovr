@@ -198,6 +198,56 @@ def t5_demo_gl_is_balanced_and_run_id_salted():
     print("T5 OK: demo GL is balanced and run-id-salted; COA is stable")
 
 
+def t7_unauthenticated_redirect_on_demo_deploy():
+    """On a DEMO_MODE=true deploy, an unauthenticated visit to /demo
+    redirects to /login?next=/demo instead of 404ing. This is the
+    diagnostic improvement that prevents "/demo 404s after deploy"
+    confusion: on a demo deploy the route is openly available and the
+    login redirect tells the operator they just need to sign in.
+
+    On a non-demo deploy the route still 404s for snoopers (verified by
+    t1) so the diagnostic relaxation is scoped to demo deploys only.
+    """
+    appmod = _reset_app({"DEMO_MODE": "true"})
+    c = appmod.app.test_client()
+    r = c.get("/demo", follow_redirects=False)
+    assert r.status_code in (302, 303), f"/demo on demo deploy should redirect when logged-out, got {r.status_code}"
+    loc = r.headers.get("Location", "")
+    assert "/login" in loc and "next=" in loc, f"redirect should land on /login?next=..., got {loc!r}"
+    print("T7 OK: unauthenticated /demo on DEMO_MODE deploy redirects to /login")
+
+
+def t8_unauthenticated_404_off_demo_deploy():
+    """Inverse of T7: on a non-demo deploy the /demo route still 404s
+    for unauthenticated visitors. This preserves the "don't confirm the
+    workspace exists" property on production-config'd deploys.
+    """
+    appmod = _reset_app({})  # DEMO_MODE unset
+    c = appmod.app.test_client()
+    r = c.get("/demo", follow_redirects=False)
+    assert r.status_code == 404, f"/demo on non-demo deploy should 404 when logged-out, got {r.status_code}"
+    print("T8 OK: unauthenticated /demo on non-demo deploy still 404s")
+
+
+def t9_healthz_exposes_demo_mode_flag():
+    """/healthz JSON includes demo_mode_enabled so Render configuration
+    can be verified externally without leaking secrets.
+    """
+    import json as _json
+    appmod = _reset_app({"DEMO_MODE": "true"})
+    c = appmod.app.test_client()
+    r = c.get("/healthz")
+    assert r.status_code == 200
+    body = _json.loads(r.get_data(as_text=True))
+    assert body.get("demo_mode_enabled") is True, f"expected demo_mode_enabled=true, got {body!r}"
+
+    appmod = _reset_app({})
+    c = appmod.app.test_client()
+    body = _json.loads(c.get("/healthz").get_data(as_text=True))
+    assert body.get("demo_mode_enabled") is False, f"expected demo_mode_enabled=false, got {body!r}"
+    print("T9 OK: /healthz reports demo_mode_enabled")
+
+
 def t6_duplicate_protection_unchanged_outside_demo_mode():
     """Demo mode must not weaken duplicate protection for normal imports.
 
@@ -233,6 +283,9 @@ if __name__ == "__main__":
         t4_start_new_demo_archives_jobs_for_firm,
         t5_demo_gl_is_balanced_and_run_id_salted,
         t6_duplicate_protection_unchanged_outside_demo_mode,
+        t7_unauthenticated_redirect_on_demo_deploy,
+        t8_unauthenticated_404_off_demo_deploy,
+        t9_healthz_exposes_demo_mode_flag,
     ):
         try:
             fn()
