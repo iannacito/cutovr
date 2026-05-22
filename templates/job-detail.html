@@ -7,11 +7,48 @@
   <a href="{{ url_for('dashboard') }}" class="back-link">&larr; Back to dashboard</a>
 
   {# ---- Blocking flash banners ---------------------------------------- #}
-  {% if job.unmapped_accounts %}
+  {% if job.unmapped_account_guidance %}
+    {% set guidance = job.unmapped_account_guidance %}
+    <div class="flash error" role="alert" aria-label="Account match needed before import">
+      <strong>{{ guidance.headline }}</strong>
+      <p style="margin:var(--space-3) 0 0;">{{ guidance.body }}</p>
+      <p style="margin:var(--space-3) 0 0;">
+        <strong>Accounts missing in QuickBooks:</strong>
+      </p>
+      <ul style="margin:var(--space-2) 0 0 var(--space-4);">
+        {% for a in guidance.accounts %}
+          <li>
+            {% if a.number %}<strong>{{ a.number }}</strong>{% endif %}
+            {{ a.name }}
+            {% if a.in_coa %}
+              <span class="badge" title="Listed on your uploaded Account List but not yet in QuickBooks">on Account List</span>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+      <p style="margin:var(--space-4) 0 0;">
+        {% if guidance.primary_cta_endpoint %}
+          <a class="button primary"
+             href="{{ url_for(guidance.primary_cta_endpoint, **guidance.primary_cta_kwargs) }}">
+            {{ guidance.primary_cta_label }}
+          </a>
+        {% endif %}
+        {% if guidance.secondary_cta_endpoint %}
+          <a class="button"
+             href="{{ url_for(guidance.secondary_cta_endpoint, **guidance.secondary_cta_kwargs) }}"
+             style="margin-left:var(--space-3);">
+            {{ guidance.secondary_cta_label }}
+          </a>
+        {% endif %}
+      </p>
+    </div>
+  {% elif job.unmapped_accounts %}
+    {# Older jobs persisted before the guidance payload existed — fall back
+       to the plain list so the operator still sees the blocker. #}
     <div class="flash error">
-      <strong>Unmapped accounts blocking import:</strong>
+      <strong>Account match needed before import:</strong>
       {{ job.unmapped_accounts|join(', ') }}.
-      <a href="{{ url_for('account_mapping', job_id=job.id) }}">Open the account mapping page</a> to fix this.
+      <a href="{{ url_for('account_mapping', job_id=job.id) }}">Open the matching page</a> to pick a QuickBooks account for each.
     </div>
   {% endif %}
 
