@@ -242,12 +242,13 @@ def _stage_cta(
     if stage_key == STAGE_UPLOAD:
         if ready_to_advance:
             return ("Next: Match accounts",
-                    u("migration_checklist", "/migration-checklist"))
+                    u("match_accounts_entry", "/match-accounts"))
         if has_jobs:
             return ("Upload another report", u("dashboard", "/dashboard") + "#intake")
         return ("Upload your reports", u("dashboard", "/dashboard") + "#intake")
     if stage_key == STAGE_MATCH:
-        return ("Open the checklist", u("migration_checklist", "/migration-checklist"))
+        return ("Start Step 3: Match accounts",
+                u("match_accounts_entry", "/match-accounts"))
     if stage_key == STAGE_REVIEW:
         return ("Review on the checklist", u("migration_checklist", "/migration-checklist"))
     if stage_key == STAGE_IMPORT:

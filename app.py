@@ -1294,6 +1294,57 @@ def migration_checklist():
     )
 
 
+@app.route("/match-accounts")
+@login_required
+def match_accounts_entry():
+    """Step 3 entry point: send the user to the real match-accounts UI.
+
+    Step 3 in our customer-facing workflow ("Match accounts") is
+    implemented as per-job pages (``/jobs/<id>/connect-qbo`` and
+    ``/jobs/<id>/account-mapping``). The migration-checklist needs a
+    single, stable URL it can point at without having to know which
+    job is the right one — this route does that dispatch:
+
+      * If the firm has at least one general-ledger job AND any
+        connected QuickBooks company, redirect to that job's
+        account-mapping page (the actual mapping UI).
+      * If the firm has a GL job but no QBO connection yet, redirect
+        to that job's ``connect-qbo`` flow — that is the real
+        prerequisite, and we want the user to hit it directly rather
+        than land on a dead button.
+      * If the firm has no GL job at all, send them back to the
+        migration checklist with a clear flash explaining what's
+        missing (transaction history upload).
+
+    Production and demo deploys both use this route. AR/AP defaulting
+    is the only demo-specific behavior in this PR.
+    """
+    user = current_user()
+    firm_id = user["firm_id"]
+    gl_jobs = _firm_latest_jobs_by_type(firm_id, REPORT_GENERAL_LEDGER, limit=500)
+    if not gl_jobs:
+        flash(
+            "Upload your transaction history (general ledger) first — "
+            "we need at least one general-ledger upload before we can "
+            "match accounts to QuickBooks.",
+            "error",
+        )
+        return redirect(url_for("migration_checklist"))
+
+    primary = gl_jobs[0]
+    primary_id = primary["id"]
+
+    # Prefer a GL job that already has a QBO connection — that's where
+    # the live account-mapping UI works without an extra connect step.
+    for job in gl_jobs:
+        if _get_qbo_connection(job["id"]):
+            return redirect(url_for("account_mapping", job_id=job["id"]))
+
+    # No QBO connection on any GL job yet. Send them to connect for the
+    # most-recent GL job so the next click actually starts Step 3.
+    return redirect(url_for("connect_qbo", job_id=primary_id))
+
+
 @app.route("/firm/imports")
 @login_required
 def firm_imports():

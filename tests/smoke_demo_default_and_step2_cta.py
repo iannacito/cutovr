@@ -209,8 +209,12 @@ def s2_upload_cta_switches_to_match_accounts_when_ready():
     assert current is not None, "expected a current stage"
     assert current.key == customer_workflow.STAGE_UPLOAD, current.key
     assert "Match accounts" in current.cta_label, current.cta_label
-    assert "migration-checklist" in current.cta_url, current.cta_url
-    print("S2 OK: upload stage CTA flips to 'Next: Match accounts' when ready")
+    assert "match-accounts" in current.cta_url, current.cta_url
+    # The CTA must not point back at the checklist or at a dead anchor —
+    # both regressions Dan saw on the first pass.
+    assert "migration-checklist" not in current.cta_url, current.cta_url
+    assert "#" not in current.cta_url, current.cta_url
+    print("S2 OK: upload stage CTA flips to '/match-accounts' when ready")
 
 
 def _seed_job(appmod, firm_id, user_id, job_id, report_type):
@@ -251,11 +255,85 @@ def s3_checklist_page_shows_continue_cta():
     r = c.get("/migration-checklist")
     assert r.status_code == 200, r.status_code
     body = r.get_data(as_text=True)
-    assert "Continue to Step 3: Match accounts" in body, \
-        "ready-to-advance card heading missing"
-    assert "Next: Match accounts" in body, \
-        "primary CTA label missing"
-    print("S3 OK: migration-checklist renders 'Continue to Step 3' CTA")
+    assert "Start Step 3: Match accounts" in body, \
+        "ready-to-advance card heading or CTA label missing"
+    # Both CTAs on the page (the header one from the stepper and the
+    # next-step card one) must point at the real /match-accounts entry,
+    # not at the checklist or a dead #anchor.
+    assert 'href="/match-accounts"' in body, \
+        "primary CTA must link to /match-accounts"
+    assert 'href="/migration-checklist"' not in body or body.count(
+        'href="/match-accounts"') >= 2, \
+        "Both stepper + next-card CTAs should point at /match-accounts"
+    # No stale 'Open the checklist' / 'Open checklist' / 'Go to upload'
+    # primary CTA should be the headline action when reports are ready.
+    assert "Open the checklist" not in body
+    assert "Open checklist" not in body
+    print("S3 OK: migration-checklist routes both CTAs to /match-accounts")
+
+
+def s5_match_accounts_route_dispatches():
+    """Step 3 entry route lands the user somewhere real, not a no-op.
+
+    With no GL job on file, the route flashes a missing-prereq message
+    and redirects back to the checklist.
+
+    With a GL job but no QBO connection, the route redirects to the GL
+    job's connect-qbo flow (the real prerequisite).
+    """
+    appmod = _reset_app({})
+    c = appmod.app.test_client()
+    _signup_and_login(c, "Step3 Firm", "step3@step3.test")
+    user = appmod.db.get_user_by_email("step3@step3.test")
+    fid, uid = user["firm_id"], user["id"]
+
+    # No GL job yet: should redirect to /migration-checklist with a flash.
+    r = c.get("/match-accounts", follow_redirects=False)
+    assert r.status_code == 302, r.status_code
+    assert "/migration-checklist" in r.headers["Location"], r.headers
+    follow = c.get(r.headers["Location"])
+    assert b"general ledger" in follow.data or b"transaction history" in follow.data
+
+    # Now seed a GL job. Connect-qbo should be the redirect target.
+    _seed_job(appmod, fid, uid, "gl-job-1", "general_ledger")
+    r = c.get("/match-accounts", follow_redirects=False)
+    assert r.status_code == 302, r.status_code
+    loc = r.headers["Location"]
+    assert "/jobs/gl-job-1/connect-qbo" in loc, loc
+    print("S5 OK: /match-accounts dispatches to connect-qbo with no QBO, "
+          "and back to checklist with no GL job")
+
+
+def s6_match_accounts_dispatches_to_mapping_when_connected():
+    """When a GL job has a QBO connection, /match-accounts goes
+    straight to that job's account-mapping page."""
+    appmod = _reset_app({})
+    c = appmod.app.test_client()
+    _signup_and_login(c, "Step3 Conn Firm", "step3conn@step3.test")
+    user = appmod.db.get_user_by_email("step3conn@step3.test")
+    fid, uid = user["firm_id"], user["id"]
+    _seed_job(appmod, fid, uid, "gl-job-2", "general_ledger")
+
+    # Simulate a stored QBO connection for this job — encrypted token
+    # blobs are opaque to the dispatch logic, which only checks presence.
+    appmod.db.upsert_qbo_connection(
+        job_id="gl-job-2",
+        firm_id=fid,
+        realm_id="9999",
+        access_token_enc="enc-access",
+        refresh_token_enc="enc-refresh",
+        expires_at="2099-01-01T00:00:00",
+        company_name="Demo QBO Co.",
+        legal_name="Demo QBO Co.",
+        country="US",
+    )
+
+    r = c.get("/match-accounts", follow_redirects=False)
+    assert r.status_code == 302, r.status_code
+    loc = r.headers["Location"]
+    assert "/jobs/gl-job-2/account-mapping" in loc, loc
+    print("S6 OK: /match-accounts dispatches to account-mapping when "
+          "a QBO connection exists")
 
 
 def s4_missing_reports_keep_add_more_visible():
@@ -295,6 +373,8 @@ def main():
     s2_upload_cta_switches_to_match_accounts_when_ready()
     s3_checklist_page_shows_continue_cta()
     s4_missing_reports_keep_add_more_visible()
+    s5_match_accounts_route_dispatches()
+    s6_match_accounts_dispatches_to_mapping_when_connected()
     print("\nALL OK")
 
 
