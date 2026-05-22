@@ -27,6 +27,21 @@
   <section class="card" style="margin-top:var(--space-6);">
     <div class="panel-head">
       <div>
+        <p class="eyebrow">QuickBooks OAuth</p>
+        <h2>Callback URL</h2>
+      </div>
+    </div>
+    {% if configured_qbo_redirect_uri %}
+      <p style="margin:0;">QuickBooks callback URL configured: <code>{{ configured_qbo_redirect_uri }}</code></p>
+    {% else %}
+      <p style="margin:0;">QuickBooks callback URL configured: <span class="badge error">not set</span></p>
+    {% endif %}
+    <p class="muted" style="margin-top:var(--space-3);">This must exactly match the redirect URI in Intuit Developer (your app &rarr; Keys &amp; OAuth &rarr; Redirect URIs). If they differ &mdash; even a trailing slash &mdash; OAuth will fail with &ldquo;The redirect_uri query parameter value is invalid.&rdquo;</p>
+  </section>
+
+  <section class="card" style="margin-top:var(--space-6);">
+    <div class="panel-head">
+      <div>
         <p class="eyebrow">Required for go-live</p>
         <h2>Critical configuration</h2>
       </div>

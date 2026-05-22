@@ -1669,6 +1669,11 @@ def healthz():
         "encryption_key_set": bool(os.environ.get("ENCRYPTION_KEY")),
         "qbo_client_id_set": QBO_CLIENT_ID != "your-client-id-here" and bool(QBO_CLIENT_ID),
         "qbo_redirect_uri_set": bool(QBO_REDIRECT_URI) and not QBO_REDIRECT_URI.startswith("http://localhost"),
+        # The configured redirect URI itself (not a secret — it's the public
+        # callback URL registered with Intuit). Surfaced so operators can
+        # copy-paste and compare against their Intuit Developer app keys,
+        # which is the #1 cause of the "redirect_uri ... invalid" OAuth error.
+        "configured_qbo_redirect_uri": QBO_REDIRECT_URI or None,
         "branding_support_email_set": not branding.is_placeholder_email(branding.SUPPORT_EMAIL),
         "branding_security_email_set": not branding.is_placeholder_email(branding.SECURITY_EMAIL),
         "demo_mode_enabled": demo_mode.is_demo_mode_enabled(),
@@ -1709,6 +1714,7 @@ def readiness_page():
         required_failing=[c for c in required if not c.ok],
         recommended_failing=[c for c in recommended if not c.ok],
         public_url=os.environ.get("PUBLIC_APP_URL", "").strip(),
+        configured_qbo_redirect_uri=QBO_REDIRECT_URI,
         request_host=request.host,
         request_scheme=request.scheme,
     )
