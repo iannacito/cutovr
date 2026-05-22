@@ -94,6 +94,11 @@ class WorkflowStage:
     total: int               # total number of stages
     cta_label: str = ""
     cta_url: str = ""
+    # Back-to-previous-step button (mirror of cta_*). Populated only on
+    # the current stage and only when a previous step exists — Step 1 has
+    # nothing to go back to so both fields stay empty.
+    back_label: str = ""
+    back_url: str = ""
     friendly_terms: List[str] = field(default_factory=list)
     detail_items: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -120,6 +125,8 @@ class WorkflowStage:
             "total": self.total,
             "cta_label": self.cta_label,
             "cta_url": self.cta_url,
+            "back_label": self.back_label,
+            "back_url": self.back_url,
             "friendly_terms": list(self.friendly_terms),
             "detail_items": list(self.detail_items),
         }
@@ -258,6 +265,52 @@ def _stage_cta(
     return ("", "")
 
 
+def _stage_back_link(
+    current_key: str,
+    url_for: Optional[Callable[..., str]],
+) -> tuple:
+    """Return (back_label, back_url) — where the customer goes to revisit
+    the *previous* step from the stage that's currently in progress.
+
+    Customer-facing labels intentionally avoid accounting jargon: a lawyer
+    sees "Back to Step 2: Upload reports", not "Back to General Ledger
+    intake". Each previous step points at the canonical entry route for
+    that stage so the button is never a dead anchor:
+
+      Setup    -> /cutover            (cutover_setup)
+      Upload   -> /dashboard#intake   (the upload landing area)
+      Match    -> /match-accounts     (dispatch route from PR #33)
+      Review   -> /migration-checklist
+      Import   -> /migration-checklist
+
+    Returns ("", "") for the first stage (no previous step exists) so
+    callers/templates can hide the back button cleanly.
+    """
+    def u(endpoint: str, fallback: str) -> str:
+        if url_for is None:
+            return fallback
+        try:
+            return url_for(endpoint)
+        except Exception:
+            return fallback
+
+    # Per-stage previous-step entry: (customer-facing label, route).
+    # Keyed by the *current* stage; value describes the step before it.
+    table = {
+        STAGE_UPLOAD:    ("Back to Step 1: Setup",
+                          u("cutover_setup", "/cutover")),
+        STAGE_MATCH:     ("Back to Step 2: Upload reports",
+                          u("dashboard", "/dashboard") + "#intake"),
+        STAGE_REVIEW:    ("Back to Step 3: Match accounts",
+                          u("match_accounts_entry", "/match-accounts")),
+        STAGE_IMPORT:    ("Back to Step 4: Review",
+                          u("migration_checklist", "/migration-checklist")),
+        STAGE_RECONCILE: ("Back to Step 5: Send to QuickBooks",
+                          u("migration_checklist", "/migration-checklist")),
+    }
+    return table.get(current_key, ("", ""))
+
+
 def build_customer_stages(
     checklist_items: Iterable[ChecklistItem],
     *,
@@ -332,6 +385,9 @@ def build_customer_stages(
             stage.cta_label, stage.cta_url = _stage_cta(
                 stage.key, url_for, has_jobs=has_jobs,
                 ready_to_advance=ready_to_advance,
+            )
+            stage.back_label, stage.back_url = _stage_back_link(
+                stage.key, url_for,
             )
         else:
             stage.status = STAGE_STATUS_UPCOMING

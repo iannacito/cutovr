@@ -886,6 +886,16 @@ details.quiet > *:not(summary) { margin-top: var(--space-3); }
 }
 .workflow-stepper__cta .btn-primary { white-space: nowrap; }
 
+.workflow-stepper__back {
+  margin-bottom: var(--space-3);
+}
+.workflow-stepper__back-link {
+  padding: 0;
+  font-size: 0.9rem;
+  color: var(--ink-muted);
+}
+.workflow-stepper__back-link:hover { color: var(--ink); }
+
 .workflow-progress {
   position: relative;
   height: 2px;
