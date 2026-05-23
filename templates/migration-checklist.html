@@ -4,18 +4,22 @@
 <section class="page">
   {% include "_workflow_stepper.html" %}
 
-  {% if next_step %}
+  {% if workflow_current %}
     {% set at_upload_stage = workflow_current and workflow_current.key == 'upload' %}
     {% set at_match_stage = workflow_current and workflow_current.key == 'match' %}
-    <div class="next-card">
+    {% set at_review_stage = workflow_current and workflow_current.key == 'review' %}
+    {% set at_import_stage = workflow_current and workflow_current.key == 'import' %}
+    {% set at_reconcile_stage = workflow_current and workflow_current.key == 'reconcile' %}
+    <div class="next-card" data-testid="next-step-card"
+         data-stage-key="{{ workflow_current.key if workflow_current else '' }}">
       <div class="next-card__body">
         {% if at_upload_stage and upload_ready_to_advance %}
           <p class="eyebrow">Step 2 of 6 &middot; Reports uploaded</p>
-          <h3>Start Step 3: Match accounts</h3>
+          <h3 data-testid="next-step-heading">Start Step 3: Match accounts</h3>
           <p>Your account list, starting balances, and transaction history are on file. We&rsquo;ll take you straight to the QuickBooks matching screen.</p>
         {% elif at_upload_stage %}
           <p class="eyebrow">Step 2 of 6 &middot; Upload reports</p>
-          <h3>Upload these to keep going</h3>
+          <h3 data-testid="next-step-heading">Upload these to keep going</h3>
           <p>We&rsquo;ll keep what you&rsquo;ve already sent.</p>
           {% if upload_missing_reports %}
             <ul class="secure-list" style="margin-top:var(--space-3);">
@@ -24,34 +28,62 @@
           {% endif %}
         {% elif at_match_stage %}
           <p class="eyebrow">Step 3 of 6 &middot; Match accounts</p>
-          <h3>Start Step 3: Match accounts</h3>
+          <h3 data-testid="next-step-heading">Start Step 3: Match accounts</h3>
           <p>Connect QuickBooks Online and pair each PCLaw account with the right QuickBooks account.</p>
+        {% elif at_review_stage %}
+          <p class="eyebrow">Step 3 complete &middot; Step 4 of 6 &middot; Review</p>
+          <h3 data-testid="next-step-heading">Step 3 complete: Accounts matched. Next, review what will be sent to QuickBooks.</h3>
+          <p>
+            Open the dry-run preview to see every journal entry that will be
+            posted. Nothing reaches QuickBooks until you click send on the
+            next step &mdash; this is your safety check.
+          </p>
+        {% elif at_import_stage %}
+          <p class="eyebrow">Step 4 complete &middot; Step 5 of 6 &middot; Send to QuickBooks</p>
+          <h3 data-testid="next-step-heading">Step 4 complete: Review approved. Next, send to QuickBooks.</h3>
+          <p>
+            Post the journal entries to your QuickBooks Online company.
+            This is the only step that writes to QuickBooks &mdash; everything
+            else has been safe to undo. After it runs you&rsquo;ll get a
+            confirmation and move straight to the final balance check.
+          </p>
+        {% elif at_reconcile_stage %}
+          <p class="eyebrow">Step 5 complete &middot; Step 6 of 6 &middot; Reconcile</p>
+          <h3 data-testid="next-step-heading">Step 5 complete: Sent to QuickBooks. Next, reconcile balances.</h3>
+          <p>
+            Confirm your QuickBooks balances match the PCLaw ending trial
+            balance and save the audit report. This is the final step.
+          </p>
         {% elif workflow_current %}
-          <p class="eyebrow">Step {{ workflow_current.index }} of {{ workflow_current.total }} &middot; Next step: {{ next_step.label }}</p>
-          <h3>{{ next_step.label }}</h3>
-          <p>{{ next_step.summary }}</p>
-        {% else %}
-          <p class="eyebrow">Next step: {{ next_step.label }}</p>
-          <h3>{{ next_step.label }}</h3>
-          <p>{{ next_step.summary }}</p>
+          <p class="eyebrow">Step {{ workflow_current.index }} of {{ workflow_current.total }} &middot; Next step: {{ workflow_current.label }}</p>
+          <h3 data-testid="next-step-heading">{{ workflow_current.label }}</h3>
+          <p>{{ workflow_current.description }}</p>
         {% endif %}
       </div>
       <div class="next-card__actions">
-        {% if next_step.key == 'cutover_setup' %}
+        {% if workflow_current and workflow_current.key == 'setup' %}
           <a class="btn btn-primary btn-lg" href="{{ url_for('cutover_setup') }}">Open cutover setup &rarr;</a>
         {% elif at_upload_stage and upload_ready_to_advance %}
-          <a class="btn btn-primary btn-lg" href="{{ url_for('match_accounts_entry') }}">Start Step 3: Match accounts &rarr;</a>
+          <a class="btn btn-primary btn-lg" href="{{ url_for('match_accounts_entry') }}" data-testid="next-step-cta">Start Step 3: Match accounts &rarr;</a>
         {% elif at_match_stage %}
-          <a class="btn btn-primary btn-lg" href="{{ url_for('match_accounts_entry') }}">Start Step 3: Match accounts &rarr;</a>
+          <a class="btn btn-primary btn-lg" href="{{ url_for('match_accounts_entry') }}" data-testid="next-step-cta">Start Step 3: Match accounts &rarr;</a>
+        {% elif at_review_stage %}
+          <a class="btn btn-primary btn-lg" href="{{ url_for('firm_imports') }}" data-testid="next-step-cta">Next: Review import &rarr;</a>
+        {% elif at_import_stage %}
+          <a class="btn btn-primary btn-lg" href="{{ url_for('firm_imports') }}" data-testid="next-step-cta">Open the import job &rarr;</a>
+        {% elif at_reconcile_stage %}
+          <a class="btn btn-primary btn-lg" href="{{ url_for('firm_imports') }}" data-testid="next-step-cta">Next: Reconcile balances &rarr;</a>
         {% else %}
           <a class="btn btn-primary btn-lg" href="{{ url_for('dashboard') }}#intake">Go to upload &rarr;</a>
         {% endif %}
       </div>
     </div>
   {% else %}
-    <div class="flash success" role="status" style="margin-bottom:var(--space-8);">
-      <strong>Everything&rsquo;s done.</strong>
-      Confirm the final balance check against PCLaw and save the audit report.
+    <div class="flash success" role="status" data-testid="migration-complete-card"
+         style="margin-bottom:var(--space-8);">
+      <strong>Step 6 complete: Reconciled.</strong>
+      Migration complete. Your QuickBooks balances match PCLaw and the
+      audit report is saved.
     </div>
   {% endif %}
 

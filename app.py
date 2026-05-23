@@ -5322,6 +5322,74 @@ def _normalize_account_name(name) -> str:
     return "".join(ch for ch in str(name).lower() if ch.isalnum())
 
 
+# Deterministic name aliases used when the exact normalized name lookup
+# misses. Each tuple is (alias_token, canonical_token) — when a PCLaw
+# account's normalized name contains alias_token AND a QBO account's
+# normalized name contains canonical_token (or vice versa), we treat
+# them as a match.
+#
+# This list is intentionally small and limited to common legal/PCLaw vs
+# QBO drift (Trust Liability / Liabilities / Client Trust, AR/AP
+# spellings, Operating Bank vs Checking) where misclassification would
+# be a real bug. New entries should be unambiguous in the legal/
+# professional-services chart-of-accounts space.
+_ACCOUNT_NAME_ALIASES: list[tuple[str, str]] = [
+    # Trust liability variants — PCLaw frequently calls this "Client
+    # Trust Liability" or "Trust Liability"; QBO's default subtype is
+    # "Trust Accounts - Liabilities" which a user may have named
+    # "Trust Liabilities" or "Trust Liability".
+    ("clienttrustliability", "trustliability"),
+    ("clienttrustliability", "trustliabilities"),
+    ("clienttrustliability", "trustaccountsliabilities"),
+    ("trustliability", "trustliabilities"),
+    ("trustliability", "trustaccountsliabilities"),
+    # Trust bank — PCLaw "Trust Bank" vs QBO subtype "Trust Account".
+    ("trustbank", "trustaccount"),
+    ("trustbank", "trustbankaccount"),
+    # Operating bank — PCLaw "Operating Bank" vs QBO common naming
+    # "Operating Account" / "Checking".
+    ("operatingbank", "operatingaccount"),
+    ("operatingbank", "checkingaccount"),
+    # AR / AP — long-form vs short-form.
+    ("accountsreceivable", "ar"),
+    ("accountspayable", "ap"),
+]
+
+
+def _alias_match(pclaw_norm: str, qbo_by_norm: dict) -> Optional[dict]:
+    """Return a QBO account whose normalized name aliases the PCLaw name.
+
+    Match precedence (most specific first):
+      1. PCLaw name contains alias_token, QBO name equals canonical_token
+         (e.g. "clienttrustliability" -> QBO "trustliability").
+      2. PCLaw name equals alias_token, QBO name contains canonical_token
+         (e.g. "trustliability" -> QBO "trustaccountsliabilities").
+      3. Same in reverse — QBO uses the longer form, PCLaw uses shorter.
+
+    Returns None when no deterministic alias hits.
+    """
+    if not pclaw_norm:
+        return None
+    for alias, canonical in _ACCOUNT_NAME_ALIASES:
+        # PCLaw side carries the alias, QBO has canonical exactly or as
+        # a containing substring.
+        if alias == pclaw_norm or alias in pclaw_norm:
+            if canonical in qbo_by_norm:
+                return qbo_by_norm[canonical]
+            # Try every QBO name that *contains* canonical token.
+            for qbo_norm, account in qbo_by_norm.items():
+                if canonical in qbo_norm:
+                    return account
+        # Reverse direction — PCLaw uses canonical, QBO uses alias.
+        if canonical == pclaw_norm or canonical in pclaw_norm:
+            if alias in qbo_by_norm:
+                return qbo_by_norm[alias]
+            for qbo_norm, account in qbo_by_norm.items():
+                if alias in qbo_norm:
+                    return account
+    return None
+
+
 def _build_account_mapping_rows(*, pclaw_accounts, qbo_accounts, saved_by_key):
     """Build the Step-3 table rows + a summary of match coverage.
 
@@ -5330,6 +5398,8 @@ def _build_account_mapping_rows(*, pclaw_accounts, qbo_accounts, saved_by_key):
       1. Saved mapping in the DB (firm,realm,pclaw_*).
       2. Exact AcctNum match against a QBO account.
       3. Normalized-name (lowercase alphanumeric only) match.
+      4. Deterministic alias match for common PCLaw/QBO naming drift
+         (e.g. "Client Trust Liability" -> QBO "Trust Liability").
 
     The summary is what the banner CTA / template gating reads.
     """
@@ -5361,6 +5431,11 @@ def _build_account_mapping_rows(*, pclaw_accounts, qbo_accounts, saved_by_key):
                 if name_key and name_key in auto_by_name_norm:
                     suggestion = auto_by_name_norm[name_key]
                     match_basis = "Name"
+                elif name_key:
+                    alias_hit = _alias_match(name_key, auto_by_name_norm)
+                    if alias_hit:
+                        suggestion = alias_hit
+                        match_basis = "Alias"
         rows.append({
             "idx": idx,
             "pclaw_number": pa.get("number"),

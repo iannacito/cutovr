@@ -182,6 +182,33 @@
   {% endif %}
 
   {% if mapping_summary %}
+  {% if mapping_summary.matched_saved == mapping_summary.total and mapping_summary.total > 0 %}
+  <section class="card step-complete-card"
+           data-testid="step3-complete-card"
+           style="padding:var(--space-6);margin-bottom:var(--space-5);border-color:var(--success,#15803d);background:var(--success-bg,#f0fdf4);">
+    <p class="eyebrow" style="margin:0;color:var(--success,#15803d);">
+      Step 3 of 6 &middot; Complete
+    </p>
+    <h2 style="margin:var(--space-2) 0 var(--space-3);">
+      Step 3 complete: Accounts matched
+    </h2>
+    <p style="max-width:62ch;margin:0 0 var(--space-4);">
+      Every PCLaw account is paired with a QuickBooks account and saved.
+      Next, review exactly what will be sent to QuickBooks &mdash;
+      nothing posts until you say so.
+    </p>
+    <div class="actions-row">
+      <a class="btn btn-primary btn-lg"
+         href="{{ url_for('migration_checklist') }}"
+         data-testid="step3-next-cta">
+        Next: Review import &rarr;
+      </a>
+      <a class="btn btn-link" href="{{ url_for('job_detail', job_id=job.id) }}">
+        Back to job
+      </a>
+    </div>
+  </section>
+  {% endif %}
   <p class="muted" data-testid="mapping-summary"
      style="margin:0 0 var(--space-4);font-size:.9rem;">
     Auto-matched
