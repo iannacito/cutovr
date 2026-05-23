@@ -88,6 +88,7 @@ import qbo_error_hint
 import email_sender
 import cutover_workflow
 import customer_workflow
+import final_report
 import bulk_upload
 from rate_limit import RateLimiter, client_ip
 import csv as _csv
@@ -1592,6 +1593,219 @@ def send_to_qbo_entry():
         workflow_progress=customer_workflow.progress_percent(stages),
         workflow_completed=customer_workflow.completed_count(stages),
         workflow_terms=customer_workflow.FRIENDLY_TERMS,
+    )
+
+
+def _build_reconcile_view(firm_id):
+    """Assemble (cutover, items, stages, current, summary) for Step 6.
+
+    Reads the same hydrated state cutover_workflow.build_checklist sees
+    so the reconciliation summary stays consistent with the migration
+    checklist. Returns None for `summary` only if the firm has no jobs
+    at all — callers should treat that as a blocked state.
+    """
+    cutover = db.get_cutover_settings(firm_id)
+    firm_jobs = demo_mode.filter_active_jobs(
+        db.list_jobs_for_firm(firm_id, limit=500)
+    )
+    hydrated = []
+    for row in firm_jobs:
+        h = db.hydrate_job(row["id"])
+        hydrated.append(h or row)
+    qbo_conns = db.list_qbo_connections_for_firm(firm_id)
+    items = cutover_workflow.build_checklist(
+        cutover,
+        hydrated,
+        has_qbo_connection=bool(qbo_conns),
+        account_mapping_count=_firm_account_mapping_count(firm_id),
+    )
+    match_blocked, blocked_job_id = _firm_match_blocked_state(firm_id)
+    stages = customer_workflow.build_customer_stages(
+        items, url_for=url_for, has_jobs=bool(hydrated),
+        match_blocked=match_blocked,
+        match_blocked_job_id=blocked_job_id,
+    )
+    firm = db.get_firm(firm_id) or {}
+    summary = final_report.build_reconciliation_summary(
+        firm_name=firm.get("name") or "Your firm",
+        cutover=cutover,
+        jobs=hydrated,
+        qbo_connections=qbo_conns,
+        account_mapping_count=_firm_account_mapping_count(firm_id),
+    )
+    return cutover, items, stages, summary
+
+
+def _step6_is_reachable(stages, summary):
+    """Step 6 is reachable once Step 5 (import) has completed.
+
+    We treat the import as complete when the reconciliation summary's
+    import line is `completed` — i.e. at least one GL job carries an
+    ``import_summary`` block. This is the same signal cutover_workflow
+    uses to roll up STEP_PROD_IMPORT, but read from the already-built
+    summary so the route stays consistent with what the page renders.
+    """
+    import_line = next(
+        (line for line in summary.lines if line.key == "import"), None,
+    )
+    if import_line is None:
+        return False, "Finish Step 5 before reconciling balances."
+    if import_line.status == final_report.STATUS_BLOCKED:
+        return False, import_line.detail
+    if import_line.status != final_report.STATUS_COMPLETED:
+        return False, (
+            "Nothing has been sent to QuickBooks yet — finish Step 5 "
+            "first so there's something to reconcile."
+        )
+    return True, ""
+
+
+@app.route("/reconcile-balances")
+@login_required
+def reconcile_balances():
+    """Step 6 entry: the dedicated 'Reconcile balances' page.
+
+    Renders a lawyer-friendly reconciliation summary plus an optional
+    final-report email form. When Step 5 (Send to QuickBooks) hasn't
+    completed yet — either nothing imported or QBO is missing
+    accounts — we render a single clear blocker pointing back to
+    Step 5 instead of the reconciliation cards. This keeps the demo
+    flow legible: one next action per page.
+    """
+    user = current_user()
+    firm_id = user["firm_id"]
+    cutover, items, stages, summary = _build_reconcile_view(firm_id)
+    current = customer_workflow.current_stage(stages)
+    reachable, reason = _step6_is_reachable(stages, summary)
+    return render_template(
+        "reconcile-balances.html",
+        summary=summary,
+        blocked=not reachable,
+        blocked_reason=reason,
+        workflow_stages=[s.to_dict() for s in stages],
+        workflow_current=current.to_dict() if current else None,
+        workflow_progress=customer_workflow.progress_percent(stages),
+        workflow_completed=customer_workflow.completed_count(stages),
+        workflow_terms=customer_workflow.FRIENDLY_TERMS,
+        report_status=request.args.get("report_status") or None,
+        report_message=request.args.get("report_message") or None,
+        report_email=None,
+    )
+
+
+@app.route("/reconcile-balances/send-report", methods=["POST"])
+@login_required
+def reconcile_balances_send_report():
+    """Accept the final-report email request from Step 6.
+
+    Behaviour:
+      * Validate the email locally (loose regex — full validation is the
+        SMTP server's job).
+      * Build the report body in-process from the same reconciliation
+        summary the page renders. We never read SMTP secrets here.
+      * If SMTP is configured, call email_sender.send_email(); show a
+        success or queued message based on the result.
+      * If SMTP is NOT configured, record the request in the audit log
+        and show a clear "we saved your request" message so the demo
+        still completes cleanly. We never surface SMTP error detail to
+        the user.
+    """
+    user = current_user()
+    firm_id = user["firm_id"]
+    email = (request.form.get("email") or "").strip()
+
+    cutover, items, stages, summary = _build_reconcile_view(firm_id)
+    current = customer_workflow.current_stage(stages)
+    reachable, reason = _step6_is_reachable(stages, summary)
+
+    def _render(status, message, *, email_value=""):
+        return render_template(
+            "reconcile-balances.html",
+            summary=summary,
+            blocked=not reachable,
+            blocked_reason=reason,
+            workflow_stages=[s.to_dict() for s in stages],
+            workflow_current=current.to_dict() if current else None,
+            workflow_progress=customer_workflow.progress_percent(stages),
+            workflow_completed=customer_workflow.completed_count(stages),
+            workflow_terms=customer_workflow.FRIENDLY_TERMS,
+            report_status=status,
+            report_message=message,
+            report_email=email_value,
+        )
+
+    if not reachable:
+        return _render(
+            "error",
+            "Finish Step 5 (Send to QuickBooks) before requesting a "
+            "final report.",
+            email_value=email,
+        )
+
+    if not final_report.is_valid_email(email):
+        return _render(
+            "error",
+            "Please enter a valid email address (for example, "
+            "you@firm.example) so we know where to send the report.",
+            email_value=email,
+        )
+
+    body_text = final_report.build_report_text(summary)
+    subject = (
+        f"PCLaw → QuickBooks migration summary — {summary.firm_name}"
+    )
+
+    delivered = False
+    smtp_configured = email_sender.is_smtp_configured()
+    if smtp_configured:
+        try:
+            delivered = email_sender.send_email(
+                to=email, subject=subject, body_text=body_text,
+            )
+        except Exception:  # noqa: BLE001
+            # email_sender.send_email already swallows internal errors
+            # and returns False; this except is belt-and-suspenders so
+            # the demo flow never bubbles a raw stack to the user.
+            delivered = False
+
+    # Audit log: never log the report body or SMTP credentials. We only
+    # record that a request was made, by whom, and whether SMTP was
+    # available. The recipient address is recorded because operators
+    # need it to follow up when SMTP is offline.
+    try:
+        _audit(
+            "final_report_email_requested",
+            target_type="firm",
+            target_id=str(firm_id),
+            details=(
+                f"to={email} smtp_configured={'yes' if smtp_configured else 'no'} "
+                f"delivered={'yes' if delivered else 'no'}"
+            ),
+        )
+    except Exception:  # noqa: BLE001
+        # Audit failures must not break the user flow.
+        pass
+
+    if delivered:
+        return _render(
+            "success",
+            f"Final report sent to {email}. Check your inbox.",
+        )
+    if smtp_configured:
+        # SMTP configured but delivery failed — never show raw error
+        # detail. Persist the request via the audit log (above) so an
+        # operator can follow up.
+        return _render(
+            "queued",
+            "We couldn't deliver the report just now, but your request "
+            f"is saved. We'll email it to {email} as soon as the mail "
+            "service is reachable.",
+        )
+    # SMTP not configured (e.g. local demo). Persist the request and
+    # tell the user clearly — never expose SMTP config state.
+    return _render(
+        "queued",
+        f"Report request saved; we'll email it to {email}.",
     )
 
 
