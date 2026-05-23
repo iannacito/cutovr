@@ -361,6 +361,29 @@ def gl_is_balanced(run_id: str) -> bool:
 DEMO_ARCHIVED_STATUS_PREFIX = "Archived (demo reset"
 
 
+def is_archived_demo_job(job: dict) -> bool:
+    """True iff ``job`` was archived by a prior ``Start new demo`` reset.
+
+    Jobs archived this way must be excluded from the dashboard, migration
+    checklist, and customer workflow stepper so that ``Start new demo``
+    actually clears the visible state. They stay in the DB (and so remain
+    visible to the operator panel and audit history) so the reset is
+    reversible / auditable, but they should no longer be treated as
+    "current" workflow context.
+    """
+    status = (job.get("status") or "").strip()
+    return status.startswith(DEMO_ARCHIVED_STATUS_PREFIX)
+
+
+def filter_active_jobs(jobs) -> list:
+    """Return only the jobs that should drive the dashboard/checklist.
+
+    Drops jobs archived by a demo reset; every other status (including
+    real production "Imported" / "Failed" rows) is left alone.
+    """
+    return [j for j in jobs if not is_archived_demo_job(j)]
+
+
 def reset_demo_workspace(db, firm_id: int, run_id: str) -> dict:
     """Archive all jobs for a firm so the demo starts from a clean slate.
 
