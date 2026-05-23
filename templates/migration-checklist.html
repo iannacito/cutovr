@@ -41,11 +41,19 @@
         {% elif at_import_stage %}
           <p class="eyebrow">Step 4 complete &middot; Step 5 of 6 &middot; Send to QuickBooks</p>
           <h3 data-testid="next-step-heading">Step 4 complete: Review approved. Next, send to QuickBooks.</h3>
-          <p>
-            Post the journal entries to your QuickBooks Online company.
-            This is the only step that writes to QuickBooks &mdash; everything
-            else has been safe to undo. After it runs you&rsquo;ll get a
-            confirmation and move straight to the final balance check.
+          <p data-testid="step5-clarification">
+            This sends the prepared entries from PCLaw Migrate to
+            QuickBooks. You do not need to enter anything manually in
+            QuickBooks &mdash; the app posts every journal entry for you
+            once you click send. (You only ever touch QuickBooks Online
+            directly to authorize the connection and to verify results
+            after the import.)
+          </p>
+          <p class="muted" style="margin-top:var(--space-3);">
+            This is the only step that writes to QuickBooks &mdash;
+            everything before it has been safe to undo. After it runs
+            you&rsquo;ll get a confirmation and move straight to the
+            final balance check.
           </p>
         {% elif at_reconcile_stage %}
           <p class="eyebrow">Step 5 complete &middot; Step 6 of 6 &middot; Reconcile</p>
@@ -68,11 +76,11 @@
         {% elif at_match_stage %}
           <a class="btn btn-primary btn-lg" href="{{ url_for('match_accounts_entry') }}" data-testid="next-step-cta">Start Step 3: Match accounts &rarr;</a>
         {% elif at_review_stage %}
-          <a class="btn btn-primary btn-lg" href="{{ url_for('firm_imports') }}" data-testid="next-step-cta">Next: Review import &rarr;</a>
+          <a class="btn btn-primary btn-lg" href="{{ url_for('import_job_entry') }}" data-testid="next-step-cta">Next: Review import &rarr;</a>
         {% elif at_import_stage %}
-          <a class="btn btn-primary btn-lg" href="{{ url_for('firm_imports') }}" data-testid="next-step-cta">Open the import job &rarr;</a>
+          <a class="btn btn-primary btn-lg" href="{{ url_for('import_job_entry') }}" data-testid="next-step-cta">Open the import job &rarr;</a>
         {% elif at_reconcile_stage %}
-          <a class="btn btn-primary btn-lg" href="{{ url_for('firm_imports') }}" data-testid="next-step-cta">Next: Reconcile balances &rarr;</a>
+          <a class="btn btn-primary btn-lg" href="{{ url_for('import_job_entry') }}" data-testid="next-step-cta">Next: Reconcile balances &rarr;</a>
         {% else %}
           <a class="btn btn-primary btn-lg" href="{{ url_for('dashboard') }}#intake">Go to upload &rarr;</a>
         {% endif %}

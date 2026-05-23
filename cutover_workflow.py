@@ -406,8 +406,16 @@ def build_checklist(
                     "posting any journal entries.",
         ))
 
-    # 9. Dry-run preview
-    has_dry_run = any(j.get("preflight") for j in jobs)
+    # 9. Dry-run preview — only counts if there is a GL job with a
+    # preflight. COA / TB / trust uploads also set a per-job preflight,
+    # so without the report_type filter the dry-run step lights up the
+    # moment the chart of accounts is uploaded, which lets Step 5
+    # (Import) become current before the user has even matched accounts.
+    has_dry_run = any(
+        j.get("preflight")
+        and (j.get("report_type") or "general_ledger") == "general_ledger"
+        for j in jobs
+    )
     if has_dry_run:
         items.append(ChecklistItem(
             STEP_DRY_RUN, "Dry-run preview completed",

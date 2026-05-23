@@ -387,7 +387,8 @@ def filter_active_jobs(jobs) -> list:
 def reset_demo_workspace(db, firm_id: int, run_id: str) -> dict:
     """Archive all jobs for a firm so the demo starts from a clean slate.
 
-    Returns a dict ``{"archived_jobs": int, "run_id": str}``.
+    Returns a dict ``{"archived_jobs": int, "cleared_mappings": int,
+    "run_id": str}``.
 
     Important:
 
@@ -399,6 +400,17 @@ def reset_demo_workspace(db, firm_id: int, run_id: str) -> dict:
         purely app-side reset. The caller's UI copy must make that
         clear: any QBO data created by prior demos is still there and
         must be cleaned up inside QuickBooks if desired.
+      - Account mappings are cleared so the next demo walks the user
+        through Step 3 (Match accounts) again. Without this, the
+        workflow stepper sees firm-wide saved mappings from the
+        previous demo and treats Match as already complete — which
+        skips the user past Step 3 / Step 4 and lands them on Step 5
+        Import even though they haven't actually re-matched accounts
+        for the fresh run. Mappings are cheap to re-confirm via the
+        existing alias auto-matcher and the create-missing flow.
+      - QBO connections are deliberately preserved. The demo plays
+        against one dedicated QuickBooks demo company across many
+        runs — forcing a re-OAuth each demo would be hostile.
       - Scoped strictly to the supplied ``firm_id``. Callers must
         already have firm-scoped the user (login_required +
         firm-ownership check) before invoking this.
@@ -415,4 +427,35 @@ def reset_demo_workspace(db, firm_id: int, run_id: str) -> dict:
             continue
         db.update_job_status(job["id"], archived_status)
         archived += 1
-    return {"archived_jobs": archived, "run_id": run_id}
+
+    # Clear account mappings across every connected QBO realm for this
+    # firm. Best-effort — older deploys that did not ship the
+    # delete-all helper still get a working reset, the workflow stepper
+    # just won't re-walk Step 3 on those deploys.
+    cleared_mappings = 0
+    try:
+        conns = db.list_qbo_connections_for_firm(firm_id)
+    except Exception:
+        conns = []
+    for conn in conns:
+        try:
+            mappings = db.list_account_mappings(firm_id, conn["realm_id"])
+        except Exception:
+            mappings = []
+        for m in mappings:
+            try:
+                db.delete_account_mapping(
+                    firm_id=firm_id, realm_id=conn["realm_id"],
+                    pclaw_account_number=m.get("pclaw_account_number"),
+                    pclaw_account_name=m.get("pclaw_account_name"),
+                )
+                cleared_mappings += 1
+            except Exception:
+                # Don't let a single bad row block the whole reset.
+                pass
+
+    return {
+        "archived_jobs": archived,
+        "cleared_mappings": cleared_mappings,
+        "run_id": run_id,
+    }

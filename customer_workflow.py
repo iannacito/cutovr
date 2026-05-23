@@ -274,9 +274,11 @@ def _stage_cta(
         return ("Start Step 3: Match accounts",
                 u("match_accounts_entry", "/match-accounts"))
     if stage_key == STAGE_REVIEW:
-        return ("Review on the checklist", u("migration_checklist", "/migration-checklist"))
+        return ("Review the import",
+                u("import_job_entry", "/import-job"))
     if stage_key == STAGE_IMPORT:
-        return ("Open the checklist", u("migration_checklist", "/migration-checklist"))
+        return ("Open the import job",
+                u("import_job_entry", "/import-job"))
     if stage_key == STAGE_RECONCILE:
         return ("Open the checklist", u("migration_checklist", "/migration-checklist"))
     return ("", "")
@@ -382,6 +384,24 @@ def build_customer_stages(
                 if item is not None
             ],
         ))
+
+    # Sequential gating: a stage cannot be complete if any earlier stage
+    # is not complete. The raw per-stage rollup ignores ordering, which
+    # lets state from prior workflow runs (e.g. a previously connected
+    # QBO company, mappings saved against PCLaw account names that the
+    # current upload happens to reuse, a preflight set on any uploaded
+    # file) leapfrog the user past Match / Review and land them on
+    # Step 5 Import even though they haven't actually walked through the
+    # in-between steps for the current run. Once we encounter a
+    # non-complete stage we force every later stage back to upcoming so
+    # the stepper progresses strictly in order.
+    blocked = False
+    for stage in stages:
+        if blocked:
+            stage.status = STAGE_STATUS_UPCOMING
+            continue
+        if stage.status != STAGE_STATUS_COMPLETE:
+            blocked = True
 
     # Normalize: exactly one "current" — the first non-complete stage.
     current_index = None

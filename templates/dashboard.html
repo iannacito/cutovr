@@ -47,7 +47,17 @@
     </div>
   {% endif %}
 
-  <section class="grid-two" id="intake" style="margin-bottom:var(--space-12);">
+  {# When the user is in Step 2 (upload), keep the page focused on the
+     upload form. The Workspace card on the right is useful as a generic
+     dashboard widget, but it makes Step 2 feel like a dashboard instead
+     of a guided step and distracts from the single action the user
+     should take. Collapse to a single column at Step 2; show the
+     two-up grid only when the user is past upload (so the workspace
+     panel still provides quick access to checklist / QuickBooks links
+     during later stages or when the user lands on the dashboard
+     from elsewhere). #}
+  {% set at_upload_stage = workflow_current and workflow_current.key == 'upload' %}
+  <section class="{% if not at_upload_stage %}grid-two{% endif %}" id="intake" style="margin-bottom:var(--space-12);">
     <article class="card">
       <p class="eyebrow">Step 2 of 6 &middot; Upload</p>
       <h2>Upload your PCLaw reports</h2>
@@ -110,7 +120,8 @@
       </details>
     </article>
 
-    <article class="card card--inset">
+    {% if not at_upload_stage %}
+    <article class="card card--inset" data-testid="dashboard-workspace-panel">
       <p class="eyebrow">Workspace</p>
       <h2>{{ firm.name }}</h2>
       <dl class="summary-grid" style="margin-top:var(--space-4);">
@@ -126,6 +137,7 @@
         <a class="btn btn-link" href="{{ url_for('quickbooks_guide') }}">New to QuickBooks?</a>
       </div>
     </article>
+    {% endif %}
   </section>
 
   {% if firm_jobs %}
