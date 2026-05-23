@@ -63,8 +63,14 @@ _AUTO_PROVISIONED_SUBTYPES = {
 # Detail types we will warn-but-allow when matched. The firm legitimately
 # needs trust bank + trust liability accounts in QBO for client-money
 # handling; we still surface a warning so the operator sees it.
+#
+# IMPORTANT: QBO's API expects camelCase AccountSubType identifiers
+# (e.g. ``TrustAccountsLiabilities``, NOT ``TrustAccounts-Liabilities``).
+# Sending the hyphenated display form causes Intuit to reject the create
+# with a 400, which previously left Step 3 stuck on an unmatched trust
+# liability row.
 _WARN_SUBTYPES = {
-    "TrustAccounts-Liabilities",
+    "TrustAccountsLiabilities",
     "TrustAccounts",
 }
 
@@ -110,9 +116,9 @@ _TYPE_TABLE: dict[str, tuple[str, str]] = {
 
     # Other current liabilities
     "othercurrentliability": ("Other Current Liability", "OtherCurrentLiabilities"),
-    "trustliability": ("Other Current Liability", "TrustAccounts-Liabilities"),
-    "trustaccountsliabilities": ("Other Current Liability", "TrustAccounts-Liabilities"),
-    "clienttrustliability": ("Other Current Liability", "TrustAccounts-Liabilities"),
+    "trustliability": ("Other Current Liability", "TrustAccountsLiabilities"),
+    "trustaccountsliabilities": ("Other Current Liability", "TrustAccountsLiabilities"),
+    "clienttrustliability": ("Other Current Liability", "TrustAccountsLiabilities"),
 
     # Long-term liabilities
     "longtermliability": ("Long Term Liability", "NotesPayable"),
@@ -293,8 +299,8 @@ def map_pclaw_account_to_qbo_type(row: dict) -> dict:
         for keyword, (t, st) in [
             ("trustbank", ("Bank", "TrustAccounts")),
             ("trustaccount", ("Bank", "TrustAccounts")),
-            ("trustliability", ("Other Current Liability", "TrustAccounts-Liabilities")),
-            ("clienttrust", ("Other Current Liability", "TrustAccounts-Liabilities")),
+            ("trustliability", ("Other Current Liability", "TrustAccountsLiabilities")),
+            ("clienttrust", ("Other Current Liability", "TrustAccountsLiabilities")),
             ("operatingbank", ("Bank", "Checking")),
             ("accountsreceivable", ("Accounts Receivable", "AccountsReceivable")),
             ("accountspayable", ("Accounts Payable", "AccountsPayable")),

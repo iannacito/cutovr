@@ -31,7 +31,7 @@ This module exercises the gating + UX fixes:
       and a primary CTA "Create missing QuickBooks accounts" that
       deep-links to the Match accounts page.
   S5  Client Trust Liability (account number 2100) is created as
-      Other Current Liability / TrustAccounts-Liabilities and is
+      Other Current Liability / TrustAccountsLiabilities and is
       auto-matched after creation; account number 2100 is preserved.
   S6  No duplicate is created when 2100 Client Trust Liability is
       already present in QBO (matched by AcctNum first).
@@ -385,19 +385,19 @@ def s5_client_trust_liability_creates_and_automatches():
     assert r.status_code in (301, 302, 303, 307, 308), r.status_code
 
     # The route created Client Trust Liability with the canonical safe
-    # mapping (Other Current Liability / TrustAccounts-Liabilities).
+    # mapping (Other Current Liability / TrustAccountsLiabilities).
     assert len(fake.created_payloads) == 1, fake.created_payloads
     payload = fake.created_payloads[0]
     assert payload["Name"] == "Client Trust Liability"
     assert payload["AcctNum"] == "2100"
     assert payload["AccountType"] == "Other Current Liability"
-    assert payload["AccountSubType"] == "TrustAccounts-Liabilities"
+    assert payload["AccountSubType"] == "TrustAccountsLiabilities"
 
     # Saved mapping was persisted so a subsequent render auto-matches.
     saved = appmod.db.list_account_mappings(firm_id, "R-S5")
     assert any(m["pclaw_account_number"] == "2100" for m in saved), saved
     print("S5 OK: Client Trust Liability created as Other Current Liability / "
-          "TrustAccounts-Liabilities, AcctNum 2100 preserved, mapping persisted")
+          "TrustAccountsLiabilities, AcctNum 2100 preserved, mapping persisted")
 
 
 # --- S6: existing 2100 in QBO is NOT recreated ----------------------------
@@ -435,7 +435,7 @@ def s6_existing_2100_is_not_duplicated():
     fake = _FakeQBO([
         {"Id": "Q1", "Name": "Client Trust Liability", "AcctNum": "2100",
          "AccountType": "Other Current Liability",
-         "AccountSubType": "TrustAccounts-Liabilities"},
+         "AccountSubType": "TrustAccountsLiabilities"},
     ])
     with mock.patch.object(
         appmod, "_get_qbo_client",

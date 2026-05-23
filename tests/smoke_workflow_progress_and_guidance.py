@@ -124,7 +124,7 @@ class _FakeQBOWithTrust:
              "AccountType": "Bank", "AccountSubType": "Checking"},
             {"Id": "20", "Name": "Trust Liability", "AcctNum": "",
              "AccountType": "Other Current Liability",
-             "AccountSubType": "TrustAccounts-Liabilities"},
+             "AccountSubType": "TrustAccountsLiabilities"},
         ]}}
 
 
@@ -380,7 +380,7 @@ def w6_trust_liability_create_missing_is_unblocked():
     assert result["decision"] != "blocked", \
         f"trust liability should not be blocked, got: {result}"
     assert result["account_type"] == "Other Current Liability"
-    assert result["detail_type"] == "TrustAccounts-Liabilities"
+    assert result["detail_type"] == "TrustAccountsLiabilities"
     assert any("trust" in w.lower() for w in result["warnings"])
 
     # Same name with the demo COA's qbo_suggested_detail_type column.
@@ -392,9 +392,9 @@ def w6_trust_liability_create_missing_is_unblocked():
     result2 = map_pclaw_account_to_qbo_type(row2)
     assert result2["decision"] != "blocked"
     assert result2["account_type"] == "Other Current Liability"
-    assert result2["detail_type"] == "TrustAccounts-Liabilities"
+    assert result2["detail_type"] == "TrustAccountsLiabilities"
     print("W6 OK: Client Trust Liability resolves to "
-          "Other Current Liability / TrustAccounts-Liabilities (warning, not blocked)")
+          "Other Current Liability / TrustAccountsLiabilities (warning, not blocked)")
 
 
 def main():
