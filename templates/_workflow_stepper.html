@@ -12,16 +12,31 @@
        workflow_completed  int
 ---------------------------------------------------------------------- #}
 {% if workflow_stages %}
+{# Set flags so the nav-row always renders when there is *any* nav action,
+   keeping the back/next CTAs perfectly level whether one or both exist. #}
+{% set _has_back = workflow_current and workflow_current.back_url %}
+{% set _has_cta  = workflow_current and workflow_current.cta_url %}
 <aside class="workflow-stepper" aria-label="Migration progress">
-  {% if workflow_current and workflow_current.back_url %}
-    <div class="workflow-stepper__back" aria-label="Back to previous step">
-      <a class="btn btn-link workflow-stepper__back-link" href="{{ workflow_current.back_url }}">
-        &larr; {{ workflow_current.back_label }}
-      </a>
-    </div>
+  {% if _has_back or _has_cta %}
+    <nav class="workflow-stepper__nav" aria-label="Step navigation">
+      <div class="workflow-stepper__nav-left">
+        {% if _has_back %}
+          <a class="btn btn-link workflow-stepper__back-link" href="{{ workflow_current.back_url }}">
+            &larr; {{ workflow_current.back_label }}
+          </a>
+        {% endif %}
+      </div>
+      <div class="workflow-stepper__nav-right">
+        {% if _has_cta %}
+          <a class="btn btn-primary btn-lg workflow-stepper__cta-link" href="{{ workflow_current.cta_url }}">
+            {{ workflow_current.cta_label }} &rarr;
+          </a>
+        {% endif %}
+      </div>
+    </nav>
   {% endif %}
   <div class="workflow-stepper__header">
-    <div>
+    <div class="workflow-stepper__heading">
       <p class="eyebrow workflow-stepper__eyebrow">
         {% if workflow_current %}
           Migration progress &middot; Step {{ workflow_current.index }} of {{ workflow_current.total }}
@@ -44,13 +59,6 @@
         {% endif %}
       </p>
     </div>
-    {% if workflow_current and workflow_current.cta_url %}
-      <div class="workflow-stepper__cta">
-        <a class="btn btn-primary btn-lg" href="{{ workflow_current.cta_url }}">
-          {{ workflow_current.cta_label }} &rarr;
-        </a>
-      </div>
-    {% endif %}
   </div>
 
   <div

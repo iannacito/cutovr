@@ -854,14 +854,9 @@ details.quiet > *:not(summary) { margin-top: var(--space-3); }
   border-bottom: 1px solid var(--line);
 }
 .workflow-stepper__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-6);
   margin-bottom: var(--space-6);
-  flex-wrap: wrap;
 }
-.workflow-stepper__header > div { max-width: 56ch; }
+.workflow-stepper__heading { max-width: 56ch; }
 .workflow-stepper__eyebrow {
   margin: 0 0 var(--space-2);
 }
@@ -881,18 +876,43 @@ details.quiet > *:not(summary) { margin-top: var(--space-3); }
   line-height: 1.55;
   max-width: 56ch;
 }
-.workflow-stepper__cta {
-  flex: 0 0 auto;
-}
-.workflow-stepper__cta .btn-primary { white-space: nowrap; }
 
-.workflow-stepper__back {
-  margin-bottom: var(--space-3);
+/* Unified nav row: left (back) and right (primary CTA) sit on the same
+   baseline across every workflow step. The two halves are flex columns
+   that anchor the back link bottom-left and the CTA bottom-right, so the
+   buttons stay vertically aligned even when one side is empty. */
+.workflow-stepper__nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+  flex-wrap: wrap;
+  min-height: 2.5rem;
 }
+.workflow-stepper__nav-left,
+.workflow-stepper__nav-right {
+  display: flex;
+  align-items: center;
+  min-height: 2.5rem;
+}
+.workflow-stepper__nav-left  { justify-content: flex-start; }
+.workflow-stepper__nav-right { justify-content: flex-end; }
+
+/* Legacy wrappers kept for backwards compatibility with smoke tests that
+   assert on `.workflow-stepper__back`. The current partial no longer
+   renders this class, so the rule has no visual effect; remove once tests
+   are migrated to the nav-row class. */
+.workflow-stepper__back { margin-bottom: 0; }
+.workflow-stepper__cta  { flex: 0 0 auto; }
+.workflow-stepper__cta .btn-primary { white-space: nowrap; }
+.workflow-stepper__cta-link { white-space: nowrap; }
+
 .workflow-stepper__back-link {
   padding: 0;
   font-size: 0.9rem;
   color: var(--ink-muted);
+  line-height: 1.2;
 }
 .workflow-stepper__back-link:hover { color: var(--ink); }
 
@@ -998,8 +1018,14 @@ details.quiet > *:not(summary) { margin-top: var(--space-3); }
 }
 
 @media (max-width: 820px) {
-  .workflow-stepper__header { flex-direction: column; align-items: stretch; gap: var(--space-4); }
-  .workflow-stepper__cta { align-self: flex-start; }
+  .workflow-stepper__nav {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-3);
+  }
+  .workflow-stepper__nav-left,
+  .workflow-stepper__nav-right { justify-content: flex-start; }
+  .workflow-stepper__cta-link { align-self: flex-start; }
   .workflow-steps {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: var(--space-4) var(--space-3);
