@@ -14,8 +14,9 @@ without spinning up the Flask app.
   U1  No Account List on file → CTA points at upload, secondary at
       manual matching.
   U2  Account List uploaded but not finalized in QBO → CTA points at
-      Account List review (COA-first), language matches the helper-email
-      spec ("Finish your Account List first, then try again").
+      the create-missing flow on the Match accounts page (one click
+      from the banner), language is the lawyer-friendly "N account(s)
+      missing — create from your PCLaw account list" phrasing.
   U3  Account List finalized but specific GL accounts are still
       unmatched → CTA points at the matching page, secondary at the
       Account List review.
@@ -77,7 +78,10 @@ def u1_no_account_list():
     assert g.primary_cta_kwargs.get("_anchor") == "intake"
     assert g.secondary_cta_endpoint == "account_mapping"
     assert g.secondary_cta_kwargs.get("job_id") == "job-u1"
-    assert "Upload your Account List" in g.headline
+    # Lawyer-friendly headline names the count and the concrete action.
+    assert "QuickBooks accounts are missing" in g.headline or \
+        "QuickBooks account is missing" in g.headline, g.headline
+    assert "PCLaw account list" in g.headline
     assert all(not a.in_coa for a in g.accounts)
     print("U1 OK: no Account List → upload CTA")
 
@@ -105,11 +109,18 @@ def u2_coa_uploaded_not_finalized():
         environment="production",
     )
     assert g.action == ug.ACTION_FINISH_COA, g.action
-    # Helper-email mandated copy: this exact phrasing makes it
-    # crystal-clear to non-accountants what to do next.
-    assert "Finish your Account List first, then try again." in g.headline
-    assert g.primary_cta_endpoint == "migration_checklist"
-    assert g.secondary_cta_endpoint == "account_mapping"
+    # Lawyer-friendly: lead with what's missing and what to do next, not
+    # accounting jargon about "finishing the Account List".
+    assert "QuickBooks accounts are missing" in g.headline or \
+        "QuickBooks account is missing" in g.headline, g.headline
+    assert "PCLaw account list" in g.headline
+    # The fix routes the user one click into the create-missing flow on
+    # the Match accounts page instead of bouncing them to a generic
+    # checklist review screen.
+    assert g.primary_cta_endpoint == "account_mapping", g.primary_cta_endpoint
+    assert g.primary_cta_kwargs.get("job_id") == "job-u2"
+    assert g.primary_cta_label == "Create missing QuickBooks accounts"
+    assert g.secondary_cta_endpoint == "migration_checklist"
     # Production deploy → no "sandbox" leaks.
     assert "sandbox" not in g.body.lower()
     # All accounts are listed on the COA so each row carries the badge.
@@ -138,6 +149,7 @@ def u3_coa_finalized_but_still_unmapped():
     assert g.action == ug.ACTION_MAP_ACCOUNTS, g.action
     assert g.primary_cta_endpoint == "account_mapping"
     assert g.primary_cta_kwargs.get("job_id") == "job-u3"
+    assert g.primary_cta_label == "Create missing QuickBooks accounts"
     assert g.secondary_cta_endpoint == "migration_checklist"
     # None of the missing accounts are on the uploaded COA in this scenario.
     assert all(not a.in_coa for a in g.accounts)
@@ -267,10 +279,13 @@ def u6_job_detail_renders_structured_cta():
     body = page.get_data(as_text=True)
 
     # Banner reflects the structured CTA — not the legacy "Cannot import" line.
-    assert "These accounts are not in QuickBooks yet" in body, body[-2000:]
+    assert "QuickBooks accounts are missing" in body or \
+        "QuickBooks account is missing" in body, body[-2000:]
+    assert "PCLaw account list" in body
     assert "Upload Account List" in body
     # No legacy/confusing phrasing leaks through.
     assert "Cannot import" not in body
+    assert "Finish your Account List first" not in body
     # Production deploy → no "sandbox" in the company label.
     assert "your connected QuickBooks company (U6 Co)" in body
     # Each missing account shows up with number AND name.

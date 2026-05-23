@@ -1125,6 +1125,33 @@ def _firm_account_mapping_count(firm_id):
     return total
 
 
+def _firm_match_blocked_state(firm_id):
+    """Return (match_blocked, job_id) for the firm's most recent GL job.
+
+    A GL job's import path stores ``unmapped_accounts`` on the job dict
+    when it refuses to post Journal Entries because the connected QBO
+    company is missing accounts the transaction history references.
+    When that state is present we must not let the workflow stepper
+    advance past Step 3 — the lawyer hits a hard error on Step 5
+    otherwise (the original bug). This helper is intentionally read-only
+    and cheap: it never re-queries QBO.
+
+    Returns ``(False, None)`` when no GL job has a non-empty
+    ``unmapped_accounts`` snapshot, OR when the most recent GL job has
+    already been imported successfully (``import_summary`` present).
+    """
+    gl_jobs = _firm_latest_jobs_by_type(firm_id, REPORT_GENERAL_LEDGER, limit=50)
+    for row in gl_jobs:
+        hydrated = db.hydrate_job(row["id"]) or row
+        if hydrated.get("import_summary"):
+            # Already sent to QuickBooks — no longer blocked.
+            continue
+        unmapped = hydrated.get("unmapped_accounts") or []
+        if unmapped:
+            return True, row["id"]
+    return False, None
+
+
 def _build_firm_checklist(firm_id):
     """Helper that loads everything needed for the migration checklist
     and returns (cutover, checklist_items, next_step).
@@ -1158,10 +1185,13 @@ def dashboard():
         db.list_jobs_for_firm(user["firm_id"], limit=20)
     )
     cutover, checklist_items, next_step = _build_firm_checklist(user["firm_id"])
+    match_blocked, blocked_job_id = _firm_match_blocked_state(user["firm_id"])
     stages = customer_workflow.build_customer_stages(
         checklist_items,
         url_for=url_for,
         has_jobs=bool(firm_jobs),
+        match_blocked=match_blocked,
+        match_blocked_job_id=blocked_job_id,
     )
     current = customer_workflow.current_stage(stages)
     upload_ready = customer_workflow.upload_stage_ready_to_advance(checklist_items)
@@ -1286,8 +1316,11 @@ def migration_checklist():
     firm_jobs = demo_mode.filter_active_jobs(
         db.list_jobs_for_firm(user["firm_id"], limit=20)
     )
+    match_blocked, blocked_job_id = _firm_match_blocked_state(user["firm_id"])
     stages = customer_workflow.build_customer_stages(
         items, url_for=url_for, has_jobs=bool(firm_jobs),
+        match_blocked=match_blocked,
+        match_blocked_job_id=blocked_job_id,
     )
     current = customer_workflow.current_stage(stages)
     upload_ready = customer_workflow.upload_stage_ready_to_advance(items)
@@ -1450,8 +1483,11 @@ def uploaded_reports():
         item["report_type_label"] = REPORT_LABELS.get(rt, rt)
         hydrated.append(item)
     cutover, items, _next = _build_firm_checklist(user["firm_id"])
+    match_blocked, blocked_job_id = _firm_match_blocked_state(user["firm_id"])
     stages = customer_workflow.build_customer_stages(
         items, url_for=url_for, has_jobs=bool(hydrated),
+        match_blocked=match_blocked,
+        match_blocked_job_id=blocked_job_id,
     )
     current = customer_workflow.current_stage(stages)
     return render_template(
@@ -1510,9 +1546,38 @@ def send_to_qbo_entry():
         )
         return redirect(url_for("connect_qbo", job_id=primary["id"]))
 
+    # If a prior import attempt detected missing QuickBooks accounts,
+    # Step 5 is not reachable yet. The original bug rendered Step 5
+    # with a raw "These accounts are not in QuickBooks yet" banner
+    # while the stepper still showed Match/Review as complete. Redirect
+    # back to Step 3 with a single, lawyer-friendly blocker so the
+    # customer sees a concrete next action ("Create missing
+    # QuickBooks accounts") instead of an error on a step they
+    # cannot actually finish.
+    match_blocked, blocked_job_id = _firm_match_blocked_state(firm_id)
+    if match_blocked and blocked_job_id:
+        blocked_job = db.hydrate_job(blocked_job_id) or {}
+        missing = blocked_job.get("unmapped_accounts") or []
+        if len(missing) == 1:
+            head = (
+                "One QuickBooks account is missing. Create it from your "
+                "PCLaw account list before sending."
+            )
+        else:
+            head = (
+                f"{len(missing)} QuickBooks accounts are missing. "
+                "Create them from your PCLaw account list before sending."
+            )
+        detail = ""
+        if missing:
+            detail = " Missing: " + "; ".join(missing) + "."
+        flash(head + detail, "error")
+        return redirect(url_for("account_mapping", job_id=blocked_job_id))
+
     cutover, items, _next = _build_firm_checklist(firm_id)
     stages = customer_workflow.build_customer_stages(
         items, url_for=url_for, has_jobs=True,
+        match_blocked=False,
     )
     current = customer_workflow.current_stage(stages)
     job = db.hydrate_job(primary["id"]) or primary
@@ -6365,10 +6430,13 @@ def _workflow_stepper_context(firm_id):
     firm_jobs = demo_mode.filter_active_jobs(
         db.list_jobs_for_firm(firm_id, limit=20)
     )
+    match_blocked, blocked_job_id = _firm_match_blocked_state(firm_id)
     stages = customer_workflow.build_customer_stages(
         items,
         url_for=url_for,
         has_jobs=bool(firm_jobs),
+        match_blocked=match_blocked,
+        match_blocked_job_id=blocked_job_id,
     )
     current = customer_workflow.current_stage(stages)
     return {

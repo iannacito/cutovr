@@ -232,21 +232,32 @@ def classify_unmapped_accounts(
     finalized = _coa_finalized(coa_create_history)
     company_label = _format_company_label(company_name, environment)
 
+    # Pluralise the "One QuickBooks account is missing" line based on the
+    # actual count so the lawyer-friendly headline reads naturally in
+    # both the single- and multiple-missing-account cases.
+    missing_count = len(accounts)
+    if missing_count == 1:
+        plain_headline = (
+            "One QuickBooks account is missing. Create it from your "
+            "PCLaw account list before sending."
+        )
+    else:
+        plain_headline = (
+            f"{missing_count} QuickBooks accounts are missing. Create "
+            "them from your PCLaw account list before sending."
+        )
+
     # Bucket 1 — no COA uploaded.
     if not has_coa:
         return UnmappedAccountGuidance(
             action=ACTION_UPLOAD_COA,
             accounts=accounts,
-            headline=(
-                "These accounts are not in QuickBooks yet. "
-                "Upload your Account List first."
-            ),
+            headline=plain_headline,
             body=(
                 "Your transaction history references PCLaw accounts that "
-                "aren't in " + company_label + ". To set them up the same "
-                "way they were in PCLaw, upload your PCLaw Account List "
-                "(Chart of Accounts) first — we'll mirror it into "
-                "QuickBooks before this import."
+                "aren't in " + company_label + ". Upload your PCLaw "
+                "Account List (Chart of Accounts) so we can mirror it "
+                "into QuickBooks before this import."
             ),
             primary_cta_label="Upload Account List",
             primary_cta_endpoint="dashboard",
@@ -265,22 +276,20 @@ def classify_unmapped_accounts(
         return UnmappedAccountGuidance(
             action=ACTION_FINISH_COA,
             accounts=accounts,
-            headline=(
-                "These accounts are not in QuickBooks yet. "
-                "Finish your Account List first, then try again."
-            ),
+            headline=plain_headline,
             body=(
-                "You've uploaded your PCLaw Account List, but it hasn't "
-                "been mirrored into " + company_label + " yet. Open the "
-                "Account List review page and create the missing accounts "
-                "in QuickBooks before importing this transaction history."
+                "Your PCLaw Account List is uploaded but the missing "
+                "account isn't in " + company_label + " yet. Use "
+                "\"Create missing QuickBooks accounts\" on the Match "
+                "accounts page — we'll add it with the right type and "
+                "number, no manual QuickBooks setup needed."
             ),
-            primary_cta_label="Review Account List",
-            primary_cta_endpoint="migration_checklist",
-            primary_cta_kwargs={},
-            secondary_cta_label="Match accounts manually instead",
-            secondary_cta_endpoint="account_mapping",
-            secondary_cta_kwargs={"job_id": job_id},
+            primary_cta_label="Create missing QuickBooks accounts",
+            primary_cta_endpoint="account_mapping",
+            primary_cta_kwargs={"job_id": job_id},
+            secondary_cta_label="Review Account List",
+            secondary_cta_endpoint="migration_checklist",
+            secondary_cta_kwargs={},
             company_label=company_label,
         )
 
@@ -288,19 +297,16 @@ def classify_unmapped_accounts(
     return UnmappedAccountGuidance(
         action=ACTION_MAP_ACCOUNTS,
         accounts=accounts,
-        headline=(
-            "These accounts are not in QuickBooks yet. "
-            "Match each one to a QuickBooks account to continue."
-        ),
+        headline=plain_headline,
         body=(
             "Your Account List is in " + company_label + ", but the "
-            "transaction history uses PCLaw accounts that don't line up "
-            "by number with anything in QuickBooks yet. Open the matching "
-            "page to pick the right QuickBooks account for each one, or "
-            "create the missing accounts from the Account List review "
-            "page."
+            "transaction history references accounts that aren't there "
+            "by number yet. Use \"Create missing QuickBooks accounts\" "
+            "on the Match accounts page — we'll add them with the right "
+            "type and number, or you can pick an existing QuickBooks "
+            "account to match each one."
         ),
-        primary_cta_label="Match accounts",
+        primary_cta_label="Create missing QuickBooks accounts",
         primary_cta_endpoint="account_mapping",
         primary_cta_kwargs={"job_id": job_id},
         secondary_cta_label="Review Account List",
