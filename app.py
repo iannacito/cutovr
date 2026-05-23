@@ -1130,7 +1130,9 @@ def _build_firm_checklist(firm_id):
     and returns (cutover, checklist_items, next_step).
     """
     cutover = db.get_cutover_settings(firm_id)
-    firm_jobs = db.list_jobs_for_firm(firm_id, limit=500)
+    firm_jobs = demo_mode.filter_active_jobs(
+        db.list_jobs_for_firm(firm_id, limit=500)
+    )
     # Hydrate the jobs we know about so checklist can look at `preflight`,
     # `import_summary`, `verification`. list_jobs_for_firm returns raw rows
     # (with *_json columns); hydrate_job decodes them.
@@ -1152,7 +1154,9 @@ def _build_firm_checklist(firm_id):
 @login_required
 def dashboard():
     user = current_user()
-    firm_jobs = db.list_jobs_for_firm(user["firm_id"], limit=20)
+    firm_jobs = demo_mode.filter_active_jobs(
+        db.list_jobs_for_firm(user["firm_id"], limit=20)
+    )
     cutover, checklist_items, next_step = _build_firm_checklist(user["firm_id"])
     stages = customer_workflow.build_customer_stages(
         checklist_items,
@@ -1275,7 +1279,9 @@ def migration_checklist():
     """Render the per-firm migration checklist + next-step nudge."""
     user = current_user()
     cutover, items, next_step = _build_firm_checklist(user["firm_id"])
-    firm_jobs = db.list_jobs_for_firm(user["firm_id"], limit=1)
+    firm_jobs = demo_mode.filter_active_jobs(
+        db.list_jobs_for_firm(user["firm_id"], limit=20)
+    )
     stages = customer_workflow.build_customer_stages(
         items, url_for=url_for, has_jobs=bool(firm_jobs),
     )
@@ -3085,8 +3091,15 @@ def _job_trust_listing_rows(job: dict) -> list[dict]:
 
 
 def _firm_latest_jobs_by_type(firm_id: int, report_type: str, limit: int = 20) -> list[dict]:
-    """Return firm jobs of a given report_type, newest first."""
-    all_jobs = db.list_jobs_for_firm(firm_id, limit=limit) or []
+    """Return firm jobs of a given report_type, newest first.
+
+    Skips jobs archived by a demo reset so a stale demo upload cannot
+    be picked up as the "latest" reference for cross-report lookups
+    after ``Start new demo`` has been clicked.
+    """
+    all_jobs = demo_mode.filter_active_jobs(
+        db.list_jobs_for_firm(firm_id, limit=limit) or []
+    )
     return [j for j in all_jobs if (j.get("report_type") or "general_ledger") == report_type]
 
 
@@ -6098,7 +6111,9 @@ def _workflow_stepper_context(firm_id):
     detail) — not on auth / static pages.
     """
     _cutover, items, _next = _build_firm_checklist(firm_id)
-    firm_jobs = db.list_jobs_for_firm(firm_id, limit=1)
+    firm_jobs = demo_mode.filter_active_jobs(
+        db.list_jobs_for_firm(firm_id, limit=20)
+    )
     stages = customer_workflow.build_customer_stages(
         items,
         url_for=url_for,
@@ -6321,8 +6336,9 @@ def demo_start_new():
         details=f"run_id={run_id} archived_jobs={result['archived_jobs']}",
     )
     flash(
-        f"New demo started (run id {run_id}). "
-        f"{result['archived_jobs']} prior job(s) archived in the app. "
+        f"Fresh demo started (run id {run_id}). "
+        f"{result['archived_jobs']} prior job(s) archived in the app so the "
+        "dashboard and checklist now show a clean slate. "
         "Nothing was deleted from QuickBooks.",
         "success",
     )
