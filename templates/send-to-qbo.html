@@ -1,0 +1,98 @@
+{% extends "_base.html" %}
+{% block title %}Step 5 &mdash; Send to QuickBooks{% endblock %}
+{% block content %}
+<section class="page" data-testid="send-to-qbo-page">
+  {% include "_workflow_stepper.html" %}
+
+  <div class="hero">
+    <p class="eyebrow">Step 5 of 6 &middot; Send to QuickBooks</p>
+    <h1>Send the prepared entries to QuickBooks</h1>
+    <p data-testid="step5-clarification" style="max-width:64ch;">
+      This is the only step that writes to QuickBooks. The app posts the
+      prepared journal entries from PCLaw Migrate to
+      <strong>{{ qbo_connection.company_name or qbo_connection.realm_id or 'your QuickBooks Online company' }}</strong>
+      for you &mdash; you do not need to enter anything manually in
+      QuickBooks. (You only touch QuickBooks Online directly to authorize
+      the connection and to verify results after the import.)
+    </p>
+  </div>
+
+  {% if already_imported %}
+    <section class="card success-panel" data-testid="already-imported"
+             style="padding:var(--space-6);margin-bottom:var(--space-6);">
+      <p class="eyebrow">Sent</p>
+      <h2 style="margin-top:0;">This migration has already been sent to QuickBooks.</h2>
+      <p>
+        QuickBooks entries created:
+        <strong>{{ job.import_summary.qbo_je_count }}</strong>.
+        Open the job to review the receipt or proceed to Step 6 to
+        reconcile balances.
+      </p>
+      <div class="actions-row" style="margin-top:var(--space-4);">
+        <a class="btn btn-primary btn-lg" href="{{ url_for('migration_checklist') }}"
+           data-testid="step5-next-cta">
+          Proceed to Step 6: Reconcile &rarr;
+        </a>
+        <a class="btn" href="{{ url_for('job_detail', job_id=job.id) }}">Open the job</a>
+      </div>
+    </section>
+  {% else %}
+    <section class="card" data-testid="send-to-qbo-card"
+             style="padding:var(--space-6);margin-bottom:var(--space-6);">
+      <p class="eyebrow">Final confirmation</p>
+      <h2 style="margin-top:0;">Ready to post {{ (job.summary or {}).row_count or job.id }} record(s) to QuickBooks.</h2>
+      <p style="max-width:64ch;">
+        Source file: <code>{{ job.source_file }}</code><br>
+        Destination: <strong>{{ qbo_connection.company_name or qbo_connection.realm_id }}</strong>
+        {% if qbo_is_sandbox %}<span class="badge">Sandbox</span>{% endif %}
+      </p>
+      {% if (job.summary or {}).balanced is defined %}
+        <p class="muted">
+          Debits and credits balance:
+          <strong>{{ "Yes" if job.summary.balanced else "NO" }}</strong>.
+        </p>
+      {% endif %}
+      <p class="muted" style="max-width:64ch;">
+        You can post offsetting reversal entries afterwards if needed,
+        but the originals stay visible. Nothing is sent until you click
+        the button below.
+      </p>
+
+      <form action="{{ url_for('import_to_qbo', job_id=job.id) }}" method="post"
+            {% if not qbo_is_sandbox and qbo_real_import %}
+            onsubmit="return confirm('Post records to QuickBooks Online company {{ qbo_connection.company_name or qbo_connection.realm_id }}?');"
+            {% endif %}>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {% if not qbo_is_sandbox and qbo_real_import %}
+          <label style="display:block;margin:var(--space-4) 0;">
+            <span>Type <code>IMPORT</code> to confirm</span>
+            <input type="text" name="confirm_import" placeholder="IMPORT" autocomplete="off" required>
+          </label>
+        {% endif %}
+        <div class="actions-row" style="margin-top:var(--space-4);">
+          <button class="btn btn-primary btn-lg" type="submit"
+                  data-testid="send-to-qbo-cta">
+            {% if not qbo_is_sandbox and qbo_real_import %}
+              Send to QuickBooks
+            {% else %}
+              Send to QuickBooks (demo)
+            {% endif %}
+          </button>
+        </div>
+      </form>
+      {% if not qbo_real_import %}
+        <p class="muted" style="font-size:.88rem;margin-top:var(--space-3);">
+          Demo mode &mdash; this simulates the import without touching QuickBooks.
+        </p>
+      {% endif %}
+    </section>
+  {% endif %}
+
+  <div class="actions-row" style="margin-top:var(--space-5);">
+    <a class="btn btn-link" href="{{ url_for('import_job_entry') }}"
+       data-testid="back-to-step-4">
+      &larr; Back to Step 4: Review import
+    </a>
+  </div>
+</section>
+{% endblock %}

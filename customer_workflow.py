@@ -262,25 +262,27 @@ def _stage_cta(
             return fallback
 
     if stage_key == STAGE_SETUP:
-        return ("Start setup", u("cutover_setup", "/cutover"))
+        return ("Proceed to Step 2: Upload reports",
+                u("cutover_setup", "/cutover"))
     if stage_key == STAGE_UPLOAD:
         if ready_to_advance:
-            return ("Next: Match accounts",
+            return ("Proceed to Step 3: Match accounts",
                     u("match_accounts_entry", "/match-accounts"))
         if has_jobs:
             return ("Upload another report", u("dashboard", "/dashboard") + "#intake")
         return ("Upload your reports", u("dashboard", "/dashboard") + "#intake")
     if stage_key == STAGE_MATCH:
-        return ("Start Step 3: Match accounts",
+        return ("Proceed to Step 3: Match accounts",
                 u("match_accounts_entry", "/match-accounts"))
     if stage_key == STAGE_REVIEW:
-        return ("Review the import",
+        return ("Proceed to Step 4: Review import",
                 u("import_job_entry", "/import-job"))
     if stage_key == STAGE_IMPORT:
-        return ("Open the import job",
-                u("import_job_entry", "/import-job"))
+        return ("Proceed to Step 5: Send to QuickBooks",
+                u("send_to_qbo_entry", "/send-to-qbo"))
     if stage_key == STAGE_RECONCILE:
-        return ("Open the checklist", u("migration_checklist", "/migration-checklist"))
+        return ("Proceed to Step 6: Reconcile",
+                u("migration_checklist", "/migration-checklist"))
     return ("", "")
 
 
@@ -315,6 +317,7 @@ def _stage_back_link(
 
     # Per-stage previous-step entry: (customer-facing label, route).
     # Keyed by the *current* stage; value describes the step before it.
+    # Every URL must be a real, working route — never a bare '#'.
     table = {
         STAGE_UPLOAD:    ("Back to Step 1: Setup",
                           u("cutover_setup", "/cutover")),
@@ -322,10 +325,10 @@ def _stage_back_link(
                           u("dashboard", "/dashboard") + "#intake"),
         STAGE_REVIEW:    ("Back to Step 3: Match accounts",
                           u("match_accounts_entry", "/match-accounts")),
-        STAGE_IMPORT:    ("Back to Step 4: Review",
-                          u("migration_checklist", "/migration-checklist")),
+        STAGE_IMPORT:    ("Back to Step 4: Review import",
+                          u("import_job_entry", "/import-job")),
         STAGE_RECONCILE: ("Back to Step 5: Send to QuickBooks",
-                          u("migration_checklist", "/migration-checklist")),
+                          u("send_to_qbo_entry", "/send-to-qbo")),
     }
     return table.get(current_key, ("", ""))
 

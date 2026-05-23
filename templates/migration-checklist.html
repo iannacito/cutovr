@@ -78,7 +78,7 @@
         {% elif at_review_stage %}
           <a class="btn btn-primary btn-lg" href="{{ url_for('import_job_entry') }}" data-testid="next-step-cta">Next: Review import &rarr;</a>
         {% elif at_import_stage %}
-          <a class="btn btn-primary btn-lg" href="{{ url_for('import_job_entry') }}" data-testid="next-step-cta">Open the import job &rarr;</a>
+          <a class="btn btn-primary btn-lg" href="{{ url_for('send_to_qbo_entry') }}" data-testid="next-step-cta">Open Step 5: Send to QuickBooks &rarr;</a>
         {% elif at_reconcile_stage %}
           <a class="btn btn-primary btn-lg" href="{{ url_for('import_job_entry') }}" data-testid="next-step-cta">Next: Reconcile balances &rarr;</a>
         {% else %}
@@ -97,7 +97,7 @@
 
   <div class="actions-row" style="margin-bottom:var(--space-6);">
     <a class="btn" href="{{ url_for('dashboard') }}#intake">Add more reports</a>
-    <a class="btn btn-link" href="{{ url_for('firm_imports') }}">View all uploaded reports &rarr;</a>
+    <a class="btn btn-link" href="{{ url_for('uploaded_reports') }}" data-testid="view-uploaded-reports-link">View uploaded reports &rarr;</a>
   </div>
 
   <section style="margin-bottom:var(--space-10);">

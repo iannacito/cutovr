@@ -199,9 +199,14 @@
     </p>
     <div class="actions-row">
       <a class="btn btn-primary btn-lg"
-         href="{{ url_for('migration_checklist') }}"
+         href="{{ url_for('import_job_entry') }}"
          data-testid="step3-next-cta">
-        Next: Review import &rarr;
+        Proceed to Step 4: Review import &rarr;
+      </a>
+      <a class="btn"
+         href="{{ url_for('dashboard') }}#intake"
+         data-testid="step3-back-cta">
+        &larr; Back to Step 2: Upload reports
       </a>
       <a class="btn btn-link" href="{{ url_for('job_detail', job_id=job.id) }}">
         Back to job
@@ -286,6 +291,24 @@
       </div>
     </form>
   </section>
+
+  <div class="actions-row" data-testid="step3-nav-footer"
+       style="margin-top:var(--space-6);">
+    <a class="btn"
+       href="{{ url_for('dashboard') }}#intake"
+       data-testid="step3-back-to-step2">
+      &larr; Back to Step 2: Upload reports
+    </a>
+    {% if mapping_summary
+          and mapping_summary.matched_saved == mapping_summary.total
+          and mapping_summary.total > 0 %}
+      <a class="btn btn-primary"
+         href="{{ url_for('import_job_entry') }}"
+         data-testid="step3-proceed-to-step4">
+        Proceed to Step 4: Review import &rarr;
+      </a>
+    {% endif %}
+  </div>
   {% endif %}
 </section>
 {% endblock %}

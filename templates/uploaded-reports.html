@@ -1,0 +1,68 @@
+{% extends "_base.html" %}
+{% block title %}Uploaded reports &mdash; {{ firm.name }}{% endblock %}
+{% block content %}
+<section class="page" data-testid="uploaded-reports-page">
+  {% include "_workflow_stepper.html" %}
+
+  <div class="hero">
+    <p class="eyebrow">Step 2 of 6 &middot; Uploaded reports</p>
+    <h1>Reports uploaded for this migration</h1>
+    <p class="muted" style="max-width:64ch;">
+      Every PCLaw report you&rsquo;ve uploaded for the active migration run,
+      with the report type we detected and its current status.
+      This is not the QuickBooks import log &mdash; for that, open the
+      <a href="{{ url_for('firm_imports') }}">import history</a>.
+    </p>
+  </div>
+
+  <section class="card" style="padding:0;margin-bottom:var(--space-6);">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Report</th>
+            <th>Source file</th>
+            <th>Type</th>
+            <th>Status</th>
+            <th>Uploaded</th>
+            <th>Open</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if uploaded_jobs %}
+            {% for job in uploaded_jobs %}
+              <tr data-testid="uploaded-report-row">
+                <td><strong>{{ job.company }}</strong></td>
+                <td><code>{{ job.source_file }}</code></td>
+                <td>{{ job.report_type_label }}</td>
+                <td>
+                  <span class="badge {% if 'Imported' in (job.status or '') %}success{% elif 'failed' in (job.status or '')|lower or 'blocked' in (job.status or '')|lower %}error{% endif %}">{{ job.status }}</span>
+                </td>
+                <td>{{ (job.created_at or '')[:10] }}</td>
+                <td>
+                  <a class="btn btn-link" href="{{ url_for('job_detail', job_id=job.id) }}">
+                    Open &rarr;
+                  </a>
+                </td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="6" style="text-align:center;color:var(--ink-muted);padding:var(--space-6);"
+                  data-testid="uploaded-reports-empty">
+                No reports uploaded for the active run yet.
+                <a href="{{ url_for('dashboard') }}#intake">Upload your first report &rarr;</a>
+              </td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="actions-row" style="margin-top:var(--space-5);">
+    <a class="btn" href="{{ url_for('dashboard') }}#intake">Add another report</a>
+    <a class="btn btn-link" href="{{ url_for('dashboard') }}">Back to Step 2: Upload reports</a>
+  </div>
+</section>
+{% endblock %}
