@@ -1355,6 +1355,66 @@ def match_accounts_entry():
     return redirect(url_for("connect_qbo", job_id=primary_id))
 
 
+@app.route("/import-job")
+@login_required
+def import_job_entry():
+    """Step 5 entry point: open the GL job that's ready to send to QBO.
+
+    Step 5 in the customer workflow ("Send to QuickBooks") is performed
+    on the per-job preview / job-detail page, where the user can review
+    the dry-run preview and click the import button to post journal
+    entries to QuickBooks. The migration-checklist had been linking
+    Step 5's CTA at ``/firm/imports`` — that's the import-history list,
+    not an actionable page, so the button appeared to do nothing.
+
+    Routing rules:
+
+      * If the firm has no active GL job yet, send them back to the
+        migration checklist with a clear blocker — Step 5 cannot begin
+        until reports are uploaded.
+      * If the firm has a GL job but no QBO connection, send them to
+        the per-job connect screen with an explanatory flash.
+      * Otherwise redirect to the GL job's preview-import page: the
+        dry-run preview + import button is what Step 5 actually drives.
+    """
+    user = current_user()
+    firm_id = user["firm_id"]
+    gl_jobs = _firm_latest_jobs_by_type(firm_id, REPORT_GENERAL_LEDGER, limit=500)
+    if not gl_jobs:
+        flash(
+            "Upload your transaction history (general ledger) first — "
+            "Step 5 sends the prepared journal entries to QuickBooks, "
+            "so we need a general-ledger upload before there's anything "
+            "to send.",
+            "error",
+        )
+        return redirect(url_for("migration_checklist"))
+
+    # Prefer a GL job with a QBO connection. Falling back to the most
+    # recent GL job keeps the link safe when the connect step hasn't
+    # been done yet — the job-detail page surfaces the connect CTA.
+    primary = gl_jobs[0]
+    for job in gl_jobs:
+        if _get_qbo_connection(job["id"]):
+            primary = job
+            break
+
+    if not _get_qbo_connection(primary["id"]):
+        flash(
+            "Connect QuickBooks first — Step 5 sends the prepared "
+            "entries from PCLaw Migrate to QuickBooks, so we need a "
+            "connected QuickBooks Online company before we can post.",
+            "info",
+        )
+        return redirect(url_for("connect_qbo", job_id=primary["id"]))
+
+    # Land on the dry-run preview. The preview page renders the journal
+    # entries that would be posted plus the import button — the user
+    # never has to enter anything in QuickBooks manually; the app posts
+    # for them once they click send here.
+    return redirect(url_for("preview_import", job_id=primary["id"]))
+
+
 @app.route("/firm/imports")
 @login_required
 def firm_imports():
@@ -6410,14 +6470,26 @@ def demo_start_new():
         target_id=str(user["firm_id"]),
         details=f"run_id={run_id} archived_jobs={result['archived_jobs']}",
     )
+    cleared_mappings = result.get("cleared_mappings", 0)
+    extra = (
+        f" {cleared_mappings} saved account mapping(s) cleared so you "
+        "re-walk Step 3."
+        if cleared_mappings
+        else ""
+    )
     flash(
         f"Fresh demo started (run id {run_id}). "
         f"{result['archived_jobs']} prior job(s) archived in the app so the "
-        "dashboard and checklist now show a clean slate. "
-        "Nothing was deleted from QuickBooks.",
+        "dashboard and checklist now show a clean slate."
+        f"{extra}"
+        " Nothing was deleted from QuickBooks.",
         "success",
     )
-    return redirect(url_for("demo_workspace"))
+    # Drop the user at Step 1 (cutover setup) so they immediately see the
+    # guided workflow from the top, rather than the demo control panel.
+    # The user explicitly asked for "Start a New Demo" to navigate to the
+    # Step 1 setup page.
+    return redirect(url_for("cutover_setup"))
 
 
 # Map a short report-type slug to (filename, MIME, builder-callable). The
