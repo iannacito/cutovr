@@ -4,7 +4,9 @@
 <section class="page">
   {% include "_workflow_stepper.html" %}
 
-  {% if next_step %}
+  {% set at_upload_stage = workflow_current and workflow_current.key == 'upload' %}
+
+  {% if next_step and not at_upload_stage %}
     <div class="next-card">
       <div class="next-card__body">
         {% if workflow_current %}
@@ -23,40 +25,37 @@
         {% endif %}
       </div>
     </div>
-  {% else %}
+  {% elif not next_step %}
     <div class="flash success" role="status" style="margin-bottom:var(--space-6);">
       <strong>Checklist complete.</strong>
       Open the <a href="{{ url_for('migration_checklist') }}">checklist</a> to review status and download reconciliation reports.
     </div>
   {% endif %}
 
-  {% if qbo_configured and qbo_is_sandbox %}
-    <div class="flash info" role="status" aria-label="Sandbox testing mode" style="margin-bottom:var(--space-6);">
-      <strong>Sandbox Testing Mode.</strong>
-      You&rsquo;re connected to a QuickBooks <em>sandbox</em> company for safe testing.
-      Nothing posts to a real firm&rsquo;s QuickBooks.
-      Real customer QuickBooks companies require Intuit production approval and production credentials, which this build does not yet have.
-      {% if support_email and "your-domain.example" not in support_email %}
-        Need the sandbox login? <a href="mailto:{{ support_email }}">Email support</a>.
-      {% endif %}
-    </div>
-  {% elif not qbo_configured %}
-    <div class="flash info" role="status" style="margin-bottom:var(--space-6);">
-      <strong>Demo mode.</strong>
-      QuickBooks connection is not set up on this deploy. Uploads and previews work; nothing is sent to QuickBooks.
-    </div>
+  {% if not at_upload_stage %}
+    {% if qbo_configured and qbo_is_sandbox %}
+      <div class="flash info" role="status" aria-label="Sandbox testing mode" style="margin-bottom:var(--space-6);">
+        <strong>Sandbox Testing Mode.</strong>
+        You&rsquo;re connected to a QuickBooks <em>sandbox</em> company for safe testing.
+        Nothing posts to a real firm&rsquo;s QuickBooks.
+        Real customer QuickBooks companies require Intuit production approval and production credentials, which this build does not yet have.
+        {% if support_email and "your-domain.example" not in support_email %}
+          Need the sandbox login? <a href="mailto:{{ support_email }}">Email support</a>.
+        {% endif %}
+      </div>
+    {% elif not qbo_configured %}
+      <div class="flash info" role="status" style="margin-bottom:var(--space-6);">
+        <strong>Demo mode.</strong>
+        QuickBooks connection is not set up on this deploy. Uploads and previews work; nothing is sent to QuickBooks.
+      </div>
+    {% endif %}
   {% endif %}
 
-  {# When the user is in Step 2 (upload), keep the page focused on the
-     upload form. The Workspace card on the right is useful as a generic
-     dashboard widget, but it makes Step 2 feel like a dashboard instead
-     of a guided step and distracts from the single action the user
-     should take. Collapse to a single column at Step 2; show the
-     two-up grid only when the user is past upload (so the workspace
-     panel still provides quick access to checklist / QuickBooks links
-     during later stages or when the user lands on the dashboard
-     from elsewhere). #}
-  {% set at_upload_stage = workflow_current and workflow_current.key == 'upload' %}
+  {# Step 2 (upload) is one step per page: only upload-related content
+     and the stepper/navigation render. The Workspace card, sandbox
+     banners, recent-migrations table, and recent-activity drawer all
+     belong to the post-Step-2 dashboard view — at the upload stage
+     they distract from the single action the user should take. #}
   <section class="{% if not at_upload_stage %}grid-two{% endif %}" id="intake" style="margin-bottom:var(--space-12);">
     <article class="card">
       <p class="eyebrow">Step 2 of 6 &middot; Upload</p>
@@ -120,6 +119,47 @@
       </details>
     </article>
 
+    {% if at_upload_stage %}
+    <article class="card card--inset" data-testid="step2-nav">
+      <p class="eyebrow">Step 2 navigation</p>
+      <h3>Where to next?</h3>
+      {% if upload_ready_to_advance %}
+        <p>
+          Your required reports are uploaded. Continue to Step 3 to pair
+          PCLaw accounts with QuickBooks accounts.
+        </p>
+        <div class="actions-row" style="margin-top:var(--space-4);">
+          <a class="btn btn-primary btn-lg"
+             href="{{ url_for('match_accounts_entry') }}"
+             data-testid="step2-proceed-cta">
+            Proceed to Step 3: Match accounts &rarr;
+          </a>
+        </div>
+      {% else %}
+        <p>
+          Upload these to keep going:
+        </p>
+        {% if upload_missing_reports %}
+          <ul class="secure-list" style="margin-top:var(--space-3);">
+            {% for label in upload_missing_reports %}<li>{{ label }}</li>{% endfor %}
+          </ul>
+        {% endif %}
+      {% endif %}
+      <div class="actions-row" style="margin-top:var(--space-4);">
+        <a class="btn btn-link"
+           href="{{ url_for('uploaded_reports') }}"
+           data-testid="view-uploaded-reports-link">
+          View uploaded reports &rarr;
+        </a>
+        <a class="btn btn-link"
+           href="{{ url_for('cutover_setup') }}"
+           data-testid="step2-back-link">
+          &larr; Back to Step 1: Setup
+        </a>
+      </div>
+    </article>
+    {% endif %}
+
     {% if not at_upload_stage %}
     <article class="card card--inset" data-testid="dashboard-workspace-panel">
       <p class="eyebrow">Workspace</p>
@@ -140,11 +180,11 @@
     {% endif %}
   </section>
 
-  {% if firm_jobs %}
+  {% if firm_jobs and not at_upload_stage %}
   <section id="recent" style="margin-bottom:var(--space-10);">
     <div class="flex-between" style="margin-bottom:var(--space-4);">
       <h2 style="margin:0;">Recent migrations</h2>
-      <a class="btn btn-link" href="{{ url_for('firm_imports') }}">View all &rarr;</a>
+      <a class="btn btn-link" href="{{ url_for('uploaded_reports') }}">View uploaded reports &rarr;</a>
     </div>
     <div class="card" style="padding:0;">
       <div class="table-wrap">
@@ -168,6 +208,7 @@
   </section>
   {% endif %}
 
+  {% if not at_upload_stage %}
   <details class="quiet" style="margin-top:var(--space-8);">
     <summary>Before your first real migration</summary>
     <p class="muted">
@@ -179,8 +220,9 @@
       <a href="{{ url_for('onboarding') }}">Read the onboarding guide</a>.
     </p>
   </details>
+  {% endif %}
 
-  {% if recent_audit %}
+  {% if recent_audit and not at_upload_stage %}
   <section style="margin-top:var(--space-10);">
     <details class="quiet">
       <summary>Recent activity (last 10)</summary>

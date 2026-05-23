@@ -1164,6 +1164,8 @@ def dashboard():
         has_jobs=bool(firm_jobs),
     )
     current = customer_workflow.current_stage(stages)
+    upload_ready = customer_workflow.upload_stage_ready_to_advance(checklist_items)
+    upload_missing = customer_workflow.upload_stage_missing_reports(checklist_items)
     return render_template(
         "dashboard.html",
         firm_jobs=firm_jobs,
@@ -1177,6 +1179,8 @@ def dashboard():
         workflow_progress=customer_workflow.progress_percent(stages),
         workflow_completed=customer_workflow.completed_count(stages),
         workflow_terms=customer_workflow.FRIENDLY_TERMS,
+        upload_ready_to_advance=upload_ready,
+        upload_missing_reports=upload_missing,
     )
 
 
@@ -1413,6 +1417,117 @@ def import_job_entry():
     # never has to enter anything in QuickBooks manually; the app posts
     # for them once they click send here.
     return redirect(url_for("preview_import", job_id=primary["id"]))
+
+
+@app.route("/uploaded-reports")
+@login_required
+def uploaded_reports():
+    """Step 2 helper: show the reports uploaded for the active workflow run.
+
+    This is intentionally NOT the import-history page (``/firm/imports``).
+    Import history is a read-only audit log of every QuickBooks import
+    this firm has ever attempted — the wrong destination for a customer
+    asking "what reports have I uploaded?". This view answers exactly
+    that: every active (non-archived) upload for the current workflow
+    run, with its detected report type, status, and a link into the
+    job-detail page.
+
+    Demo runs filter through ``demo_mode.filter_active_jobs`` so a prior
+    demo's uploads don't leak into the current run's view.
+    """
+    user = current_user()
+    firm_jobs = demo_mode.filter_active_jobs(
+        db.list_jobs_for_firm(user["firm_id"], limit=500)
+    )
+    # Hydrate so we can show report type and preflight info when present.
+    hydrated = []
+    for row in firm_jobs:
+        h = db.hydrate_job(row["id"])
+        # Annotate with a customer-friendly report label.
+        rt = (h or row).get("report_type") or REPORT_GENERAL_LEDGER
+        item = h or row
+        item["report_type"] = rt
+        item["report_type_label"] = REPORT_LABELS.get(rt, rt)
+        hydrated.append(item)
+    cutover, items, _next = _build_firm_checklist(user["firm_id"])
+    stages = customer_workflow.build_customer_stages(
+        items, url_for=url_for, has_jobs=bool(hydrated),
+    )
+    current = customer_workflow.current_stage(stages)
+    return render_template(
+        "uploaded-reports.html",
+        uploaded_jobs=hydrated,
+        workflow_stages=[s.to_dict() for s in stages],
+        workflow_current=current.to_dict() if current else None,
+        workflow_progress=customer_workflow.progress_percent(stages),
+        workflow_completed=customer_workflow.completed_count(stages),
+        workflow_terms=customer_workflow.FRIENDLY_TERMS,
+    )
+
+
+@app.route("/send-to-qbo")
+@login_required
+def send_to_qbo_entry():
+    """Step 5 entry: the dedicated 'Send to QuickBooks' page.
+
+    Renders a single-purpose page focused on the Send-to-QuickBooks
+    action. Stepper + Back-to-Step-4 link + a clear primary CTA that
+    posts the prepared journal entries from the firm's general-ledger
+    job to its connected QuickBooks Online company. Deliberately does
+    NOT show the dashboard workspace card or any "Open the Checklist"
+    link — the page is one step per page, with direct next/back nav.
+
+    If the firm hasn't reached Step 5 yet (no GL job, or no QBO
+    connection), redirect with a clear flash so the page is never
+    rendered in an unreachable state.
+    """
+    user = current_user()
+    firm_id = user["firm_id"]
+    gl_jobs = _firm_latest_jobs_by_type(firm_id, REPORT_GENERAL_LEDGER, limit=500)
+    if not gl_jobs:
+        flash(
+            "Upload your transaction history (general ledger) first — "
+            "Step 5 sends the prepared journal entries to QuickBooks, "
+            "so we need a general-ledger upload before there's anything "
+            "to send.",
+            "error",
+        )
+        return redirect(url_for("dashboard"))
+
+    primary = gl_jobs[0]
+    for job in gl_jobs:
+        if _get_qbo_connection(job["id"]):
+            primary = job
+            break
+
+    qbo_conn = _get_qbo_connection(primary["id"]) or {}
+    if not qbo_conn:
+        flash(
+            "Connect QuickBooks first — Step 5 sends the prepared "
+            "entries from PCLaw Migrate to QuickBooks, so we need a "
+            "connected QuickBooks Online company before we can post.",
+            "info",
+        )
+        return redirect(url_for("connect_qbo", job_id=primary["id"]))
+
+    cutover, items, _next = _build_firm_checklist(firm_id)
+    stages = customer_workflow.build_customer_stages(
+        items, url_for=url_for, has_jobs=True,
+    )
+    current = customer_workflow.current_stage(stages)
+    job = db.hydrate_job(primary["id"]) or primary
+    return render_template(
+        "send-to-qbo.html",
+        job=job,
+        qbo_connection=qbo_conn,
+        qbo_real_import=QBO_REAL_IMPORT,
+        already_imported=bool((job or {}).get("import_summary")),
+        workflow_stages=[s.to_dict() for s in stages],
+        workflow_current=current.to_dict() if current else None,
+        workflow_progress=customer_workflow.progress_percent(stages),
+        workflow_completed=customer_workflow.completed_count(stages),
+        workflow_terms=customer_workflow.FRIENDLY_TERMS,
+    )
 
 
 @app.route("/firm/imports")
@@ -4834,6 +4949,7 @@ def preview_import(job_id):
         preview=preview,
         preview_error=preview_error,
         qbo_real_import=QBO_REAL_IMPORT,
+        **_workflow_stepper_context(user["firm_id"]),
     )
 
 

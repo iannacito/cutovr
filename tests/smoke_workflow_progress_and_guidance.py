@@ -21,7 +21,7 @@ This module verifies the fixes for all four.
 Covered
 -------
   W1  ``/jobs/<id>/account-mapping`` shows the Step 3 complete card with
-      the "Next: Review import" CTA once every PCLaw account has a
+      the "Proceed to Step 4: Review import" CTA once every PCLaw account has a
       saved mapping.
   W2  ``/migration-checklist`` next-step card shows the Step 3 -> Step 4
       "Review what will be sent to QuickBooks" guidance when the
@@ -157,8 +157,8 @@ def w1_step3_complete_card_renders_when_all_saved():
         "expected Step 3 complete card when all accounts saved"
     assert "Step 3 complete: Accounts matched" in body
     assert 'data-testid="step3-next-cta"' in body
-    assert "Next: Review import" in body
-    print("W1 OK: Step 3 complete card + Next: Review import CTA rendered")
+    assert "Proceed to Step 4: Review import" in body
+    print("W1 OK: Step 3 complete card + Proceed to Step 4: Review import CTA rendered")
 
 
 def w2_review_stage_guidance_renders():
@@ -203,7 +203,7 @@ def w2_review_stage_guidance_renders():
         "expected next-step card to advertise the review stage"
     assert "Step 3 complete: Accounts matched" in body
     assert "review what will be sent to QuickBooks" in body
-    assert "Next: Review import" in body
+    assert "Proceed to Step 4: Review import" in body
     print("W2 OK: Review-stage guidance shows Step 3 complete + Next CTA")
 
 

@@ -144,7 +144,7 @@ def b4_no_dead_anchors_anywhere():
           STEP_QBO_CONNECT: STATUS_COMPLETE,
           STEP_ACCOUNT_MAPPING: STATUS_COMPLETE,
           STEP_DRY_RUN: STATUS_COMPLETE},
-         cw.STAGE_IMPORT, "Back to Step 4: Review"),
+         cw.STAGE_IMPORT, "Back to Step 4: Review import"),
         ({STEP_CUTOVER_SETUP: STATUS_COMPLETE,
           STEP_COA_UPLOAD: STATUS_COMPLETE,
           STEP_OPENING_TB: STATUS_COMPLETE,

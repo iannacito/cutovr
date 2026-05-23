@@ -1,13 +1,15 @@
 {% extends "_base.html" %}
-{% block title %}Preview import &mdash; Job {{ job.id }}{% endblock %}
+{% block title %}Step 4 &mdash; Review import{% endblock %}
 {% block content %}
-<section class="detail-page">
+<section class="detail-page" data-testid="preview-import-page">
+  {% include "_workflow_stepper.html" %}
+
   <a href="{{ url_for('job_detail', job_id=job.id) }}" class="back-link">&larr; Back to job</a>
 
   <section class="card detail-hero">
     <div class="flex-between">
       <div>
-        <p class="eyebrow">Step &middot; Preview import</p>
+        <p class="eyebrow">Step 4 of 6 &middot; Review import</p>
         <h1>What would be posted to QuickBooks</h1>
         <p class="muted" style="margin-top:.25rem;">
           This is a <strong>dry run</strong>. Nothing has been sent to QuickBooks &mdash;
@@ -276,5 +278,21 @@
       <li><strong>Reconcile / Reverse</strong> &mdash; download the reconciliation report or post offsetting entries if needed.</li>
     </ol>
   </section>
+
+  <div class="actions-row" data-testid="step4-nav-footer"
+       style="margin-top:var(--space-6);">
+    <a class="btn"
+       href="{{ url_for('match_accounts_entry') }}"
+       data-testid="step4-back-to-step3">
+      &larr; Back to Step 3: Match accounts
+    </a>
+    {% if not preview_error and preview and preview.would_post %}
+      <a class="btn btn-primary btn-lg"
+         href="{{ url_for('send_to_qbo_entry') }}"
+         data-testid="step4-proceed-to-step5">
+        Proceed to Step 5: Send to QuickBooks &rarr;
+      </a>
+    {% endif %}
+  </div>
 </section>
 {% endblock %}
