@@ -1,12 +1,23 @@
-"""SMTP email delivery for transactional emails (currently password reset).
+"""SMTP email delivery for transactional emails.
 
-Configuration is read from environment variables:
+Configuration is read from environment variables. We accept the
+SMTP_*-style names that have always been used internally **and** the
+Flask-Mail / MAIL_*-style names plus a couple of vendor variants so
+operators don't have to relearn naming conventions when wiring up
+Render + Zoho:
 
-    SMTP_HOST       - mail server host (e.g. "smtp.zoho.com")
-    SMTP_PORT       - 587 (STARTTLS, default) or 465 (implicit TLS)
-    SMTP_USER       - SMTP auth username (often the same as SMTP_FROM)
-    SMTP_PASSWORD   - SMTP auth password / app password
-    SMTP_FROM       - From: address (must be allowed by the provider)
+    Host        SMTP_HOST or MAIL_SERVER
+    Port        SMTP_PORT or MAIL_PORT  (default 587)
+    Username    SMTP_USER, SMTP_USERNAME, or MAIL_USERNAME
+    Password    SMTP_PASSWORD or MAIL_PASSWORD
+    From addr   SMTP_FROM, SMTP_FROM_EMAIL, or MAIL_DEFAULT_SENDER
+    From name   SMTP_FROM_NAME or MAIL_FROM_NAME  (optional)
+
+TLS handling:
+    Port 465 -> implicit TLS (SMTP_SSL).
+    Any other port -> STARTTLS by default. Set SMTP_USE_TLS=0 to
+    opt out (e.g. for a local devmail server). MAIL_USE_TLS is also
+    honored when SMTP_USE_TLS isn't set.
 
 If any of the required vars are missing, `is_smtp_configured()` returns
 False and `send_email()` returns False without raising. Callers are
@@ -23,32 +34,84 @@ import os
 import smtplib
 import ssl
 from email.message import EmailMessage
+from email.utils import formataddr
 from typing import Optional
 
 
 log = logging.getLogger("email_sender")
 
 
-REQUIRED_VARS = ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM")
+# Ordered fallback aliases for each setting. The first non-empty value
+# wins. Keeping these grouped here (rather than scattered through
+# is_smtp_configured / send_email) means tests and operators have a
+# single place to read what names are recognized.
+_HOST_VARS = ("SMTP_HOST", "MAIL_SERVER")
+_PORT_VARS = ("SMTP_PORT", "MAIL_PORT")
+_USER_VARS = ("SMTP_USER", "SMTP_USERNAME", "MAIL_USERNAME")
+_PASSWORD_VARS = ("SMTP_PASSWORD", "MAIL_PASSWORD")
+_FROM_VARS = ("SMTP_FROM", "SMTP_FROM_EMAIL", "MAIL_DEFAULT_SENDER")
+_FROM_NAME_VARS = ("SMTP_FROM_NAME", "MAIL_FROM_NAME")
+_TLS_VARS = ("SMTP_USE_TLS", "MAIL_USE_TLS")
+
+# Required for SMTP to be considered configured: host, user, password,
+# from address. Port has a sane default. From-name is optional.
+_REQUIRED_GROUPS = (_HOST_VARS, _USER_VARS, _PASSWORD_VARS, _FROM_VARS)
+
+
+def _resolve(names) -> Optional[str]:
+    """Return the first non-empty env value from the given alias list."""
+    for name in names:
+        val = os.environ.get(name)
+        if val:
+            return val
+    return None
+
+
+def _resolve_port() -> int:
+    raw = _resolve(_PORT_VARS)
+    if not raw:
+        return 587
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 587
+
+
+def _resolve_use_tls(port: int) -> bool:
+    """STARTTLS by default for non-465 ports, unless explicitly disabled."""
+    raw = _resolve(_TLS_VARS)
+    if raw is None:
+        return port != 465
+    return raw.strip().lower() not in ("0", "false", "no", "off", "")
 
 
 def is_smtp_configured() -> bool:
-    return all(os.environ.get(v) for v in REQUIRED_VARS)
+    return all(_resolve(group) for group in _REQUIRED_GROUPS)
 
 
 def smtp_status() -> dict:
     """Return a redacted status dict suitable for audit logs.
 
-    Never includes SMTP_PASSWORD. Host/port/user are non-secret operator
-    config and useful for diagnosing 'why didn't the email send'.
+    Never includes the SMTP password. Host/port/user are non-secret
+    operator config and useful for diagnosing 'why didn't the email
+    send'.
     """
     return {
         "configured": is_smtp_configured(),
-        "host": os.environ.get("SMTP_HOST") or None,
-        "port": os.environ.get("SMTP_PORT") or None,
-        "user_set": bool(os.environ.get("SMTP_USER")),
-        "from_set": bool(os.environ.get("SMTP_FROM")),
+        "host": _resolve(_HOST_VARS),
+        "port": _resolve(_PORT_VARS) or (587 if is_smtp_configured() else None),
+        "user_set": bool(_resolve(_USER_VARS)),
+        "from_set": bool(_resolve(_FROM_VARS)),
     }
+
+
+def _from_header() -> str:
+    """Build the From header, optionally with a display name."""
+    addr = _resolve(_FROM_VARS) or ""
+    name = _resolve(_FROM_NAME_VARS)
+    if name:
+        return formataddr((name, addr))
+    return addr
 
 
 def send_email(
@@ -67,21 +130,15 @@ def send_email(
     if not is_smtp_configured():
         return False
 
-    host = os.environ["SMTP_HOST"]
-    port_raw = os.environ["SMTP_PORT"]
-    user = os.environ["SMTP_USER"]
-    password = os.environ["SMTP_PASSWORD"]
-    sender = os.environ["SMTP_FROM"]
-
-    try:
-        port = int(port_raw)
-    except (TypeError, ValueError):
-        log.warning("SMTP_PORT is not an integer; cannot send email")
-        return False
+    host = _resolve(_HOST_VARS) or ""
+    port = _resolve_port()
+    user = _resolve(_USER_VARS) or ""
+    password = _resolve(_PASSWORD_VARS) or ""
+    use_tls = _resolve_use_tls(port)
 
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = sender
+    msg["From"] = _from_header()
     msg["To"] = to
     msg.set_content(body_text)
     if body_html:
@@ -96,14 +153,16 @@ def send_email(
         else:
             with smtplib.SMTP(host, port, timeout=15) as s:
                 s.ehlo()
-                s.starttls(context=ctx)
-                s.ehlo()
+                if use_tls:
+                    s.starttls(context=ctx)
+                    s.ehlo()
                 s.login(user, password)
                 s.send_message(msg)
         return True
     except Exception:
-        # Don't leak token URL or recipient address into logs beyond the
-        # short host/port context. Stack traces from smtplib include the
-        # remote server response, which is fine.
-        log.exception("SMTP send failed for host=%s port=%s", host, port_raw)
+        # Don't leak credentials or report body into logs. The remote
+        # server response in smtplib's exception chain is fine — it's
+        # the only useful thing for an operator triaging "why didn't
+        # the email send".
+        log.exception("SMTP send failed for host=%s port=%s", host, port)
         return False

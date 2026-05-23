@@ -1677,9 +1677,13 @@ def reconcile_balances():
     cutover, items, stages, summary = _build_reconcile_view(firm_id)
     current = customer_workflow.current_stage(stages)
     reachable, reason = _step6_is_reachable(stages, summary)
+    report_text = (
+        final_report.build_report_text(summary) if reachable else ""
+    )
     return render_template(
         "reconcile-balances.html",
         summary=summary,
+        report_text=report_text,
         blocked=not reachable,
         blocked_reason=reason,
         workflow_stages=[s.to_dict() for s in stages],
@@ -1717,11 +1721,15 @@ def reconcile_balances_send_report():
     cutover, items, stages, summary = _build_reconcile_view(firm_id)
     current = customer_workflow.current_stage(stages)
     reachable, reason = _step6_is_reachable(stages, summary)
+    report_text = (
+        final_report.build_report_text(summary) if reachable else ""
+    )
 
     def _render(status, message, *, email_value=""):
         return render_template(
             "reconcile-balances.html",
             summary=summary,
+            report_text=report_text,
             blocked=not reachable,
             blocked_reason=reason,
             workflow_stages=[s.to_dict() for s in stages],
@@ -1750,7 +1758,6 @@ def reconcile_balances_send_report():
             email_value=email,
         )
 
-    body_text = final_report.build_report_text(summary)
     subject = (
         f"PCLaw → QuickBooks migration summary — {summary.firm_name}"
     )
@@ -1760,7 +1767,7 @@ def reconcile_balances_send_report():
     if smtp_configured:
         try:
             delivered = email_sender.send_email(
-                to=email, subject=subject, body_text=body_text,
+                to=email, subject=subject, body_text=report_text,
             )
         except Exception:  # noqa: BLE001
             # email_sender.send_email already swallows internal errors
@@ -1793,19 +1800,24 @@ def reconcile_balances_send_report():
         )
     if smtp_configured:
         # SMTP configured but delivery failed — never show raw error
-        # detail. Persist the request via the audit log (above) so an
-        # operator can follow up.
+        # detail. The report is still shown on the page so the user
+        # can copy it manually or retry. We do not claim it was sent.
         return _render(
-            "queued",
-            "We couldn't deliver the report just now, but your request "
-            f"is saved. We'll email it to {email} as soon as the mail "
-            "service is reachable.",
+            "error",
+            "We couldn't send the report just now — the mail service "
+            "didn't accept the message. The full report is shown below "
+            "so you can copy it, and you're welcome to try again.",
+            email_value=email,
         )
-    # SMTP not configured (e.g. local demo). Persist the request and
-    # tell the user clearly — never expose SMTP config state.
+    # SMTP not configured (e.g. local demo). Be honest: don't claim
+    # anything was sent or saved. The report is shown on the page so
+    # the demo flow still completes cleanly.
     return _render(
-        "queued",
-        f"Report request saved; we'll email it to {email}.",
+        "info",
+        "Email delivery is not configured yet, so we didn't send a "
+        "message. The full report is shown below — copy it from the "
+        "page for now.",
+        email_value=email,
     )
 
 

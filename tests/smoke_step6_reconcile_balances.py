@@ -4,14 +4,15 @@ Covered
 -------
   R1  /reconcile-balances renders the Step 6 page when Step 5 has
       completed (GL job carries an import_summary), with a
-      reconciliation summary card.
+      reconciliation summary card AND the report preview rendered
+      inline so the demo user can see what would be sent.
   R2  /reconcile-balances renders a single, clear blocker pointing back
       to Step 5 when nothing has been imported yet.
   R3  Posting an invalid email to /reconcile-balances/send-report
       surfaces a friendly validation error and does NOT call SMTP.
-  R4  Posting a valid email when SMTP is NOT configured persists the
-      request and renders a "report request saved" success message —
-      never a raw SMTP error.
+  R4  Posting a valid email when SMTP is NOT configured renders a
+      clear "delivery is not configured" message (we never claim it
+      was sent or saved), and the report itself is shown on the page.
   R5  Posting a valid email when SMTP IS configured calls
       email_sender.send_email and renders a "sent to <email>" message.
   R6  customer_workflow.STAGE_RECONCILE CTA points at
@@ -23,6 +24,12 @@ Covered
         - imported, no ending TB   -> overall completed (skipped lines
                                        don't block completion)
         - missing-account blocker  -> overall blocked
+  R8  Posting a valid email when SMTP IS configured but the transport
+      fails renders a customer-friendly error AND keeps the report
+      preview visible. We never claim it was sent.
+  R9  email_sender.is_smtp_configured() honors the Flask-Mail-style
+      aliases (MAIL_SERVER / MAIL_USERNAME / MAIL_PASSWORD /
+      MAIL_DEFAULT_SENDER) in addition to the SMTP_* names.
 
 Run from project root::
 
@@ -49,7 +56,13 @@ os.environ.setdefault("SECRET_KEY", "smoke-step6-reconcile")
 # IMPORTANT: ensure SMTP env vars are unset by default — R4 depends on
 # is_smtp_configured() returning False. Tests that need SMTP wired up
 # mock email_sender directly.
-for var in ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM"):
+for var in (
+    "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_USERNAME",
+    "SMTP_PASSWORD", "SMTP_FROM", "SMTP_FROM_EMAIL", "SMTP_FROM_NAME",
+    "SMTP_USE_TLS",
+    "MAIL_SERVER", "MAIL_PORT", "MAIL_USERNAME", "MAIL_PASSWORD",
+    "MAIL_DEFAULT_SENDER", "MAIL_FROM_NAME", "MAIL_USE_TLS",
+):
     os.environ.pop(var, None)
 
 import app as appmod  # noqa: E402
@@ -180,7 +193,13 @@ def r1_step6_renders_when_step5_complete():
     assert 'data-testid="step6-complete-banner"' in body
     # And the blocked panel is NOT present.
     assert 'data-testid="step6-blocked"' not in body
-    print("R1 OK: /reconcile-balances renders with summary when Step 5 done")
+    # The report preview is visible inline so the demo user can see
+    # exactly what would be sent.
+    assert 'data-testid="step6-report-preview"' in body, \
+        "Step 6 must show the report inline so demo users can see it"
+    assert 'data-testid="step6-report-text"' in body
+    assert "PCLaw → QuickBooks migration summary" in body
+    print("R1 OK: /reconcile-balances renders summary + report preview inline")
 
 
 def r2_step6_blocked_before_import():
@@ -251,16 +270,25 @@ def r4_submit_when_smtp_unconfigured():
     assert r.status_code == 200, r.status_code
     body = r.get_data(as_text=True)
     assert 'data-testid="step6-report-status"' in body
-    assert 'data-status="queued"' in body
-    assert "lawyer@firm.example" in body
+    # We use the "info" banner for the not-configured case so the user
+    # sees it's neutral (not an error and not a false success).
+    assert 'data-status="info"' in body, body[:2000]
+    # The message must be honest: it must say delivery is not
+    # configured. It must NOT claim the email was sent or saved.
+    assert "not configured" in body.lower()
+    assert "sent" not in body.lower().split("report preview")[0] or \
+        "didn't send" in body.lower(), \
+        "Must not claim the email was sent when SMTP isn't configured"
+    # The report itself must be visible on the page even when SMTP is
+    # off — that's the whole point of this fix.
+    assert 'data-testid="step6-report-preview"' in body
+    assert 'data-testid="step6-report-text"' in body
+    assert "PCLaw → QuickBooks migration summary" in body
     # Never expose SMTP config state to the user.
-    assert "SMTP" not in body, "Must not leak SMTP config state"
-    assert "smtp" not in body.split("Generated")[0], (
-        "Must not leak smtp_status to user"
-    )
+    assert "SMTP_" not in body, "Must not leak SMTP env var names"
     # send_email must NOT be called when SMTP is unconfigured.
     assert sent_calls == [], sent_calls
-    print("R4 OK: queued message when SMTP not configured; no SMTP attempted")
+    print("R4 OK: clear 'not configured' info banner + report shown; no SMTP attempted")
 
 
 def r5_submit_when_smtp_configured_succeeds():
@@ -415,6 +443,93 @@ def r7_reconciliation_summary_classification():
     print("R7 OK: reconciliation summary classifies pending/completed/blocked")
 
 
+def r8_submit_when_smtp_configured_but_send_fails():
+    client = appmod.app.test_client()
+    _signup_and_login(client, "r8@example.test")
+    user = appmod.db.get_user_by_email("r8@example.test")
+    _complete_step1(user["firm_id"])
+    _make_imported_gl_job(user, job_id="job_r8")
+
+    # SMTP "configured" but transport returns False (e.g. auth failure,
+    # network unreachable). We must NOT claim it was sent.
+    with mock.patch.object(appmod.email_sender, "is_smtp_configured",
+                           return_value=True), \
+         mock.patch.object(appmod.email_sender, "send_email",
+                           return_value=False):
+        r = client.post(
+            "/reconcile-balances/send-report",
+            data={"email": "lawyer@firm.example"},
+            follow_redirects=False,
+        )
+    assert r.status_code == 200, r.status_code
+    body = r.get_data(as_text=True)
+    assert 'data-testid="step6-report-status"' in body
+    assert 'data-status="error"' in body, body[:2000]
+    # Customer-friendly wording: no stack traces, no SMTP jargon.
+    # Jinja HTML-escapes the apostrophe to &#39;, so match both forms.
+    lower = body.lower()
+    assert (
+        "couldn't send" in lower
+        or "couldn&#39;t send" in lower
+        or "could not send" in lower
+    ), "expected friendly 'couldn't send' wording in body"
+    assert "SMTP_" not in body
+    # Report preview must still render so the user can copy/retry.
+    assert 'data-testid="step6-report-preview"' in body
+    print("R8 OK: SMTP-failure path shows friendly error + keeps report visible")
+
+
+def r9_mail_alias_env_vars_work():
+    """The MAIL_*-style env names (a la Flask-Mail / Render Zoho guides)
+    should be honored alongside the SMTP_*-style names.
+    """
+    # Save and clear all known names so we test the MAIL_* path in
+    # isolation.
+    saved = {}
+    for var in (
+        "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_USERNAME",
+        "SMTP_PASSWORD", "SMTP_FROM", "SMTP_FROM_EMAIL",
+        "MAIL_SERVER", "MAIL_PORT", "MAIL_USERNAME", "MAIL_PASSWORD",
+        "MAIL_DEFAULT_SENDER",
+    ):
+        saved[var] = os.environ.pop(var, None)
+
+    try:
+        # With nothing set, not configured.
+        assert appmod.email_sender.is_smtp_configured() is False
+
+        # Set only MAIL_*-style vars (no SMTP_* equivalents).
+        os.environ["MAIL_SERVER"] = "smtp.zoho.com"
+        os.environ["MAIL_PORT"] = "587"
+        os.environ["MAIL_USERNAME"] = "noreply@pclawmigrate.com"
+        os.environ["MAIL_PASSWORD"] = "fake-app-password"
+        os.environ["MAIL_DEFAULT_SENDER"] = "noreply@pclawmigrate.com"
+
+        assert appmod.email_sender.is_smtp_configured() is True, (
+            "MAIL_* env vars should fully configure SMTP"
+        )
+        status = appmod.email_sender.smtp_status()
+        assert status["configured"] is True
+        assert status["host"] == "smtp.zoho.com"
+        assert status["port"] == "587"
+        assert status["user_set"] is True
+        assert status["from_set"] is True
+        # smtp_status must never include the password.
+        assert "password" not in {k.lower() for k in status.keys()}
+    finally:
+        for var, val in saved.items():
+            if val is None:
+                os.environ.pop(var, None)
+            else:
+                os.environ[var] = val
+        for var in (
+            "MAIL_SERVER", "MAIL_PORT", "MAIL_USERNAME",
+            "MAIL_PASSWORD", "MAIL_DEFAULT_SENDER",
+        ):
+            os.environ.pop(var, None)
+    print("R9 OK: MAIL_* env aliases configure SMTP (Render/Zoho friendly)")
+
+
 def main():
     r1_step6_renders_when_step5_complete()
     r2_step6_blocked_before_import()
@@ -423,6 +538,8 @@ def main():
     r5_submit_when_smtp_configured_succeeds()
     r6_stage_reconcile_cta_points_at_step6_route()
     r7_reconciliation_summary_classification()
+    r8_submit_when_smtp_configured_but_send_fails()
+    r9_mail_alias_env_vars_work()
     print("\nALL STEP 6 RECONCILE-BALANCES SMOKE TESTS PASSED")
 
 
