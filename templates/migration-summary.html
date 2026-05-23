@@ -1,0 +1,278 @@
+{% extends "_base.html" %}
+{% block title %}Migration summary &mdash; {{ summary.firm_name }}{% endblock %}
+{% block content %}
+<section class="page">
+  {% include "_workflow_stepper.html" %}
+
+  {# Hero: one calm, plain-English status. The pill on the right tells
+     the customer at a glance how their migration is doing; the headline
+     and subhead are the human version. #}
+  <header class="summary-hero">
+    <div class="summary-hero__title">
+      <p class="eyebrow">Migration summary</p>
+      <h1>{{ summary.headline }}</h1>
+      <p class="muted summary-hero__lede">{{ summary.subhead }}</p>
+    </div>
+    <div class="summary-hero__pill">
+      <span class="badge large summary-state summary-state--{{ summary.overall_state }}">
+        {{ summary.to_dict().overall_state_label }}
+      </span>
+    </div>
+  </header>
+
+  {# Single dominant next action — keeps the page from feeling busy. #}
+  {% if summary.next_step_label %}
+    <div class="next-card">
+      <div class="next-card__body">
+        <p class="eyebrow">Recommended next step</p>
+        <h3>{{ summary.next_step_label }}</h3>
+        <p>{{ summary.next_step_detail }}</p>
+      </div>
+      <div class="next-card__actions">
+        {% if summary.next_step_url %}
+          <a class="btn btn-primary btn-lg" href="{{ summary.next_step_url }}">
+            Continue &rarr;
+          </a>
+        {% endif %}
+        <a class="btn" href="{{ url_for('migration_summary_csv') }}">
+          Download summary
+        </a>
+      </div>
+    </div>
+  {% endif %}
+
+  {# Migration details — the constants that frame everything below. #}
+  {% if summary.cutover_date or summary.qbo_company_name %}
+  <section class="summary-meta">
+    <dl class="summary-grid">
+      {% if summary.cutover_date %}
+        <div>
+          <dt>Switchover date</dt>
+          <dd>{{ summary.cutover_date }}</dd>
+        </div>
+      {% endif %}
+      {% if summary.opening_balance_date %}
+        <div>
+          <dt>Starting balances as of</dt>
+          <dd>{{ summary.opening_balance_date }}</dd>
+        </div>
+      {% endif %}
+      {% if summary.qbo_company_name %}
+        <div>
+          <dt>QuickBooks company</dt>
+          <dd>{{ summary.qbo_company_name }}</dd>
+        </div>
+      {% endif %}
+      <div>
+        <dt>Report generated</dt>
+        <dd>{{ summary.generated_at }}</dd>
+      </div>
+    </dl>
+  </section>
+  {% endif %}
+
+  {# Items needing attention — only renders if there's actually something. #}
+  {% if summary.attention %}
+  <section class="summary-section">
+    <div class="summary-section__head">
+      <h2>Items needing attention</h2>
+      <p class="muted">Resolve these before you call the migration done.</p>
+    </div>
+    <ul class="summary-attention">
+      {% for item in summary.attention %}
+        <li class="summary-attention__item">
+          <div class="summary-attention__body">
+            <p class="summary-attention__label">{{ item.label }}</p>
+            <p class="muted">{{ item.detail }}</p>
+          </div>
+          {% if item.cta_url and item.cta_label %}
+            <div class="summary-attention__action">
+              <a class="btn" href="{{ item.cta_url }}">{{ item.cta_label }} &rarr;</a>
+            </div>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {# Files received — every report type, with state + count + notes. #}
+  <section class="summary-section">
+    <div class="summary-section__head">
+      <h2>Files received</h2>
+      <p class="muted">Everything you've sent us so far.</p>
+    </div>
+    <div class="card" style="padding:0;">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Report</th>
+              <th>Uploads</th>
+              <th>Status</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for f in summary.files %}
+              <tr>
+                <td>
+                  <strong>{{ f.label }}</strong>
+                  <div class="muted" style="font-size:.82rem;">{{ f.accounting_label }}</div>
+                </td>
+                <td>{{ f.count }}</td>
+                <td>
+                  <span class="badge summary-state summary-state--{{ f.state }}">
+                    {{ f.to_dict().state_label }}
+                  </span>
+                </td>
+                <td class="muted">{{ f.detail }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  {# QuickBooks activity — what we wrote on the firm's behalf. #}
+  <section class="summary-section">
+    <div class="summary-section__head">
+      <h2>QuickBooks activity</h2>
+      <p class="muted">What we created in your QuickBooks Online company.</p>
+    </div>
+    {% if summary.qbo.any_activity %}
+      <div class="summary-grid summary-stats">
+        <div>
+          <dt>Accounts created</dt>
+          <dd>{{ summary.qbo.accounts_created }}</dd>
+        </div>
+        <div>
+          <dt>Journal entries created</dt>
+          <dd>{{ summary.qbo.journal_entries_created }}</dd>
+        </div>
+        {% if summary.qbo.journal_entries_reversed %}
+          <div>
+            <dt>Journal entries reversed</dt>
+            <dd>{{ summary.qbo.journal_entries_reversed }}</dd>
+          </div>
+        {% endif %}
+        {% if summary.qbo.customers_created %}
+          <div>
+            <dt>Clients created</dt>
+            <dd>{{ summary.qbo.customers_created }}</dd>
+          </div>
+        {% endif %}
+        {% if summary.qbo.vendors_created %}
+          <div>
+            <dt>Vendors created</dt>
+            <dd>{{ summary.qbo.vendors_created }}</dd>
+          </div>
+        {% endif %}
+        {% if summary.qbo.last_import_at %}
+          <div>
+            <dt>Most recent import</dt>
+            <dd>{{ summary.qbo.last_import_at }}</dd>
+          </div>
+        {% endif %}
+      </div>
+    {% else %}
+      <p class="muted">
+        Nothing has been posted to QuickBooks yet. We'll record the count
+        of accounts and journal entries created here once the import runs.
+      </p>
+    {% endif %}
+  </section>
+
+  {# Balance checks — calm pass/warning/not-run states. #}
+  <section class="summary-section">
+    <div class="summary-section__head">
+      <h2>Balance checks</h2>
+      <p class="muted">
+        How well your QuickBooks balances match PCLaw.
+      </p>
+    </div>
+    <ul class="summary-checks">
+      {% for b in summary.balance_checks %}
+        <li class="summary-checks__item summary-checks__item--{{ b.state }}">
+          <div class="summary-checks__body">
+            <p class="summary-checks__label">
+              {{ b.label }}
+              <span class="muted summary-checks__accounting">
+                ({{ b.accounting_label }})
+              </span>
+            </p>
+            <p class="muted">{{ b.detail }}</p>
+          </div>
+          <div class="summary-checks__state">
+            <span class="badge summary-state summary-state--{{ b.state }}">
+              {{ b.to_dict().state_label }}
+            </span>
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  {# Next steps & exports — the calm closing card. #}
+  <section class="summary-section">
+    <div class="summary-section__head">
+      <h2>Wrap up</h2>
+      <p class="muted">A few quiet final steps.</p>
+    </div>
+    <div class="grid-two">
+      <article class="card">
+        <p class="eyebrow">Save a copy</p>
+        <h3>Download the summary</h3>
+        <p class="muted">
+          A simple CSV with the status of every step. No raw transactions,
+          no tokens &mdash; just the report you can share with your
+          accountant.
+        </p>
+        <div class="actions-row" style="margin-top:var(--space-5);">
+          <a class="btn" href="{{ url_for('migration_summary_csv') }}">
+            Download summary CSV
+          </a>
+        </div>
+      </article>
+      <article class="card card--inset">
+        <p class="eyebrow">Need a hand?</p>
+        <h3>Talk to us</h3>
+        <p class="muted">
+          If something here doesn't match what you expected, send us the
+          report and a note. We'll review and reply.
+        </p>
+        <div class="actions-row" style="margin-top:var(--space-5);">
+          <a class="btn" href="{{ url_for('support') }}">Contact support</a>
+          <a class="btn btn-link" href="{{ url_for('migration_checklist') }}">
+            Back to checklist
+          </a>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  {# Operator-only: technical IDs behind a quiet disclosure. The customer
+     view above never shows realm IDs or `intuit_tid` values; an operator
+     debugging a specific firm can still see the QBO realm ID here. #}
+  {% if is_operator and (summary.qbo_realm_id or summary.last_import_id) %}
+  <details class="quiet" style="margin-top:var(--space-10);">
+    <summary>Operator details</summary>
+    <dl class="summary-grid" style="margin-top:var(--space-3);">
+      {% if summary.qbo_realm_id %}
+        <div>
+          <dt>QBO realm ID</dt>
+          <dd><code>{{ summary.qbo_realm_id }}</code></dd>
+        </div>
+      {% endif %}
+      {% if summary.last_import_id %}
+        <div>
+          <dt>Last import ID</dt>
+          <dd><code>{{ summary.last_import_id }}</code></dd>
+        </div>
+      {% endif %}
+    </dl>
+  </details>
+  {% endif %}
+</section>
+{% endblock %}

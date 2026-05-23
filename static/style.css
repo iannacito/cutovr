@@ -1071,3 +1071,147 @@ details.quiet > *:not(summary) { margin-top: var(--space-3); }
   color: var(--ink-muted);
   font-size: .92rem;
 }
+
+/* Migration summary page ---------------------------------------------- */
+.summary-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-6);
+  margin: var(--space-6) 0 var(--space-8);
+}
+.summary-hero__title h1 {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  margin: var(--space-2) 0 var(--space-3);
+  font-size: 2rem;
+  line-height: 1.2;
+  letter-spacing: -.01em;
+}
+.summary-hero__lede {
+  max-width: 56ch;
+  margin: 0;
+  font-size: 1rem;
+}
+.summary-hero__pill { flex: 0 0 auto; padding-top: var(--space-2); }
+
+.summary-meta {
+  margin-bottom: var(--space-8);
+  padding: var(--space-5) var(--space-6);
+  background: var(--bg-2);
+  border-radius: var(--radius);
+}
+
+.summary-section { margin: var(--space-10) 0; }
+.summary-section__head { margin-bottom: var(--space-4); }
+.summary-section__head h2 {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  font-size: 1.4rem;
+  margin: 0 0 var(--space-1);
+  letter-spacing: -.005em;
+}
+.summary-section__head p { margin: 0; font-size: .95rem; }
+
+/* Status pills colored by state. Keep these calm — no shouting reds. */
+.summary-state {
+  border-color: transparent;
+  font-weight: 500;
+}
+.summary-state--pass,
+.summary-state--imported,
+.summary-state--completed {
+  background: var(--success-soft);
+  color: var(--success);
+}
+.summary-state--ready_for_review,
+.summary-state--received {
+  background: var(--bg-3);
+  color: var(--ink-soft);
+}
+.summary-state--needs_attention {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+.summary-state--not_started,
+.summary-state--not_run {
+  background: var(--surface);
+  color: var(--ink-muted);
+  border-color: var(--line-strong);
+}
+
+.summary-stats {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* Attention list — calm, single-row cards. */
+.summary-attention {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.summary-attention__item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--warning-soft);
+  border-left: 3px solid var(--warning);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.summary-attention__label {
+  font-weight: 500;
+  margin: 0 0 var(--space-1);
+}
+.summary-attention__body p { font-size: .95rem; }
+.summary-attention__action { flex: 0 0 auto; }
+
+/* Balance checks list — each row aligns label + state. */
+.summary-checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.summary-checks__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.summary-checks__item--needs_attention {
+  border-color: transparent;
+  background: var(--warning-soft);
+}
+.summary-checks__label {
+  margin: 0 0 var(--space-1);
+  font-weight: 500;
+}
+.summary-checks__accounting { font-weight: 400; font-size: .85rem; }
+.summary-checks__body p { margin: 0; font-size: .95rem; }
+.summary-checks__state { flex: 0 0 auto; }
+
+@media (max-width: 720px) {
+  .summary-hero {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .summary-hero__pill { padding-top: 0; }
+  .summary-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .summary-attention__item,
+  .summary-checks__item {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

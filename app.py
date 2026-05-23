@@ -88,6 +88,7 @@ import qbo_error_hint
 import email_sender
 import cutover_workflow
 import customer_workflow
+import migration_summary
 import bulk_upload
 from rate_limit import RateLimiter, client_ip
 import csv as _csv
@@ -1380,6 +1381,102 @@ def firm_imports():
         "firm-imports.html",
         firm_jobs=firm_jobs,
         imports=imports,
+    )
+
+
+def _build_migration_summary_for_firm(firm_id: int):
+    """Hydrate everything migration_summary.build_migration_summary needs.
+
+    All inputs are derived from already-persisted state; the projection
+    itself is pure (see ``migration_summary``). Returns a
+    ``MigrationSummary`` dataclass.
+    """
+    firm = db.get_firm(firm_id) or {"name": "Your firm"}
+    cutover = db.get_cutover_settings(firm_id)
+    raw_jobs = db.list_jobs_for_firm(firm_id, limit=500)
+    hydrated_jobs = []
+    for row in raw_jobs:
+        h = db.hydrate_job(row["id"])
+        hydrated_jobs.append(h or row)
+    qbo_conns = db.list_qbo_connections_for_firm(firm_id)
+    checklist = cutover_workflow.build_checklist(
+        cutover,
+        hydrated_jobs,
+        has_qbo_connection=bool(qbo_conns),
+        account_mapping_count=_firm_account_mapping_count(firm_id),
+    )
+    imports = history.get_history_for_jobs([j["id"] for j in raw_jobs])
+    # The bulk-upload cache is in-memory; filter to this firm so we
+    # never leak cross-firm classification state into the summary.
+    firm_bulks = [
+        b for b in bulk_uploads.values() if b.get("firm_id") == firm_id
+    ]
+    return migration_summary.build_migration_summary(
+        firm=firm,
+        cutover=cutover,
+        jobs=hydrated_jobs,
+        imports=imports,
+        bulks=firm_bulks,
+        qbo_connections=qbo_conns,
+        checklist=checklist,
+        checklist_url=url_for("migration_checklist"),
+        imports_url=url_for("firm_imports"),
+        dashboard_url=url_for("dashboard"),
+    )
+
+
+@app.route("/migration-summary")
+@login_required
+def migration_summary_page():
+    """Customer-facing final migration summary.
+
+    Plain-English projection over uploaded reports, QBO writes, balance
+    checks, and any open issues. Read-only — no QBO posting, no
+    destructive actions happen from this view.
+    """
+    user = current_user()
+    summary = _build_migration_summary_for_firm(user["firm_id"])
+    _cutover, _items, next_step = _build_firm_checklist(user["firm_id"])
+    return render_template(
+        "migration-summary.html",
+        summary=summary,
+        summary_dict=summary.to_dict(),
+        next_step=next_step,
+        **_workflow_stepper_context(user["firm_id"]),
+    )
+
+
+@app.route("/migration-summary.csv")
+@login_required
+def migration_summary_csv():
+    """Download the migration summary as a sanitized CSV.
+
+    The CSV contains only status fields (counts, pass/fail labels,
+    dates). It does NOT include row-level transactions, file contents,
+    encryption keys, QBO tokens, or ``intuit_tid`` values. Cells are
+    run through ``csv_safety.sanitize_csv_row`` so spreadsheet apps
+    won't treat attacker-controlled text as a formula.
+    """
+    user = current_user()
+    summary = _build_migration_summary_for_firm(user["firm_id"])
+    body = migration_summary.summary_to_csv(summary)
+    firm_slug = re.sub(r"[^A-Za-z0-9_-]+", "-",
+                       (summary.firm_name or "firm")).strip("-").lower() or "firm"
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    filename = f"migration-summary-{firm_slug}-{today}.csv"
+    _audit(
+        "migration_summary_csv_download",
+        target_type="firm",
+        target_id=str(user["firm_id"]),
+        details=f"firm={summary.firm_name}",
+    )
+    return Response(
+        body,
+        mimetype="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename=\"{filename}\"",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
