@@ -270,6 +270,12 @@ class AppDB:
         # encrypted source CSV (e.g. ephemeral storage on a redeployed Render
         # instance) — the file isn't required to enumerate accounts again.
         add_col("jobs", "pclaw_accounts_json TEXT")
+        # Full parsed GL rows captured at upload time. Lets the Send-to-QBO
+        # import survive loss of the encrypted source CSV the same way the
+        # account-mapping snapshot does. Without this, a redeployed Render
+        # instance whose uploads/ tree was wiped would 500 on the
+        # decrypt_file call at the top of /jobs/<id>/import-to-qbo.
+        add_col("jobs", "gl_rows_json TEXT")
 
         # cutover_settings: AR/AP migration strategy (Task 4 in the
         # migration-workflow completion PR). Default empty so existing
@@ -509,6 +515,13 @@ class AppDB:
                 if job_dict["pclaw_accounts"] is not None
                 else None
             )
+        if "gl_rows" in job_dict:
+            fields.append("gl_rows_json")
+            values.append(
+                json.dumps(job_dict["gl_rows"])
+                if job_dict["gl_rows"] is not None
+                else None
+            )
 
         set_clause = ", ".join(f"{f} = ?" for f in fields)
         values.append(job_id)
@@ -565,6 +578,7 @@ class AppDB:
             ("last_error_json", "last_error"),
             ("preflight_json", "preflight"),
             ("pclaw_accounts_json", "pclaw_accounts"),
+            ("gl_rows_json", "gl_rows"),
         ]:
             v = row[src] if src in row.keys() else None
             if v:

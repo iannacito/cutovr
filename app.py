@@ -1724,6 +1724,35 @@ def readiness_page():
     )
 
 
+def _gl_rows_for_snapshot(gl_rows):
+    """Return ``gl_rows`` as a list of plain dicts safe to JSON-encode.
+
+    csv.DictReader yields dicts whose values are strings (or None for
+    missing columns when extrasaction is left alone). We coerce values to
+    strings so the JSON snapshot is stable and idempotent — re-parsing the
+    same CSV on a different host yields the same JSON.
+    """
+    out = []
+    for r in gl_rows or []:
+        # Skip the synthetic ``None`` key DictReader produces when a row
+        # has more values than fieldnames (rare with PCLaw exports).
+        clean = {}
+        for k, v in r.items():
+            if k is None:
+                continue
+            if v is None:
+                clean[k] = ""
+            elif isinstance(v, list):
+                # Same edge case: a row with fewer values gets a list under
+                # the ``None`` key. We've already filtered that, but coerce
+                # any remaining list to a joined string defensively.
+                clean[k] = ",".join(str(x) for x in v)
+            else:
+                clean[k] = str(v)
+        out.append(clean)
+    return out
+
+
 def _extract_pclaw_accounts_from_gl_rows(gl_rows):
     """Return the unique [(account_number, account_name)] list found in
     GL rows, in first-seen order. Output shape matches what the
@@ -1882,6 +1911,13 @@ def _process_uploaded_csv(
             # so the Match-accounts screen can render even if the encrypted
             # source CSV is lost (e.g. ephemeral disk after redeploy).
             jobs[job_id]["pclaw_accounts"] = _extract_pclaw_accounts_from_gl_rows(_gl_rows)
+            # Snapshot the full parsed GL rows for the same reason: the
+            # Send-to-QuickBooks importer needs them to build journal entry
+            # payloads. Without this, a redeploy that wipes the encrypted
+            # CSV would 500 the import route (FileNotFoundError on the
+            # decrypt_file call). Stored as a list of plain dicts so it
+            # round-trips through JSON without surprises.
+            jobs[job_id]["gl_rows"] = _gl_rows_for_snapshot(_gl_rows)
             if preflight["ready"]:
                 message = (
                     "PCLaw GL file accepted. Review the preflight checklist, "
@@ -4154,6 +4190,43 @@ def disconnect_qbo(job_id):
 @app.route("/jobs/<job_id>/import-to-qbo", methods=["POST"])
 @login_required
 def import_to_qbo(job_id):
+    """Route-level wrapper that delegates to ``_import_to_qbo_impl`` and
+    converts any unexpected exception into a friendly recovery page.
+
+    This is the global safety net the user reported missing: prior to this
+    fix, exceptions raised before the inner try/except (e.g.
+    ``decrypt_file`` against an absent encrypted CSV) bubbled out as a raw
+    Flask 500. The customer-facing message must always be actionable, so
+    we render the import-recovery card here on any unhandled error.
+    """
+    try:
+        return _import_to_qbo_impl(job_id)
+    except Exception as e:  # noqa: BLE001 — last-resort net before 500
+        _audit(
+            "import_unhandled_error",
+            target_type="job", target_id=job_id,
+            details=f"{type(e).__name__}: {e}",
+        )
+        # Best-effort: try to render the recovery card with whatever
+        # context we can rehydrate. Fall all the way back to a flash +
+        # redirect if even that fails — the customer must never see a
+        # raw 500 from this route.
+        try:
+            job, _u = _job_or_403(job_id)
+            qbo_conn = _get_qbo_connection(job_id) or {}
+            return _render_import_recovery(job=job, qbo_conn=qbo_conn)
+        except Exception:  # noqa: BLE001
+            flash(
+                "We hit an unexpected problem starting the QuickBooks "
+                "import. The job and your QuickBooks connection are "
+                "intact — try again, and contact support with the job ID "
+                "if the problem repeats.",
+                "error",
+            )
+            return redirect(url_for("job_detail", job_id=job_id))
+
+
+def _import_to_qbo_impl(job_id):
     job, _user = _job_or_403(job_id)
     qbo_conn = _get_qbo_connection(job_id)
 
@@ -4229,17 +4302,29 @@ def import_to_qbo(job_id):
         return redirect(url_for("job_detail", job_id=job_id))
     realm_id = qbo_conn["realm_id"]
 
-    # Decrypt the original uploaded PCLaw CSV. We use the source file (not the
-    # flat QBO-import CSV) because that's where transaction_id grouping lives.
-    encrypted_in = UPLOAD_DIR / job["encrypted_file"]
-    temp_csv = UPLOAD_DIR / f"temp_import_{job_id}.csv"
-    decrypt_file(encrypted_in, temp_csv)
+    # Resolve the parsed GL rows for this job.
+    #
+    # Preferred source: the ``gl_rows`` snapshot persisted at upload time
+    # (DB column ``gl_rows_json``). Survives loss of the encrypted CSV — on
+    # Render that happens any time the ephemeral project tree is reset by a
+    # redeploy, since uploads/ is not on the persistent disk unless
+    # UPLOAD_DIR is pointed at /var/data.
+    #
+    # Fallback source: re-parse the encrypted CSV (and backfill the
+    # snapshot for next time). If BOTH are gone — legacy job uploaded
+    # before this fix on ephemeral storage — render an in-place recovery
+    # page with actionable CTAs instead of 500-ing.
+    rows = _load_job_gl_rows_durable(job, job_id)
+    if rows is None:
+        return _render_import_recovery(job=job, qbo_conn=qbo_conn)
+
+    # Empty list means the source CSV is non-GL (e.g. flat sample) — the
+    # non-GL fallback below will post a single test JE so the user can
+    # still confirm the QBO write path. Non-empty means we have real GL
+    # rows and ``is_gl_format`` below evaluates true off the snapshot keys.
+    fieldnames = list(rows[0].keys()) if rows else []
 
     try:
-        with temp_csv.open("r", newline="", encoding="utf-8-sig") as f:
-            sample_reader = _csv.DictReader(f)
-            fieldnames = sample_reader.fieldnames or []
-
         # Always fetch QBO accounts first so we can either map or fall back.
         try:
             qbo_accounts = qbo.get_accounts()
@@ -4263,7 +4348,8 @@ def import_to_qbo(job_id):
             return redirect(url_for("job_detail", job_id=job_id))
 
         if is_gl_format(fieldnames):
-            rows = load_general_ledger_csv(temp_csv)
+            # ``rows`` came from the durable snapshot (or a reparse +
+            # backfill) above; nothing to load here.
 
             # === Duplicate-import prevention =================================
             # Block if this exact file content has already been imported into
@@ -4532,8 +4618,6 @@ def import_to_qbo(job_id):
         _save_job(job_id)
         _audit("import_failed", target_type="job", target_id=job_id, details=str(e))
         flash(f"Import failed: {e}", "error")
-    finally:
-        temp_csv.unlink(missing_ok=True)
 
     return redirect(url_for("job_detail", job_id=job_id))
 
@@ -4585,11 +4669,19 @@ def verify_import(job_id):
 
 
 def _load_job_gl_rows(job):
-    """Decrypt the job's source CSV and return (rows, fieldnames).
+    """Return (rows, fieldnames) for this job's PCLaw GL source.
 
-    Returns ``(None, [])`` if the file is not in the GL format. The caller
-    is responsible for telling the user.
+    Prefers the durable ``gl_rows`` snapshot persisted at upload time;
+    falls back to decrypting the encrypted source CSV on disk. Either way,
+    returns ``(None, [...])`` when the file is non-GL (caller is
+    responsible for showing the "wrong format" message).
     """
+    snapshot = job.get("gl_rows")
+    if snapshot:
+        rows = list(snapshot)
+        fieldnames = list(rows[0].keys()) if rows else []
+        return rows, fieldnames
+
     encrypted_in = UPLOAD_DIR / job["encrypted_file"]
     temp_csv = UPLOAD_DIR / f"temp_preview_{job['id']}.csv"
     decrypt_file(encrypted_in, temp_csv)
@@ -4814,6 +4906,134 @@ def _load_pclaw_accounts_for_mapping(job, job_id, user):
     except Exception:  # noqa: BLE001 — backfill is best-effort
         pass
     return pclaw_accounts
+
+
+def _load_job_gl_rows_durable(job, job_id):
+    """Return the parsed GL rows this job needs for Send-to-QuickBooks.
+
+    Resolution order (most-durable first):
+
+      1. ``job["gl_rows"]`` snapshot stored at upload time. Survives loss
+         of the encrypted CSV (ephemeral disk after a Render redeploy,
+         deleted .enc, etc.). This is what makes the import route stop
+         500-ing when the project tree was wiped underneath a live job.
+      2. Re-parse the encrypted CSV under ``UPLOAD_DIR``. When this
+         succeeds we ALSO backfill the snapshot so a subsequent redeploy
+         that loses the file no longer wedges this job.
+
+    Returns:
+
+      * ``list[dict]`` of GL rows ready for ``group_rows_by_transaction``
+        and ``build_journal_entries_from_gl``.
+      * ``None`` if neither the snapshot nor a parseable encrypted CSV is
+        available. Caller MUST render a recovery card and not 500.
+    """
+    snapshot = job.get("gl_rows")
+    if snapshot:
+        return list(snapshot)
+
+    enc_name = job.get("encrypted_file")
+    if not enc_name:
+        _audit(
+            "import_missing_file",
+            target_type="job", target_id=job_id,
+            details="no encrypted_file recorded",
+        )
+        return None
+    encrypted_in = UPLOAD_DIR / enc_name
+    if not encrypted_in.exists():
+        _audit(
+            "import_missing_file",
+            target_type="job", target_id=job_id,
+            # basename only — never log the full path of an upload dir.
+            details=f"missing={encrypted_in.name}",
+        )
+        return None
+
+    temp_csv = UPLOAD_DIR / f"temp_import_recover_{job_id}.csv"
+    try:
+        try:
+            decrypt_file(encrypted_in, temp_csv)
+        except Exception as e:  # noqa: BLE001
+            _audit(
+                "import_decrypt_error",
+                target_type="job", target_id=job_id, details=str(e),
+            )
+            return None
+        try:
+            with temp_csv.open("r", newline="", encoding="utf-8-sig") as f:
+                reader = _csv.DictReader(f)
+                if not is_gl_format(reader.fieldnames or []):
+                    # CSV is parseable but not the rich GL format. The
+                    # caller's non-GL fallback (single test JE) can still
+                    # run — we just don't have rows worth caching.
+                    return []
+                gl_rows = list(reader)
+        except (UnicodeDecodeError, _csv.Error) as e:
+            _audit(
+                "import_csv_error",
+                target_type="job", target_id=job_id, details=str(e),
+            )
+            return None
+    finally:
+        temp_csv.unlink(missing_ok=True)
+
+    snapshot_rows = _gl_rows_for_snapshot(gl_rows)
+    try:
+        live = jobs.get(job_id)
+        if live is not None:
+            live["gl_rows"] = snapshot_rows
+            if not live.get("pclaw_accounts"):
+                live["pclaw_accounts"] = _extract_pclaw_accounts_from_gl_rows(snapshot_rows)
+        job["gl_rows"] = snapshot_rows
+        if not job.get("pclaw_accounts"):
+            job["pclaw_accounts"] = _extract_pclaw_accounts_from_gl_rows(snapshot_rows)
+        db.save_job_state(job_id, {
+            "status": job.get("status") or "",
+            "gl_rows": snapshot_rows,
+            "pclaw_accounts": job.get("pclaw_accounts"),
+        })
+    except Exception:  # noqa: BLE001 — backfill is best-effort
+        pass
+    return snapshot_rows
+
+
+def _render_import_recovery(*, job, qbo_conn, category="missing_source"):
+    """Render a friendly recovery page when Send-to-QuickBooks cannot
+    proceed because the source data is gone.
+
+    Replaces the raw Internal Server Error that used to surface when the
+    encrypted PCLaw CSV had been wiped (ephemeral disk on Render) and no
+    durable parsed snapshot existed for the job.
+
+    Demo deploys get a "Start a fresh demo run" primary CTA; production
+    deploys get a "Re-upload PCLaw export" primary CTA. Either way the
+    user sees actionable next steps, not a stack trace.
+    """
+    demo_enabled = False
+    demo_start_url = None
+    try:
+        user = current_user()
+        if user is not None and demo_mode.demo_visible_for_user(user, _is_operator()):
+            demo_enabled = True
+            demo_start_url = url_for("demo_workspace")
+    except Exception:  # noqa: BLE001 — demo context is best-effort
+        demo_enabled = False
+        demo_start_url = None
+
+    return render_template(
+        "import-recovery.html",
+        job=job,
+        qbo_connection=qbo_conn or {},
+        recovery={
+            "category": category,
+            "job_url": url_for("job_detail", job_id=job["id"]),
+            "reupload_url": url_for("job_detail", job_id=job["id"]),
+            "match_accounts_url": url_for("account_mapping", job_id=job["id"]),
+            "demo_enabled": demo_enabled,
+            "demo_start_url": demo_start_url,
+        },
+    ), 200
 
 
 def _render_account_mapping_error(*, job, qbo_conn, category, status_code, intuit_tid):
