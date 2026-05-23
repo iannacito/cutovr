@@ -4824,7 +4824,24 @@ def _render_account_mapping_error(*, job, qbo_conn, category, status_code, intui
     to the failure category (reconnect, retry, contact support). The
     intuit_tid (when present) is surfaced as an opaque diagnostic id so
     support can correlate with Intuit. No tokens or secrets are exposed.
+
+    When the deploy is in DEMO_MODE the recovery payload also carries a
+    demo-friendly CTA so an old/legacy demo job whose snapshot+upload
+    were both lost can be replaced in one click with a fresh demo run,
+    rather than asking the demo operator to re-upload PCLaw files they
+    don't have on hand.
     """
+    demo_enabled = False
+    demo_start_url = None
+    try:
+        user = current_user()
+        if user is not None and demo_mode.demo_visible_for_user(user, _is_operator()):
+            demo_enabled = True
+            demo_start_url = url_for("demo_workspace")
+    except Exception:  # noqa: BLE001 — demo context is best-effort
+        demo_enabled = False
+        demo_start_url = None
+
     return render_template(
         "account-mapping.html",
         job=job,
@@ -4839,6 +4856,8 @@ def _render_account_mapping_error(*, job, qbo_conn, category, status_code, intui
             "retry_url": url_for("account_mapping", job_id=job["id"]),
             "job_url": url_for("job_detail", job_id=job["id"]),
             "reupload_url": url_for("job_detail", job_id=job["id"]),
+            "demo_enabled": demo_enabled,
+            "demo_start_url": demo_start_url,
         },
     )
 
@@ -5552,6 +5571,61 @@ def demo_workspace():
             qbo_realm_id = conn.get("realm_id")
             break
 
+    # ---- Demo preflight: simple OK/MISSING signals the demo operator
+    # can scan in one second before walking a customer through the flow.
+    # Each item is (key, label, status, detail) where status is one of
+    # "ok", "warn", "missing". The template renders them as a checklist.
+    redirect_uri = QBO_REDIRECT_URI or ""
+    redirect_status = "ok"
+    redirect_detail = redirect_uri or "(unset)"
+    if not redirect_uri or redirect_uri.startswith("http://localhost"):
+        redirect_status = "warn"
+        redirect_detail = (
+            f"{redirect_detail} — this only works for local development."
+        )
+    elif not redirect_uri.startswith("https://"):
+        redirect_status = "warn"
+        redirect_detail = f"{redirect_detail} — Intuit requires https://."
+
+    qbo_env_status = "ok"
+    qbo_env_detail = QBO_ENVIRONMENT or "(unset)"
+    if QBO_ENVIRONMENT not in ("sandbox", "production"):
+        qbo_env_status = "warn"
+        qbo_env_detail = (
+            f"{qbo_env_detail} — expected 'sandbox' or 'production'."
+        )
+
+    connection_status = "ok" if (qbo_company_name or qbo_realm_id) else "missing"
+    connection_detail = (
+        f"{qbo_company_name or '(name unavailable)'} "
+        f"(realm {qbo_realm_id})"
+        if qbo_realm_id
+        else "No QuickBooks company connected for this firm yet."
+    )
+
+    run_status = "ok" if run_id else "missing"
+    run_detail = (
+        f"Active run {run_id}"
+        if run_id
+        else "Click ‘Start a new demo’ below to mint a fresh run id."
+    )
+
+    deploy_status = "ok" if demo_mode.is_demo_mode_enabled() else "warn"
+    deploy_detail = (
+        "DEMO_MODE=true — full demo affordances visible to all users."
+        if demo_mode.is_demo_mode_enabled()
+        else "DEMO_MODE is not set on this deploy. You are seeing demo controls as an operator only."
+    )
+
+    preflight_items = [
+        ("deploy", "Demo deploy mode", deploy_status, deploy_detail),
+        ("qbo_environment", "QBO environment", qbo_env_status, qbo_env_detail),
+        ("redirect_uri", "QBO redirect URI", redirect_status, redirect_detail),
+        ("qbo_connection", "QuickBooks company connected", connection_status, connection_detail),
+        ("demo_run", "Demo run started", run_status, run_detail),
+    ]
+    preflight_blocking = any(item[2] == "missing" for item in preflight_items)
+
     return render_template(
         "demo-workspace.html",
         firm=firm,
@@ -5559,7 +5633,10 @@ def demo_workspace():
         qbo_company_name=qbo_company_name,
         qbo_realm_id=qbo_realm_id,
         qbo_environment=QBO_ENVIRONMENT,
+        qbo_redirect_uri=QBO_REDIRECT_URI,
         demo_mode_enabled=demo_mode.is_demo_mode_enabled(),
+        preflight_items=preflight_items,
+        preflight_blocking=preflight_blocking,
     )
 
 
@@ -5616,6 +5693,15 @@ _DEMO_SAMPLE_REPORTS = {
     "trust-listing": (
         "demo_trust_listing.csv",
         lambda run: demo_mode.render_trust_listing_csv(run),
+    ),
+    # Final balance check (Step 6). Same numeric data as the opening TB —
+    # the bundled demo GL is internally balanced, so opening and ending
+    # trial balances match by construction. Offered as a separate
+    # download so the customer-facing workflow's Step 6 ("Final balance
+    # check") has an obvious source file.
+    "ending-trial-balance": (
+        "demo_ending_trial_balance.csv",
+        lambda _run: demo_mode.render_ending_trial_balance_csv(),
     ),
 }
 
