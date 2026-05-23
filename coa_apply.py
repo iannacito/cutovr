@@ -158,6 +158,85 @@ _TYPE_TABLE: dict[str, tuple[str, str]] = {
 }
 
 
+# Compound name-pattern tier. Each entry is (keyword, mode, (type, detail))
+# where ``mode`` is "contains" (match anywhere in the normalised name) or
+# "endswith" (match only as a suffix). Patterns are tested in order, so
+# more specific patterns must come first (e.g. "bankfee" before the
+# generic "expense" suffix). Every pattern here is deterministic — the
+# QBO AccountType/AccountSubType pair is the canonical mapping for the
+# pattern, not a guess. Adding a new pattern is safe only when the term
+# is unambiguous across legal/professional services chart-of-accounts.
+_SAFE_NAME_PATTERNS: list[tuple[str, str, tuple[str, str]]] = [
+    # ---- Equity (specific compound terms only) ----
+    ("ownerdraw", "contains", ("Equity", "OwnersEquity")),       # "Owner Draws"
+    ("ownersdraw", "contains", ("Equity", "OwnersEquity")),
+    ("partnerdraw", "contains", ("Equity", "OwnersEquity")),
+    ("partnersdraw", "contains", ("Equity", "OwnersEquity")),
+    ("memberdraw", "contains", ("Equity", "OwnersEquity")),
+    ("ownercontribution", "contains", ("Equity", "OwnersEquity")),
+    ("ownerinvestment", "contains", ("Equity", "OwnersEquity")),
+    ("ownerequity", "contains", ("Equity", "OwnersEquity")),
+    ("ownersequity", "contains", ("Equity", "OwnersEquity")),
+
+    # ---- Expense — specific compound terms ----
+    ("bankfee", "contains", ("Expense", "BankCharges")),
+    ("bankcharge", "contains", ("Expense", "BankCharges")),
+    ("merchantfee", "contains", ("Expense", "BankCharges")),
+    ("creditcardfee", "contains", ("Expense", "BankCharges")),
+    ("officesupply", "contains", ("Expense", "OfficeGeneralAdministrativeExpenses")),
+    ("officesupplies", "contains", ("Expense", "OfficeGeneralAdministrativeExpenses")),
+    ("officeexpense", "contains", ("Expense", "OfficeGeneralAdministrativeExpenses")),
+    ("rentexpense", "contains", ("Expense", "RentOrLeaseOfBuildings")),
+    ("rentorlease", "contains", ("Expense", "RentOrLeaseOfBuildings")),
+    ("leaseexpense", "contains", ("Expense", "RentOrLeaseOfBuildings")),
+    ("utilitiesexpense", "contains", ("Expense", "Utilities")),
+    ("insuranceexpense", "contains", ("Expense", "Insurance")),
+    ("travelexpense", "contains", ("Expense", "Travel")),
+    ("mealsandentertainment", "contains", ("Expense", "EntertainmentMeals")),
+    ("mealsentertainment", "contains", ("Expense", "EntertainmentMeals")),
+    ("duesandsubscriptions", "contains", ("Expense", "DuesSubscriptions")),
+    ("legalfeesexpense", "contains", ("Expense", "LegalAndProfessionalFees")),
+    ("professionalfees", "contains", ("Expense", "LegalAndProfessionalFees")),
+    ("filingfees", "contains", ("Expense", "LegalAndProfessionalFees")),
+    ("clientcost", "contains", ("Expense", "LegalAndProfessionalFees")),
+    ("advertising", "contains", ("Expense", "AdvertisingPromotional")),
+    ("promotional", "contains", ("Expense", "AdvertisingPromotional")),
+    ("payrollexpense", "contains", ("Expense", "PayrollExpenses")),
+    ("wagesexpense", "contains", ("Expense", "PayrollExpenses")),
+    ("salariesexpense", "contains", ("Expense", "PayrollExpenses")),
+
+    # ---- Income — specific compound terms ----
+    ("legalfeesincome", "contains", ("Income", "ServiceFeeIncome")),
+    ("legalfeeincome", "contains", ("Income", "ServiceFeeIncome")),
+    ("legalfeerevenue", "contains", ("Income", "ServiceFeeIncome")),
+    ("legalfeesrevenue", "contains", ("Income", "ServiceFeeIncome")),
+    ("servicefeeincome", "contains", ("Income", "ServiceFeeIncome")),
+    ("servicefeesincome", "contains", ("Income", "ServiceFeeIncome")),
+    ("servicefeerevenue", "contains", ("Income", "ServiceFeeIncome")),
+    ("feeincome", "contains", ("Income", "ServiceFeeIncome")),
+    ("feerevenue", "contains", ("Income", "ServiceFeeIncome")),
+    ("consultingincome", "contains", ("Income", "ServiceFeeIncome")),
+    ("consultingrevenue", "contains", ("Income", "ServiceFeeIncome")),
+    ("disbursementrecovery", "contains", ("Income", "OtherPrimaryIncome")),
+    ("interestincome", "contains", ("Other Income", "InterestEarned")),
+
+    # ---- Bank / cash — specific compound terms ----
+    ("operatingaccount", "contains", ("Bank", "Checking")),
+    ("checkingaccount", "contains", ("Bank", "Checking")),
+    ("savingsaccount", "contains", ("Bank", "Savings")),
+    ("cashoperating", "contains", ("Bank", "Checking")),
+
+    # ---- Generic suffix patterns. These come last and use endswith so
+    # "Income Tax Payable" is NOT mapped to Income — only true suffix
+    # accounts like "Rent Expense" or "Legal Fees Income" qualify. The
+    # explicit "payable"/"receivable" guard in the matcher provides
+    # belt-and-suspenders protection on top of the suffix anchor.
+    ("expense", "endswith", ("Expense", "OfficeGeneralAdministrativeExpenses")),
+    ("income", "endswith", ("Income", "ServiceFeeIncome")),
+    ("revenue", "endswith", ("Income", "ServiceFeeIncome")),
+]
+
+
 def map_pclaw_account_to_qbo_type(row: dict) -> dict:
     """Resolve a parsed COA row to a QBO AccountType/AccountSubType.
 
@@ -224,6 +303,43 @@ def map_pclaw_account_to_qbo_type(row: dict) -> dict:
             if keyword in name_norm:
                 resolved_type, resolved_detail = t, st
                 match_hint = "account_name_keyword"
+                break
+
+    # 2a. Deterministic compound-name patterns for common legal/business
+    # accounts. Every entry here is an *unambiguous* compound term — not a
+    # single weak keyword — that maps 1:1 to a well-known QBO AccountType /
+    # AccountSubType. The names are normalised (lowercase, alphanumeric)
+    # so case, spacing, and punctuation do not affect matching. This tier
+    # only fires when the COA type/detail columns and the high-risk
+    # keyword list above were silent: an uploaded COA with explicit types
+    # always wins.
+    #
+    # Match modes:
+    #   "contains"   — keyword anywhere in the normalised name (used for
+    #                  compound terms like "bankfee" / "ownerdraw" that
+    #                  uniquely identify a category).
+    #   "endswith"   — name must end with the keyword (used for broad
+    #                  suffixes like "expense" / "income" / "revenue" so
+    #                  "Income Tax Payable" is NOT auto-classified as
+    #                  Income; only true suffix accounts like "Rent
+    #                  Expense" or "Legal Fees Income" qualify).
+    if not resolved_type:
+        name_norm = _norm(name)
+        for keyword, mode, (t, st) in _SAFE_NAME_PATTERNS:
+            hit = (
+                (mode == "contains" and keyword in name_norm)
+                or (mode == "endswith" and name_norm.endswith(keyword))
+            )
+            if hit:
+                # Sanity guard: account names that contain "payable" or
+                # "receivable" should never be classified by these generic
+                # patterns — AR/AP have their own dedicated handling above
+                # and a misclassification here would be a real safety bug
+                # (e.g. "Income Tax Payable" must not become Income).
+                if "payable" in name_norm or "receivable" in name_norm:
+                    continue
+                resolved_type, resolved_detail = t, st
+                match_hint = "account_name_pattern"
                 break
 
     if not resolved_type:
