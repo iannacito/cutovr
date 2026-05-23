@@ -132,23 +132,49 @@
            data-testid="create-missing-banner"
            data-unmatched-count="{{ create_missing_offer.unmatched }}"
            data-many-unmatched="{{ 'yes' if create_missing_offer.many_unmatched else 'no' }}"
+           data-single-unmatched="{{ 'yes' if create_missing_offer.single_unmatched else 'no' }}"
            style="padding:var(--space-6);margin-bottom:var(--space-5);border-color:{% if create_missing_offer.many_unmatched %}var(--warning,#b45309){% else %}var(--line){% endif %};background:{% if create_missing_offer.many_unmatched %}var(--warning-bg,#fff7ed){% else %}var(--surface-2,#fafafa){% endif %};">
-    {% if create_missing_offer.many_unmatched %}
-      <h2 style="margin-top:0;">QuickBooks is missing accounts from your PCLaw file.</h2>
+    {% if create_missing_offer.single_unmatched %}
+      <h2 style="margin-top:0;" data-testid="create-missing-headline">
+        1 QuickBooks account is missing. Create it from your PCLaw account list.
+      </h2>
+      <p style="max-width:70ch;">
+        One PCLaw account doesn&rsquo;t exist in QuickBooks yet:
+        {% if create_missing_offer.unmatched_labels %}
+          <strong data-testid="create-missing-account-label">{{ create_missing_offer.unmatched_labels[0] }}</strong>.
+        {% else %}
+          see the table below.
+        {% endif %}
+        You do not need to add this manually in QuickBooks &mdash; we&rsquo;ll
+        create it for you with the right account type, then auto-match it.
+      </p>
+    {% elif create_missing_offer.many_unmatched %}
+      <h2 style="margin-top:0;" data-testid="create-missing-headline">QuickBooks is missing accounts from your PCLaw file.</h2>
       <p style="max-width:70ch;">
         <strong>{{ create_missing_offer.unmatched }} of {{ create_missing_offer.total }}</strong>
         PCLaw accounts don&rsquo;t have a matching QuickBooks account yet. You
-        don&rsquo;t need to pair them by hand &mdash; we can add the missing
-        accounts to QuickBooks for you, then auto-match the rest.
+        do not need to add them manually in QuickBooks &mdash; we can add the
+        missing accounts to QuickBooks for you, then auto-match the rest.
       </p>
     {% else %}
-      <h2 style="margin-top:0;">A few PCLaw accounts aren&rsquo;t in QuickBooks yet.</h2>
+      <h2 style="margin-top:0;" data-testid="create-missing-headline">A few PCLaw accounts aren&rsquo;t in QuickBooks yet.</h2>
       <p style="max-width:70ch;">
         <strong>{{ create_missing_offer.unmatched }} of {{ create_missing_offer.total }}</strong>
-        PCLaw accounts couldn&rsquo;t be auto-matched. You can add them to
-        QuickBooks in one click, or pick a QuickBooks account yourself
-        below.
+        PCLaw accounts couldn&rsquo;t be auto-matched. You do not need to add
+        them manually in QuickBooks &mdash; we can create them in one click,
+        or you can pick a QuickBooks account yourself below.
       </p>
+    {% endif %}
+    {% if create_missing_offer.unmatched_labels and not create_missing_offer.single_unmatched %}
+      <ul class="muted" data-testid="create-missing-account-list"
+          style="max-width:70ch;font-size:.9rem;margin:var(--space-2) 0 var(--space-3);padding-left:var(--space-5);">
+        {% for lbl in create_missing_offer.unmatched_labels %}
+          <li>{{ lbl }}</li>
+        {% endfor %}
+        {% if create_missing_offer.unmatched > create_missing_offer.unmatched_labels|length %}
+          <li>&hellip; and {{ create_missing_offer.unmatched - create_missing_offer.unmatched_labels|length }} more</li>
+        {% endif %}
+      </ul>
     {% endif %}
     <p class="muted" style="max-width:70ch;font-size:.9rem;">
       This only creates the <em>accounts</em> needed for matching &mdash; no

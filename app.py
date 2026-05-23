@@ -5529,6 +5529,7 @@ def account_mapping(job_id):
     # before any writes happen.
     create_missing_offer = _summarize_create_missing_offer(
         user=user, pclaw_accounts=pclaw_accounts, summary=summary,
+        rows=rows,
     )
 
     return render_template(
@@ -5711,18 +5712,34 @@ def _build_account_mapping_rows(*, pclaw_accounts, qbo_accounts, saved_by_key):
     return rows, summary
 
 
-def _summarize_create_missing_offer(*, user, pclaw_accounts, summary):
+def _summarize_create_missing_offer(*, user, pclaw_accounts, summary, rows=None):
     """Return a small dict the template uses to render the create-missing
     banner CTA, or None when the offer is not available right now.
 
     The endpoint that actually creates the accounts always re-checks
     everything itself — this helper is just a UI hint.
+
+    ``rows`` is the same ``rows`` list ``_build_account_mapping_rows``
+    returns. When provided we attach a short list of unmatched account
+    names so the banner can say things like "1 QuickBooks account is
+    missing: 2100 Client Trust Liability" instead of just a count.
     """
     if not summary.get("any_unmatched"):
         return None
     coa_state = _firm_latest_coa_state(user["firm_id"])
     coa_rows = coa_state.get("coa_rows") or []
     has_coa = bool(coa_rows)
+
+    unmatched_labels: list[str] = []
+    for r in (rows or []):
+        if r.get("is_saved") or r.get("is_suggestion"):
+            continue
+        num = (r.get("pclaw_number") or "").strip()
+        name = (r.get("pclaw_name") or "").strip() or "(no name)"
+        unmatched_labels.append(f"{num} {name}".strip() if num else name)
+        if len(unmatched_labels) >= 6:
+            break
+
     # Even without a COA upload we can still try to create the missing
     # accounts from the GL-extracted names alone, but the type-mapper in
     # coa_apply will block any row whose type can't be safely guessed.
@@ -5733,6 +5750,8 @@ def _summarize_create_missing_offer(*, user, pclaw_accounts, summary):
         "many_unmatched": summary["many_unmatched"],
         "has_coa": has_coa,
         "coa_row_count": len(coa_rows),
+        "unmatched_labels": unmatched_labels,
+        "single_unmatched": summary["unmatched"] == 1,
     }
 
 
