@@ -290,7 +290,9 @@ def main():
         # token-mapping coverage.
         r = c5.get(f"/jobs/{job_id5}")
         body = r.data.decode()
-        assert "These accounts are not in QuickBooks yet" in body
+        assert "QuickBooks accounts are missing" in body or \
+            "QuickBooks account is missing" in body, body[-2000:]
+        assert "PCLaw account list" in body
         assert "Upload Account List" in body
         assert f"/jobs/{job_id5}/account-mapping" in body
         print("T5 OK: missing accounts blocked, banner offers upload + match CTAs")

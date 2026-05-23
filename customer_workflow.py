@@ -278,8 +278,13 @@ def _stage_cta(
         return ("Proceed to Step 4: Review import",
                 u("import_job_entry", "/import-job"))
     if stage_key == STAGE_IMPORT:
-        return ("Proceed to Step 5: Send to QuickBooks",
-                u("send_to_qbo_entry", "/send-to-qbo"))
+        # The customer is *on* Step 5 — point the stepper CTA at the
+        # actual send action rather than telling them to "Proceed to
+        # Step 5" while they are already there. The send-to-qbo page
+        # renders its own confirmation form; the stepper CTA simply
+        # focuses that page (anchor to the send card).
+        return ("Send to QuickBooks",
+                u("send_to_qbo_entry", "/send-to-qbo") + "#send-to-qbo-card")
     if stage_key == STAGE_RECONCILE:
         return ("Proceed to Step 6: Reconcile",
                 u("migration_checklist", "/migration-checklist"))
@@ -338,6 +343,8 @@ def build_customer_stages(
     *,
     url_for: Optional[Callable[..., str]] = None,
     has_jobs: bool = False,
+    match_blocked: bool = False,
+    match_blocked_job_id: Optional[str] = None,
 ) -> List[WorkflowStage]:
     """Project the detailed checklist into the 6-stage customer stepper.
 
@@ -348,6 +355,16 @@ def build_customer_stages(
       has_jobs: whether the firm has uploaded at least one job (used to
         tune CTA wording, e.g. "Upload your first report" vs
         "Upload another report").
+      match_blocked: when True, the Match stage is forced to "current"
+        even if the underlying checklist items have rolled up to
+        complete. Use this when a downstream check (e.g. the GL import
+        route) detects that the QuickBooks company is still missing
+        accounts the transaction history needs. Step 4 and Step 5
+        cannot be "complete" while Match is blocked.
+      match_blocked_job_id: optional GL job id that triggered the
+        match-blocked state. When supplied, the Match stage's CTA
+        deep-links to that job's account-mapping page so the user can
+        click straight into "Create missing QuickBooks accounts".
 
     Returns:
       A list of six WorkflowStage objects in display order. Exactly one
@@ -406,6 +423,22 @@ def build_customer_stages(
         if stage.status != STAGE_STATUS_COMPLETE:
             blocked = True
 
+    # match_blocked override: an external check (the GL import path)
+    # detected that the connected QuickBooks company is missing one or
+    # more accounts the uploaded transaction history references. The
+    # raw checklist can't see this — account_mapping_count > 0 is
+    # enough to flip STEP_ACCOUNT_MAPPING to complete even when a few
+    # rows are still unmapped — so the gating below would let Step 4
+    # and Step 5 look "ready" while the import would actually fail.
+    # Force the Match stage back to non-complete so the stepper points
+    # the user at the create-missing-accounts CTA in Step 3.
+    if match_blocked:
+        for stage in stages:
+            if stage.key == STAGE_MATCH:
+                stage.status = STAGE_STATUS_CURRENT  # normalized below
+            elif stage.key in (STAGE_REVIEW, STAGE_IMPORT, STAGE_RECONCILE):
+                stage.status = STAGE_STATUS_UPCOMING
+
     # Normalize: exactly one "current" — the first non-complete stage.
     current_index = None
     for i, stage in enumerate(stages):
@@ -431,6 +464,31 @@ def build_customer_stages(
             )
         else:
             stage.status = STAGE_STATUS_UPCOMING
+
+    # When the Match stage is blocked by missing-account detection,
+    # override its CTA to send the user straight into the
+    # create-missing-accounts flow with copy that names the problem.
+    if match_blocked:
+        for stage in stages:
+            if stage.key != STAGE_MATCH:
+                continue
+            if match_blocked_job_id:
+                if url_for is not None:
+                    try:
+                        stage.cta_url = url_for(
+                            "account_mapping",
+                            job_id=match_blocked_job_id,
+                        )
+                    except Exception:
+                        stage.cta_url = (
+                            f"/jobs/{match_blocked_job_id}/account-mapping"
+                        )
+                else:
+                    stage.cta_url = (
+                        f"/jobs/{match_blocked_job_id}/account-mapping"
+                    )
+            stage.cta_label = "Create missing QuickBooks accounts"
+            break
 
     return stages
 
