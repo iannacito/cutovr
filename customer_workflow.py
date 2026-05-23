@@ -169,6 +169,8 @@ _STAGE_BUNDLES = [
 def _stage_status(
     required_keys: Iterable[str],
     by_key: Dict[str, ChecklistItem],
+    *,
+    stage_key: Optional[str] = None,
 ) -> str:
     """Roll up the status of a stage from its underlying checklist items.
 
@@ -176,8 +178,18 @@ def _stage_status(
     Items flagged `planned=True` (auto-posting not yet built) don't block
     completion as long as their upload status is at least in_progress —
     customers see "complete" for the work they can actually finish today.
+
+    Special case for the Upload stage: the underlying STEP_GL_UPLOAD
+    item only flips to STATUS_COMPLETE once the GL is *imported* to
+    QuickBooks, which doesn't happen until Step 5. From the customer's
+    perspective the Upload step is finished as soon as the files are
+    on file — keeping the stepper stuck on Step 2 through the entire
+    Match/Review/Import flow is exactly the "progress doesn't advance"
+    bug we're fixing. For the stepper we therefore count Upload as
+    complete when every required upload is at least IN_PROGRESS.
     """
     statuses = []
+    upload_in_progress_ok = stage_key == STAGE_UPLOAD
     for k in required_keys:
         item = by_key.get(k)
         if item is None:
@@ -187,6 +199,11 @@ def _stage_status(
         if item.planned and item.status in (
             STATUS_IN_PROGRESS, STATUS_COMPLETE
         ):
+            statuses.append(STATUS_COMPLETE)
+        elif upload_in_progress_ok and item.status == STATUS_IN_PROGRESS:
+            # For the Upload stage, treat "file uploaded but not yet
+            # imported / posted" as complete. The actual posting work
+            # is tracked under the Import stage.
             statuses.append(STATUS_COMPLETE)
         else:
             statuses.append(item.status)
@@ -341,7 +358,7 @@ def build_customer_stages(
     for i, (stage_key, label, short, desc, required, terms) in enumerate(
         _STAGE_BUNDLES, start=1
     ):
-        raw_status = _stage_status(required, by_key)
+        raw_status = _stage_status(required, by_key, stage_key=stage_key)
         raw_statuses.append(raw_status)
         stages.append(WorkflowStage(
             key=stage_key,

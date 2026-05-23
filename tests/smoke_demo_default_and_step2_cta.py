@@ -207,14 +207,22 @@ def s2_upload_cta_switches_to_match_accounts_when_ready():
     stages = customer_workflow.build_customer_stages(items, has_jobs=True)
     current = customer_workflow.current_stage(stages)
     assert current is not None, "expected a current stage"
-    assert current.key == customer_workflow.STAGE_UPLOAD, current.key
+    # After PR #43 the Upload stage rolls up to complete as soon as
+    # every required upload is at least IN_PROGRESS (the stepper no
+    # longer waits for the GL to be imported before advancing past
+    # Step 2). With QBO_CONNECT still NOT_STARTED in this fixture, the
+    # current stage flips one step forward to Match accounts (Step 3).
+    assert current.key == customer_workflow.STAGE_MATCH, current.key
     assert "Match accounts" in current.cta_label, current.cta_label
     assert "match-accounts" in current.cta_url, current.cta_url
     # The CTA must not point back at the checklist or at a dead anchor —
     # both regressions Dan saw on the first pass.
     assert "migration-checklist" not in current.cta_url, current.cta_url
     assert "#" not in current.cta_url, current.cta_url
-    print("S2 OK: upload stage CTA flips to '/match-accounts' when ready")
+    # The Upload stage itself should now read as complete in the stepper.
+    upload_stage = next(s for s in stages if s.key == customer_workflow.STAGE_UPLOAD)
+    assert upload_stage.status == "complete", upload_stage.status
+    print("S2 OK: upload stage rolls up to complete; current advances to Match")
 
 
 def _seed_job(appmod, firm_id, user_id, job_id, report_type):
