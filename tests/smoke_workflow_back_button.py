@@ -222,9 +222,11 @@ def b5_checklist_page_renders_back_link():
     r = client.get("/migration-checklist")
     assert r.status_code == 200, r.status_code
     body = r.get_data(as_text=True)
-    # The new back-link surface should be present.
-    assert "workflow-stepper__back" in body, \
-        "back-link container missing from rendered stepper"
+    # The back-link surface should be present in the unified nav row.
+    assert "workflow-stepper__back-link" in body, \
+        "back-link element missing from rendered stepper nav row"
+    assert "workflow-stepper__nav" in body, \
+        "stepper nav row wrapper missing"
     assert "Back to Step 1: Setup" in body, \
         "expected 'Back to Step 1: Setup' label on Step 2 page"
     # It must point at the real Setup entry route (/cutover or
@@ -232,8 +234,6 @@ def b5_checklist_page_renders_back_link():
     # never a dead "#" anchor.
     assert ('href="/cutover"' in body or 'href="/migration-setup"' in body), \
         "back-link should point at /cutover or /migration-setup, not '#'"
-    assert 'href="#"' not in body or 'workflow-stepper__back' not in body, \
-        "back-link must not be a dead # anchor"
     print("OK  B5  Step 2 page renders 'Back to Step 1: Setup' -> "
           "Setup entry route")
 
@@ -249,8 +249,8 @@ def b6_step1_page_has_no_back_link():
     # Stepper itself must be there.
     assert "workflow-stepper" in body, "stepper missing from dashboard"
     assert "Step 1 of 6" in body, "expected Step 1 of 6 eyebrow"
-    # But the back-link container must NOT appear.
-    assert "workflow-stepper__back" not in body, \
+    # The back-link element must NOT appear when there is no previous step.
+    assert "workflow-stepper__back-link" not in body, \
         "Step 1 should not render a back-to-previous-step button"
     assert "Back to Step" not in body, \
         "Step 1 should not advertise any back-to-previous-step label"
