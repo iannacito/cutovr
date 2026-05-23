@@ -5261,28 +5261,21 @@ def account_mapping(job_id):
     saved_mappings = db.list_account_mappings(user["firm_id"], realm_id)
     saved_by_key = {(m["pclaw_account_number"], m["pclaw_account_name"]): m for m in saved_mappings}
 
-    # Build auto-match suggestions: prefer AcctNum, fall back to Name.
-    auto_by_number = {str(a.get("AcctNum")): a for a in qbo_accounts if a.get("AcctNum")}
-    auto_by_name = {a.get("Name"): a for a in qbo_accounts if a.get("Name")}
+    rows, summary = _build_account_mapping_rows(
+        pclaw_accounts=pclaw_accounts,
+        qbo_accounts=qbo_accounts,
+        saved_by_key=saved_by_key,
+    )
 
-    rows = []
-    for idx, pa in enumerate(pclaw_accounts):
-        saved = saved_by_key.get((pa["number"], pa["name"]))
-        suggestion = None
-        if not saved:
-            if pa["number"] and pa["number"] in auto_by_number:
-                suggestion = auto_by_number[pa["number"]]
-            elif pa["name"] and pa["name"] in auto_by_name:
-                suggestion = auto_by_name[pa["name"]]
-        rows.append({
-            "idx": idx,
-            "pclaw_number": pa["number"],
-            "pclaw_name": pa["name"],
-            "current_qbo_id": (saved or {}).get("qbo_account_id") or (suggestion or {}).get("Id"),
-            "current_qbo_name": (saved or {}).get("qbo_account_name") or (suggestion or {}).get("Name"),
-            "is_saved": bool(saved),
-            "is_suggestion": bool(suggestion and not saved),
-        })
+    # Decide whether to offer the "create missing accounts" CTA. We only
+    # offer it when there are unmatched rows AND the firm has uploaded a
+    # COA (or the user's PCLaw snapshot has enough info that the safe
+    # type-mapper in coa_apply can resolve at least some accounts). The
+    # CTA itself runs a dry-run plan first so the user sees blockers
+    # before any writes happen.
+    create_missing_offer = _summarize_create_missing_offer(
+        user=user, pclaw_accounts=pclaw_accounts, summary=summary,
+    )
 
     return render_template(
         "account-mapping.html",
@@ -5293,7 +5286,449 @@ def account_mapping(job_id):
             qbo_accounts,
             key=lambda a: (a.get("AccountType") or "", a.get("Name") or ""),
         ),
+        mapping_summary=summary,
+        create_missing_offer=create_missing_offer,
     )
+
+
+# ---------------------------------------------------------------------------
+# Account mapping helpers: auto-match + create-missing planning.
+#
+# The auto-match logic used to be a one-shot dictionary lookup keyed on
+# exact AcctNum / Name. That misses very common PCLaw -> QBO drift like
+# "Operating Bank" vs "Operating Bank Account", trailing whitespace,
+# and case differences. We normalize names to alphanumeric-lowercase
+# tokens for the name-based pass; the number-based pass is still strict
+# (account numbers must match exactly).
+# ---------------------------------------------------------------------------
+
+
+def _normalize_account_name(name) -> str:
+    if not name:
+        return ""
+    return "".join(ch for ch in str(name).lower() if ch.isalnum())
+
+
+def _build_account_mapping_rows(*, pclaw_accounts, qbo_accounts, saved_by_key):
+    """Build the Step-3 table rows + a summary of match coverage.
+
+    Match precedence per PCLaw row:
+
+      1. Saved mapping in the DB (firm,realm,pclaw_*).
+      2. Exact AcctNum match against a QBO account.
+      3. Normalized-name (lowercase alphanumeric only) match.
+
+    The summary is what the banner CTA / template gating reads.
+    """
+    auto_by_number = {
+        str(a.get("AcctNum")).strip(): a
+        for a in qbo_accounts if a.get("AcctNum")
+    }
+    auto_by_name_norm = {}
+    for a in qbo_accounts:
+        key = _normalize_account_name(a.get("Name"))
+        if key and key not in auto_by_name_norm:
+            auto_by_name_norm[key] = a
+
+    rows = []
+    matched_saved = 0
+    matched_auto = 0
+    unmatched = 0
+    for idx, pa in enumerate(pclaw_accounts):
+        saved = saved_by_key.get((pa["number"], pa["name"]))
+        suggestion = None
+        match_basis = None
+        if not saved:
+            num = (pa["number"] or "").strip() if pa.get("number") else ""
+            if num and num in auto_by_number:
+                suggestion = auto_by_number[num]
+                match_basis = "AcctNum"
+            else:
+                name_key = _normalize_account_name(pa.get("name"))
+                if name_key and name_key in auto_by_name_norm:
+                    suggestion = auto_by_name_norm[name_key]
+                    match_basis = "Name"
+        rows.append({
+            "idx": idx,
+            "pclaw_number": pa.get("number"),
+            "pclaw_name": pa.get("name"),
+            "current_qbo_id": (saved or {}).get("qbo_account_id") or (suggestion or {}).get("Id"),
+            "current_qbo_name": (saved or {}).get("qbo_account_name") or (suggestion or {}).get("Name"),
+            "is_saved": bool(saved),
+            "is_suggestion": bool(suggestion and not saved),
+            "match_basis": match_basis,
+        })
+        if saved:
+            matched_saved += 1
+        elif suggestion:
+            matched_auto += 1
+        else:
+            unmatched += 1
+
+    total = len(rows)
+    summary = {
+        "total": total,
+        "matched_saved": matched_saved,
+        "matched_auto": matched_auto,
+        "unmatched": unmatched,
+        "matched": matched_saved + matched_auto,
+        # "many unmatched" threshold: any unmatched account is worth a
+        # callout for lawyers, but we ask the template to render a stronger
+        # banner once the unmatched share crosses 25% of accounts so the
+        # CTA dominates the page on a fresh demo-style mismatch.
+        "many_unmatched": (unmatched > 0 and (unmatched * 4 >= total)),
+        "any_unmatched": unmatched > 0,
+    }
+    return rows, summary
+
+
+def _summarize_create_missing_offer(*, user, pclaw_accounts, summary):
+    """Return a small dict the template uses to render the create-missing
+    banner CTA, or None when the offer is not available right now.
+
+    The endpoint that actually creates the accounts always re-checks
+    everything itself — this helper is just a UI hint.
+    """
+    if not summary.get("any_unmatched"):
+        return None
+    coa_state = _firm_latest_coa_state(user["firm_id"])
+    coa_rows = coa_state.get("coa_rows") or []
+    has_coa = bool(coa_rows)
+    # Even without a COA upload we can still try to create the missing
+    # accounts from the GL-extracted names alone, but the type-mapper in
+    # coa_apply will block any row whose type can't be safely guessed.
+    # The banner explains that.
+    return {
+        "unmatched": summary["unmatched"],
+        "total": summary["total"],
+        "many_unmatched": summary["many_unmatched"],
+        "has_coa": has_coa,
+        "coa_row_count": len(coa_rows),
+    }
+
+
+def _pclaw_account_to_coa_row(pa, coa_lookup):
+    """Synthesize a COA-shaped row from a single PCLaw account dict.
+
+    ``coa_lookup`` is the optional ``{account_number: coa_row,
+    name_lower: coa_row}`` map built from the firm's most recent
+    chart-of-accounts upload. When a PCLaw account matches a COA entry
+    we copy its account_type / detail_type so the safe type-mapper in
+    coa_apply has the most authoritative hint available. Otherwise we
+    leave them blank — the mapper will then either resolve from the
+    name or refuse to guess.
+    """
+    num = (pa.get("number") or "").strip()
+    name = (pa.get("name") or "").strip()
+    base = {
+        "account_number": num,
+        "account_name": name,
+        "account_type": "",
+        "detail_type": "",
+        "active": True,
+    }
+    coa_row = None
+    if num and num in coa_lookup:
+        coa_row = coa_lookup[num]
+    elif name and name.lower() in coa_lookup:
+        coa_row = coa_lookup[name.lower()]
+    if coa_row:
+        base["account_type"] = (coa_row.get("account_type") or "").strip()
+        base["detail_type"] = (coa_row.get("detail_type") or "").strip()
+        if coa_row.get("active") is False:
+            base["active"] = False
+    return base
+
+
+def _build_create_missing_plan(*, user, pclaw_accounts, qbo_accounts_response):
+    """Build a CreatePlan that targets the *missing* QBO accounts needed
+    by this GL job's mapping step. Reuses ``build_coa_dry_run_preview``
+    + ``build_create_plan`` so the type-mapping / safety rules are the
+    same ones the dedicated COA flow already uses.
+    """
+    coa_state = _firm_latest_coa_state(user["firm_id"])
+    coa_rows = coa_state.get("coa_rows") or []
+    overrides = coa_state.get("coa_type_overrides") or {}
+    coa_lookup: dict = {}
+    for r in coa_rows:
+        num = (r.get("account_number") or "").strip()
+        name = (r.get("account_name") or "").strip()
+        if num:
+            coa_lookup.setdefault(num, r)
+        if name:
+            coa_lookup.setdefault(name.lower(), r)
+    synthesized = [
+        _pclaw_account_to_coa_row(pa, coa_lookup) for pa in (pclaw_accounts or [])
+    ]
+    preview = build_coa_dry_run_preview(synthesized, qbo_accounts_response)
+    plan = build_create_plan(synthesized, preview, type_overrides=overrides)
+    return preview, plan
+
+
+@app.route("/jobs/<job_id>/account-mapping/refresh", methods=["POST"])
+@login_required
+def account_mapping_refresh(job_id):
+    """Re-fetch QuickBooks accounts and reload the Match-accounts page.
+
+    GET on /account-mapping already re-queries QBO every render, so this
+    endpoint is intentionally just a POST -> redirect. It exists so the
+    UI can offer a clearly-labelled "Refresh QuickBooks accounts" button
+    without doing anything destructive — the redirect ensures back/forward
+    navigation doesn't trigger weird re-submits.
+    """
+    _job_or_403(job_id)
+    _audit("account_mapping_refresh", target_type="job", target_id=job_id)
+    flash("Refreshed QuickBooks account list.", "info")
+    return redirect(url_for("account_mapping", job_id=job_id))
+
+
+@app.route("/jobs/<job_id>/account-mapping/create-missing", methods=["POST"])
+@login_required
+def account_mapping_create_missing(job_id):
+    """Create the QuickBooks accounts referenced by this job's PCLaw
+    accounts that don't already exist in the connected QBO company.
+
+    Reuses the type-mapping + safety rules from coa_apply so the
+    behaviour is identical to the dedicated Chart-of-Accounts flow:
+
+      * Existing QBO accounts (matched by AcctNum, then exact Name) are
+        never re-created.
+      * Account types that can't be safely guessed are surfaced as a
+        review blocker rather than created with a wrong type.
+      * No transactions are posted from this step — accounts only.
+
+    On success the user is redirected back to /account-mapping where
+    the now-existing QBO accounts will auto-match by number / name.
+    """
+    job, user = _job_or_403(job_id)
+    qbo_conn = _get_qbo_connection(job_id)
+    if not qbo_conn:
+        flash(
+            "Connect QuickBooks to this job before creating accounts.",
+            "error",
+        )
+        return redirect(url_for("connect_qbo", job_id=job_id))
+
+    try:
+        qbo, qbo_conn = _get_qbo_client(job_id, user)
+    except QBOAuthExpired as e:
+        tid = getattr(e, "intuit_tid", None)
+        _audit(
+            "account_mapping_create_missing_auth_expired",
+            target_type="job", target_id=job_id,
+            details=_audit_details_with_tid(str(e), tid),
+        )
+        return _render_account_mapping_error(
+            job=job, qbo_conn=qbo_conn,
+            category=qbo_error_hint.CATEGORY_AUTH,
+            status_code=None, intuit_tid=tid,
+        )
+
+    pclaw_accounts = _load_pclaw_accounts_for_mapping(job, job_id, user)
+    if pclaw_accounts is None:
+        return _render_account_mapping_error(
+            job=job, qbo_conn=qbo_conn,
+            category="missing_source", status_code=None, intuit_tid=None,
+        )
+    if not pclaw_accounts:
+        flash(
+            "Account mapping is only available for the rich PCLaw GL "
+            "format (with transaction_id and account_number columns).",
+            "info",
+        )
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    try:
+        qbo_accounts_resp = qbo.get_accounts()
+    except QBOError as e:
+        category = qbo_error_hint.classify(e.status_code, e.body)
+        _audit(
+            "account_mapping_create_missing_qbo_error",
+            target_type="job", target_id=job_id,
+            details=_audit_details_with_tid(
+                f"status={e.status_code} category={category}", e.intuit_tid,
+            ),
+        )
+        return _render_account_mapping_error(
+            job=job, qbo_conn=qbo_conn,
+            category=category, status_code=e.status_code,
+            intuit_tid=e.intuit_tid,
+        )
+    except Exception as e:  # noqa: BLE001
+        _audit("account_mapping_create_missing_qbo_error",
+               target_type="job", target_id=job_id, details=str(e)[:200])
+        return _render_account_mapping_error(
+            job=job, qbo_conn=qbo_conn,
+            category=qbo_error_hint.CATEGORY_UNKNOWN,
+            status_code=None, intuit_tid=None,
+        )
+
+    preview, plan = _build_create_missing_plan(
+        user=user, pclaw_accounts=pclaw_accounts,
+        qbo_accounts_response=qbo_accounts_resp,
+    )
+
+    if not plan.to_create and not plan.blocked:
+        # Every PCLaw account already exists in QBO — nothing to do.
+        _audit(
+            "account_mapping_create_missing_noop",
+            target_type="job", target_id=job_id,
+            details=f"already_matched={preview.get('matched_count', 0)}",
+        )
+        flash(
+            "Every PCLaw account is already in QuickBooks. "
+            "Auto-match should now cover every row.",
+            "info",
+        )
+        return redirect(url_for("account_mapping", job_id=job_id))
+
+    if plan.has_blockers:
+        # Surface blockers without writing anything. The user can fix the
+        # types in the dedicated COA flow (or create those one or two
+        # accounts manually in QBO) and come back.
+        blocker_names = ", ".join(
+            (b.account_name or b.account_number or "(unknown)")
+            for b in plan.blocked[:6]
+        )
+        if len(plan.blocked) > 6:
+            blocker_names += f", and {len(plan.blocked) - 6} more"
+        _audit(
+            "account_mapping_create_missing_blocked",
+            target_type="job", target_id=job_id,
+            details=(
+                f"blocked={len(plan.blocked)} to_create={len(plan.to_create)} "
+                f"matched={len(plan.matched)}"
+            ),
+        )
+        flash(
+            "We couldn't safely guess the QuickBooks account type for "
+            f"{len(plan.blocked)} account(s): {blocker_names}. "
+            "Upload your PCLaw Chart of Accounts (or set the type in the "
+            "COA step) so those rows can be created without risk of a "
+            "wrong type. Nothing has been created in QuickBooks yet.",
+            "error" if not plan.to_create else "warning",
+        )
+        if not plan.to_create:
+            return redirect(url_for("account_mapping", job_id=job_id))
+        # else: fall through and create the safe rows; the blocked ones
+        # remain unmatched and the user sees them as exceptions.
+
+    _audit(
+        "account_mapping_create_missing_started",
+        target_type="job", target_id=job_id,
+        details=(
+            f"to_create={len(plan.to_create)} blocked={len(plan.blocked)} "
+            f"matched={len(plan.matched)} "
+            f"realm={qbo_conn.get('realm_id')}"
+        ),
+    )
+
+    # Defensive de-dupe: re-check each row by AcctNum / Name right before
+    # the POST so a race against another tab / operator doesn't create a
+    # parallel duplicate. The dry-run preview already filters known matches
+    # but the COA might have changed between preview and apply.
+    safe_to_create = []
+    skipped_existing = []
+    for entry in plan.to_create:
+        existing = None
+        try:
+            if entry.account_number:
+                existing = qbo.find_account_by_acctnum(entry.account_number)
+            if not existing and entry.account_name:
+                existing = qbo.find_account_by_name(entry.account_name)
+        except QBOError:
+            existing = None  # fall through and let create_account decide
+        if existing:
+            skipped_existing.append({
+                "account_number": entry.account_number,
+                "account_name": entry.account_name,
+                "qbo_account_id": str(existing.get("Id") or ""),
+            })
+            continue
+        safe_to_create.append(entry)
+
+    from coa_apply import CreatePlan as _CP
+    apply_plan = _CP(
+        matched=list(plan.matched),
+        to_create=safe_to_create,
+        blocked=[],  # we already surfaced blockers; don't error out apply
+        soft_conflicts=list(plan.soft_conflicts),
+    )
+
+    try:
+        result = apply_create_plan(qbo, apply_plan)
+    except Exception as e:  # noqa: BLE001
+        tid = getattr(e, "intuit_tid", None)
+        _audit(
+            "account_mapping_create_missing_apply_error",
+            target_type="job", target_id=job_id,
+            details=_audit_details_with_tid(str(e)[:300], tid),
+        )
+        flash(
+            "Something went wrong while creating QuickBooks accounts. "
+            "Nothing partial was left behind."
+            + (f" (Intuit support reference: {tid})" if tid else ""),
+            "error",
+        )
+        return redirect(url_for("account_mapping", job_id=job_id))
+
+    created = result["created"]
+    failed = result["failed"]
+    intuit_tids = result["intuit_tids"]
+
+    # Persist saved mappings for the new QBO accounts so the user doesn't
+    # have to click through Save after the auto-match — the very next
+    # render of /account-mapping will show them as "Saved".
+    for c in created:
+        try:
+            db.save_account_mapping(
+                firm_id=user["firm_id"],
+                realm_id=qbo_conn["realm_id"],
+                pclaw_account_number=c.get("account_number") or None,
+                pclaw_account_name=c.get("account_name") or None,
+                qbo_account_id=c.get("qbo_account_id"),
+                qbo_account_name=c.get("qbo_account_name"),
+                qbo_account_type=c.get("qbo_account_type"),
+            )
+        except Exception:  # noqa: BLE001 — saving is best-effort; auto-match
+            # by number/name will still cover the new account on next render.
+            pass
+
+    _audit(
+        "account_mapping_create_missing_completed",
+        target_type="job", target_id=job_id,
+        details=_audit_details_with_tid(
+            (
+                f"created={len(created)} failed={len(failed)} "
+                f"skipped_existing={len(skipped_existing)} "
+                f"blocked={len(plan.blocked)}"
+            ),
+            intuit_tids[0] if intuit_tids else None,
+        ),
+    )
+
+    if failed:
+        flash(
+            f"Created {len(created)} QuickBooks account(s); "
+            f"{len(failed)} failed. Review the matches below and retry "
+            "if needed.",
+            "warning" if created else "error",
+        )
+    elif created:
+        flash(
+            f"Created {len(created)} QuickBooks account(s) from your PCLaw "
+            "file. Auto-match has been refreshed below — review any "
+            "remaining unmatched rows.",
+            "success",
+        )
+    elif skipped_existing:
+        flash(
+            "All PCLaw accounts already existed in QuickBooks. "
+            "Auto-match should cover every row.",
+            "info",
+        )
+
+    return redirect(url_for("account_mapping", job_id=job_id))
 
 
 def _build_reversal_payload(
