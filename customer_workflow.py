@@ -286,8 +286,8 @@ def _stage_cta(
         return ("Send to QuickBooks",
                 u("send_to_qbo_entry", "/send-to-qbo") + "#send-to-qbo-card")
     if stage_key == STAGE_RECONCILE:
-        return ("Proceed to Step 6: Reconcile",
-                u("migration_checklist", "/migration-checklist"))
+        return ("Proceed to Step 6: Reconcile balances",
+                u("reconcile_balances", "/reconcile-balances"))
     return ("", "")
 
 

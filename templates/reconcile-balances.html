@@ -1,0 +1,152 @@
+{% extends "_base.html" %}
+{% block title %}Step 6 &mdash; Reconcile balances{% endblock %}
+{% block content %}
+<section class="page" data-testid="reconcile-balances-page">
+  {% include "_workflow_stepper.html" %}
+
+  {% if blocked %}
+    {# Step 6 cannot run yet — surface a single clear blocker and route
+       the user back to Step 5. We deliberately do NOT render the
+       reconciliation cards in this state so a lawyer sees one next
+       action, not a mixed page. #}
+    <section class="card" data-testid="step6-blocked"
+             style="padding:var(--space-6);margin-bottom:var(--space-6);">
+      <p class="eyebrow">Step 6 not ready yet</p>
+      <h1 style="margin-top:0;">Finish Step 5 first.</h1>
+      <p style="max-width:64ch;">{{ blocked_reason }}</p>
+      <div class="actions-row" style="margin-top:var(--space-4);">
+        <a class="btn btn-primary btn-lg"
+           href="{{ url_for('send_to_qbo_entry') }}"
+           data-testid="step6-back-to-step5">
+          &larr; Back to Step 5: Send to QuickBooks
+        </a>
+      </div>
+    </section>
+  {% else %}
+    <div class="hero">
+      <p class="eyebrow">Step 6 of 6 &middot; Reconcile balances</p>
+      <h1>Final balance check</h1>
+      <p style="max-width:64ch;">
+        Confirm that QuickBooks matches PCLaw and capture a record of
+        the migration. Each line below is a plain-English status &mdash;
+        no accounting jargon required.
+      </p>
+    </div>
+
+    {% if summary.is_complete %}
+      <div class="flash success" role="status"
+           data-testid="step6-complete-banner"
+           style="margin-bottom:var(--space-6);">
+        <strong>Step 6 complete: Reconciled.</strong>
+        Migration demo complete. You can email yourself a final report below.
+      </div>
+    {% endif %}
+
+    <section class="card" style="padding:var(--space-6);margin-bottom:var(--space-6);">
+      <p class="eyebrow">At a glance</p>
+      <dl class="summary-grid" data-testid="step6-at-a-glance">
+        <div><dt>Firm</dt><dd>{{ summary.firm_name }}</dd></div>
+        <div><dt>Cutover date</dt>
+          <dd>{{ summary.cutover_date or '—' }}</dd></div>
+        <div><dt>QuickBooks company</dt>
+          <dd>{{ summary.qbo_company_name or summary.qbo_realm_id or '—' }}</dd></div>
+        <div><dt>Reports uploaded</dt>
+          <dd>{{ summary.reports_uploaded|length }}</dd></div>
+        <div><dt>Accounts matched</dt>
+          <dd>{{ summary.accounts_matched_count }}</dd></div>
+        <div><dt>New QuickBooks accounts created</dt>
+          <dd>{{ summary.accounts_created_count }}</dd></div>
+        <div><dt>Journal entries posted</dt>
+          <dd>{{ summary.journal_entries_count }}</dd></div>
+        <div><dt>Source transactions imported</dt>
+          <dd>{{ summary.transactions_imported }}</dd></div>
+      </dl>
+    </section>
+
+    <section class="card" style="padding:var(--space-6);margin-bottom:var(--space-6);">
+      <p class="eyebrow">Reconciliation</p>
+      <ul class="secure-list" data-testid="step6-reconcile-lines"
+          style="margin-top:var(--space-3);">
+        {% for line in summary.lines %}
+          <li data-status="{{ line.status }}" data-testid="step6-line-{{ line.key }}"
+              style="margin-bottom:var(--space-3);">
+            {% if line.status == 'completed' %}
+              <span class="badge success">Done</span>
+            {% elif line.status == 'pending' %}
+              <span class="badge">Pending</span>
+            {% elif line.status == 'blocked' %}
+              <span class="badge error">Blocked</span>
+            {% else %}
+              <span class="badge">Skipped</span>
+            {% endif %}
+            <strong style="margin-left:var(--space-2);">{{ line.label }}</strong>
+            <div class="muted" style="margin-top:var(--space-1);">{{ line.detail }}</div>
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+
+    {% if summary.warnings %}
+      <section class="card" data-testid="step6-warnings"
+               style="padding:var(--space-6);margin-bottom:var(--space-6);">
+        <p class="eyebrow">Heads up</p>
+        <ul class="secure-list">
+          {% for w in summary.warnings %}
+            <li>{{ w }}</li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endif %}
+
+    <section class="card" data-testid="step6-final-report"
+             style="padding:var(--space-6);margin-bottom:var(--space-6);">
+      <p class="eyebrow">Optional &middot; Final report</p>
+      <h2 style="margin-top:0;">Email yourself a copy of this summary</h2>
+      <p style="max-width:64ch;">
+        We&rsquo;ll send a plain-text recap of the migration &mdash;
+        what was uploaded, what posted to QuickBooks, and the
+        reconciliation status &mdash; to the address you enter below.
+        No credentials or files are included.
+      </p>
+
+      {% if report_status %}
+        <div class="flash {% if report_status == 'success' %}success{% elif report_status == 'queued' %}info{% else %}error{% endif %}"
+             role="status" data-testid="step6-report-status"
+             data-status="{{ report_status }}"
+             style="margin-bottom:var(--space-4);">
+          {{ report_message }}
+        </div>
+      {% endif %}
+
+      <form action="{{ url_for('reconcile_balances_send_report') }}"
+            method="post" data-testid="step6-report-form"
+            style="max-width:42rem;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label style="display:block;margin-bottom:var(--space-3);">
+          <span>Email address</span>
+          <input type="email" name="email" required
+                 autocomplete="email"
+                 placeholder="you@firm.example"
+                 value="{{ report_email or '' }}"
+                 data-testid="step6-report-email"
+                 style="width:100%;">
+        </label>
+        <button class="btn btn-primary btn-lg" type="submit"
+                data-testid="step6-report-submit">
+          Send final report
+        </button>
+      </form>
+    </section>
+
+    <div class="actions-row" style="margin-bottom:var(--space-8);">
+      <a class="btn" href="{{ url_for('send_to_qbo_entry') }}"
+         data-testid="step6-back-to-step5-link">
+        &larr; Back to Step 5
+      </a>
+      <a class="btn btn-link" href="{{ url_for('migration_checklist') }}">
+        View migration checklist
+      </a>
+    </div>
+  {% endif %}
+</section>
+{% endblock %}

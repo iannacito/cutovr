@@ -80,7 +80,7 @@
         {% elif at_import_stage %}
           <a class="btn btn-primary btn-lg" href="{{ url_for('send_to_qbo_entry') }}" data-testid="next-step-cta">Open Step 5: Send to QuickBooks &rarr;</a>
         {% elif at_reconcile_stage %}
-          <a class="btn btn-primary btn-lg" href="{{ url_for('import_job_entry') }}" data-testid="next-step-cta">Next: Reconcile balances &rarr;</a>
+          <a class="btn btn-primary btn-lg" href="{{ url_for('reconcile_balances') }}" data-testid="next-step-cta">Open Step 6: Reconcile balances &rarr;</a>
         {% else %}
           <a class="btn btn-primary btn-lg" href="{{ url_for('dashboard') }}#intake">Go to upload &rarr;</a>
         {% endif %}
