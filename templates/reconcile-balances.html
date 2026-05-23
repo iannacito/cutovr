@@ -110,7 +110,7 @@
       </p>
 
       {% if report_status %}
-        <div class="flash {% if report_status == 'success' %}success{% elif report_status == 'queued' %}info{% else %}error{% endif %}"
+        <div class="flash {% if report_status == 'success' %}success{% elif report_status in ['info', 'queued'] %}info{% else %}error{% endif %}"
              role="status" data-testid="step6-report-status"
              data-status="{{ report_status }}"
              style="margin-bottom:var(--space-4);">
@@ -137,6 +137,20 @@
         </button>
       </form>
     </section>
+
+    {% if report_text %}
+      <section class="card" data-testid="step6-report-preview"
+               style="padding:var(--space-6);margin-bottom:var(--space-6);">
+        <p class="eyebrow">Report preview</p>
+        <h2 style="margin-top:0;">Your migration summary</h2>
+        <p style="max-width:64ch;">
+          This is the exact text we&rsquo;d send. You can copy it from
+          here at any time &mdash; no need to wait on email.
+        </p>
+        <pre data-testid="step6-report-text"
+             style="white-space:pre-wrap;word-wrap:break-word;background:var(--surface-2, #f6f7f9);padding:var(--space-4);border-radius:var(--radius-2, 6px);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:0.875rem;line-height:1.5;overflow-x:auto;">{{ report_text }}</pre>
+      </section>
+    {% endif %}
 
     <div class="actions-row" style="margin-bottom:var(--space-8);">
       <a class="btn" href="{{ url_for('send_to_qbo_entry') }}"
