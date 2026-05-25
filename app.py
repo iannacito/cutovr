@@ -90,6 +90,7 @@ import cutover_workflow
 import customer_workflow
 import final_report
 import bulk_upload
+import support_assistant
 from rate_limit import RateLimiter, client_ip
 import csv as _csv
 from io import StringIO
@@ -310,6 +311,16 @@ forgot_limiter = RateLimiter(
     db,
     max_events=FORGOT_RATE_LIMIT_MAX,
     window_seconds=FORGOT_RATE_LIMIT_WINDOW_SECONDS,
+)
+
+# Support-assistant rate limit. Per-IP, generous enough for normal chat use
+# but tight enough to stop someone using us to burn an upstream AI bill.
+SUPPORT_ASK_RATE_LIMIT_MAX = 30
+SUPPORT_ASK_RATE_LIMIT_WINDOW_SECONDS = 5 * 60
+support_ask_limiter = RateLimiter(
+    db,
+    max_events=SUPPORT_ASK_RATE_LIMIT_MAX,
+    window_seconds=SUPPORT_ASK_RATE_LIMIT_WINDOW_SECONDS,
 )
 
 # QBO OAuth configuration (set these via environment variables in real use)
@@ -1992,7 +2003,46 @@ def terms():
 @app.route("/support")
 def support():
     """Public support / contact page including a security-reporting hint."""
-    return render_template("support.html")
+    return render_template(
+        "support.html",
+        assistant_ai_enabled=support_assistant.ai_mode_enabled(),
+        assistant_topics=support_assistant.suggested_topics(),
+    )
+
+
+@app.route("/api/support/ask", methods=["POST"])
+def api_support_ask():
+    """JSON endpoint backing the floating chat widget.
+
+    Public (no login required) so prospects on the landing page can ask
+    questions too. Rate-limited per IP. CSRF is enforced for unsafe methods
+    via the global before-request hook (the widget sends X-CSRF-Token).
+    The endpoint never echoes any environment variable or secret; it returns
+    only the assistant's textual answer plus a coarse `source` tag.
+    """
+    allowed, retry_after = support_ask_limiter.check_and_record(
+        f"support_ask:{client_ip(request)}"
+    )
+    if not allowed:
+        return jsonify({
+            "error": "rate_limited",
+            "message": "Too many questions in a short time. Try again shortly.",
+            "retry_after": retry_after,
+        }), 429
+
+    data = request.get_json(silent=True) or {}
+    question = data.get("question") or ""
+    if not isinstance(question, str):
+        return jsonify({"error": "bad_request", "message": "question must be a string"}), 400
+
+    result = support_assistant.answer(question)
+    return jsonify({
+        "answer": result.answer,
+        "source": result.source,
+        "confident": result.confident,
+        "topic": result.topic,
+        "support_email": branding.SUPPORT_EMAIL,
+    })
 
 
 @app.route("/quickbooks-guide")

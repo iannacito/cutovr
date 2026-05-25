@@ -69,6 +69,172 @@
     {% block content %}{% endblock %}
   </main>
 
+  {# Floating support assistant. Available on every page, both public and #}
+  {# logged-in. Falls back to the curated FAQ when no AI key is configured. #}
+  <div id="support-assistant" class="support-assistant" data-csrf-token="{{ csrf_token() }}" data-support-email="{{ support_email }}">
+    <button type="button" class="support-assistant__launcher" aria-controls="support-assistant-panel" aria-expanded="false">
+      <span class="support-assistant__launcher-dot" aria-hidden="true"></span>
+      <span class="support-assistant__launcher-label">Ask for help</span>
+    </button>
+    <section id="support-assistant-panel" class="support-assistant__panel" role="dialog" aria-modal="false" aria-labelledby="support-assistant-title" hidden>
+      <header class="support-assistant__header">
+        <div>
+          <p class="support-assistant__eyebrow">{{ app_name }}</p>
+          <h2 id="support-assistant-title" class="support-assistant__title">Migration assistant</h2>
+        </div>
+        <button type="button" class="support-assistant__close" aria-label="Close assistant">&times;</button>
+      </header>
+      <div class="support-assistant__intro">
+        <p>Quick answers about the PCLaw to QuickBooks migration. General guidance only &mdash; for firm-specific accounting decisions, check with your accountant or bookkeeper.</p>
+      </div>
+      <div class="support-assistant__suggestions" aria-label="Common questions"></div>
+      <div class="support-assistant__messages" aria-live="polite"></div>
+      <form class="support-assistant__form" autocomplete="off">
+        <label class="visually-hidden" for="support-assistant-input">Your question</label>
+        <input id="support-assistant-input" name="question" type="text" maxlength="600" placeholder="Ask about a step, a report, or a QBO setting…" required>
+        <button type="submit" class="btn btn-primary support-assistant__send">Ask</button>
+      </form>
+      <p class="support-assistant__footnote">
+        Still stuck? Email <a href="mailto:{{ support_email }}">{{ support_email }}</a>.
+      </p>
+    </section>
+  </div>
+
+  <script>
+    (function () {
+      var root = document.getElementById("support-assistant");
+      if (!root) return;
+      var launcher = root.querySelector(".support-assistant__launcher");
+      var panel = root.querySelector(".support-assistant__panel");
+      var closeBtn = root.querySelector(".support-assistant__close");
+      var form = root.querySelector(".support-assistant__form");
+      var input = root.querySelector("#support-assistant-input");
+      var messages = root.querySelector(".support-assistant__messages");
+      var suggestions = root.querySelector(".support-assistant__suggestions");
+      var csrfToken = root.getAttribute("data-csrf-token") || "";
+      var supportEmail = root.getAttribute("data-support-email") || "";
+
+      var topics = [
+        { topic: "overview",         title: "What does this do?" },
+        { topic: "steps",            title: "What are the steps?" },
+        { topic: "reports",          title: "Which reports do I need?" },
+        { topic: "quickbooks",       title: "How does QuickBooks connect?" },
+        { topic: "account-matching", title: "How does account matching work?" },
+        { topic: "trust",            title: "How are trust balances handled?" },
+        { topic: "reconciliation",   title: "What is the final reconciliation?" },
+        { topic: "security",         title: "How is my data kept safe?" }
+      ];
+
+      function escapeHtml(s) {
+        return String(s == null ? "" : s)
+          .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+      }
+
+      function renderSuggestions() {
+        suggestions.innerHTML = "";
+        topics.forEach(function (t) {
+          var btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "support-assistant__chip";
+          btn.textContent = t.title;
+          btn.addEventListener("click", function () {
+            input.value = t.title;
+            submitQuestion(t.title);
+          });
+          suggestions.appendChild(btn);
+        });
+      }
+
+      function appendMessage(role, text) {
+        var wrap = document.createElement("div");
+        wrap.className = "support-assistant__msg support-assistant__msg--" + role;
+        var lines = String(text || "").split(/\n+/);
+        lines.forEach(function (line) {
+          if (!line) return;
+          var p = document.createElement("p");
+          p.textContent = line;
+          wrap.appendChild(p);
+        });
+        messages.appendChild(wrap);
+        messages.scrollTop = messages.scrollHeight;
+      }
+
+      function openPanel() {
+        panel.hidden = false;
+        launcher.setAttribute("aria-expanded", "true");
+        if (!messages.dataset.greeted) {
+          appendMessage("assistant",
+            "Hi. Ask a question about the migration, the reports you need, " +
+            "QuickBooks, or anything else about how this works.");
+          messages.dataset.greeted = "1";
+        }
+        setTimeout(function () { input.focus(); }, 50);
+      }
+
+      function closePanel() {
+        panel.hidden = true;
+        launcher.setAttribute("aria-expanded", "false");
+        launcher.focus();
+      }
+
+      function submitQuestion(q) {
+        var question = (q || "").trim();
+        if (!question) return;
+        appendMessage("user", question);
+        input.value = "";
+        input.disabled = true;
+        var pending = document.createElement("div");
+        pending.className = "support-assistant__msg support-assistant__msg--assistant support-assistant__msg--pending";
+        pending.textContent = "Thinking…";
+        messages.appendChild(pending);
+
+        fetch("{{ url_for('api_support_ask') }}", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "X-CSRF-Token": csrfToken
+          },
+          credentials: "same-origin",
+          body: JSON.stringify({ question: question })
+        }).then(function (resp) {
+          return resp.json().then(function (data) { return { ok: resp.ok, data: data }; });
+        }).then(function (result) {
+          if (pending.parentNode) pending.parentNode.removeChild(pending);
+          if (!result.ok) {
+            var msg = (result.data && result.data.message) ||
+              "Something went wrong. Please try again, or email " + supportEmail + ".";
+            appendMessage("assistant", msg);
+            return;
+          }
+          appendMessage("assistant", result.data.answer || "");
+        }).catch(function () {
+          if (pending.parentNode) pending.parentNode.removeChild(pending);
+          appendMessage("assistant",
+            "I couldn't reach the assistant. Please email " + supportEmail + " and we'll help directly.");
+        }).then(function () {
+          input.disabled = false;
+          input.focus();
+        });
+      }
+
+      launcher.addEventListener("click", function () {
+        if (panel.hidden) openPanel(); else closePanel();
+      });
+      closeBtn.addEventListener("click", closePanel);
+      form.addEventListener("submit", function (e) {
+        e.preventDefault();
+        submitQuestion(input.value);
+      });
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape" && !panel.hidden) closePanel();
+      });
+
+      renderSuggestions();
+    })();
+  </script>
+
   <footer class="site-footer">
     <div class="site-footer__inner">
       <div>&copy; {{ now_year }} {{ company_name }} &mdash; PCLaw to QuickBooks Online</div>
