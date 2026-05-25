@@ -4,7 +4,21 @@
 <section class="page page--prose">
   <p class="eyebrow">Help</p>
   <h1 class="display">Support &amp; <em>contact</em></h1>
-  <p class="muted">Most issues have a quick answer below. If yours isn't here, send us the bundle described under &ldquo;Reporting an issue&rdquo; and we'll dig in.</p>
+  <p class="muted">Most questions have a quick answer below. If yours isn't here, ask the migration assistant in the corner of the page or email <a href="mailto:{{ support_email }}">{{ support_email }}</a>.</p>
+
+  <section class="card" style="margin-top:var(--space-6);">
+    <h2>Ask the migration assistant</h2>
+    <p>The assistant in the bottom-right of every page answers common questions about the PCLaw to QuickBooks Online migration &mdash; which reports you need, how account matching works, what the reconciliation step does, and so on. {% if assistant_ai_enabled %}AI-assisted answers are enabled on this deployment.{% else %}Answers come from our curated knowledge base.{% endif %}</p>
+    <p class="note">General migration guidance only. The assistant does not give legal or accounting advice &mdash; for firm-specific questions, please check with your accountant or bookkeeper.</p>
+    {% if assistant_topics %}
+    <p style="margin-top:var(--space-4);"><strong>Common questions:</strong></p>
+    <ul class="secure-list">
+      {% for t in assistant_topics %}
+      <li>{{ t.title }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </section>
 
   <section class="card" style="margin-top:var(--space-6);">
     <h2>Quick answers</h2>
