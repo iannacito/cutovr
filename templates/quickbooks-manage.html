@@ -37,9 +37,12 @@
       <p class="note">
         Existing connections shown below still work, but you cannot start
         a new one until these items are fixed in Render and the deploy is
-        restarted. Open the
-        <a href="{{ url_for('readiness_page') }}">readiness checklist</a>
-        for full remediation hints.
+        restarted.
+        {% if is_operator %}
+          Open the
+          <a href="{{ url_for('readiness_page') }}">readiness checklist</a>
+          for full remediation hints.
+        {% endif %}
       </p>
     </div>
   {% else %}
