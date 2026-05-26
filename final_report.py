@@ -75,10 +75,10 @@ class ReconcileSummary:
 
 # Maps internal report_type keys to the friendly labels we show users.
 _REPORT_LABELS = {
-    "chart_of_accounts": "Account list (chart of accounts)",
-    "trial_balance": "Trial balance (starting / ending balances)",
-    "general_ledger": "Transaction history (general ledger)",
-    "trust_listing": "Client trust listing",
+    "chart_of_accounts": "Account list",
+    "trial_balance": "Starting / final balances",
+    "general_ledger": "Transaction history",
+    "trust_listing": "Client trust balances",
 }
 
 
@@ -105,7 +105,9 @@ def _has_unmapped_blocker(jobs: Iterable[dict]) -> bool:
     return False
 
 
-def _starting_balance_status(jobs: Iterable[dict]) -> ReconcileLine:
+def _starting_balance_status(
+    jobs: Iterable[dict], *, import_complete: bool = False,
+) -> ReconcileLine:
     tb_jobs = [j for j in jobs if (j.get("report_type") or "") == "trial_balance"]
     posted = any(
         h.get("qbo_je_id")
@@ -121,22 +123,37 @@ def _starting_balance_status(jobs: Iterable[dict]) -> ReconcileLine:
             "Starting balances were posted to QuickBooks.",
         )
     if tb_jobs:
+        if import_complete:
+            # Migration is complete — starting balances were uploaded
+            # but not posted as a separate opening journal entry. That
+            # is a normal, optional step; do not flag it as "pending"
+            # on a finished migration.
+            return ReconcileLine(
+                "starting_balances",
+                "Starting balances",
+                STATUS_SKIPPED,
+                "Starting balances were uploaded. Posting them as a "
+                "separate opening journal entry was not part of this "
+                "migration.",
+            )
         return ReconcileLine(
             "starting_balances",
             "Starting balances",
             STATUS_PENDING,
-            "A starting trial balance was uploaded but not yet posted "
-            "to QuickBooks.",
+            "Starting balances were uploaded but have not been posted "
+            "to QuickBooks yet.",
         )
     return ReconcileLine(
         "starting_balances",
         "Starting balances",
         STATUS_SKIPPED,
-        "No starting trial balance on file — skipped.",
+        "No starting balances on file — not part of this migration.",
     )
 
 
-def _final_balance_status(jobs: Iterable[dict]) -> ReconcileLine:
+def _final_balance_status(
+    jobs: Iterable[dict], *, import_complete: bool = False,
+) -> ReconcileLine:
     tb_jobs = [j for j in jobs if (j.get("report_type") or "") == "trial_balance"]
     has_ending = any(j.get("ending_tb_reconciliation") for j in tb_jobs)
     if has_ending:
@@ -149,39 +166,50 @@ def _final_balance_status(jobs: Iterable[dict]) -> ReconcileLine:
                     "ending_balance",
                     "Final balance check",
                     STATUS_PENDING,
-                    "Ending trial balance was checked — some balances "
-                    "did not match. Review the reconciliation report.",
+                    "The final balance check ran — some balances did "
+                    "not match. Review the reconciliation report.",
                 )
         return ReconcileLine(
             "ending_balance",
             "Final balance check",
             STATUS_COMPLETED,
-            "Ending trial balance was checked against QuickBooks.",
+            "Final balances were checked against QuickBooks.",
         )
     if len(tb_jobs) >= 2:
+        if import_complete:
+            return ReconcileLine(
+                "ending_balance",
+                "Final balance check",
+                STATUS_SKIPPED,
+                "A final trial balance was uploaded. Running the "
+                "balance check is optional — open the report if you "
+                "want a side-by-side comparison with QuickBooks.",
+            )
         return ReconcileLine(
             "ending_balance",
             "Final balance check",
             STATUS_PENDING,
-            "An ending trial balance is on file — open it to run the "
+            "A final trial balance is on file — open it to run the "
             "balance check.",
         )
     return ReconcileLine(
         "ending_balance",
         "Final balance check",
         STATUS_SKIPPED,
-        "No ending trial balance on file — skipped.",
+        "No final trial balance on file — not part of this migration.",
     )
 
 
-def _trust_status(jobs: Iterable[dict]) -> ReconcileLine:
+def _trust_status(
+    jobs: Iterable[dict], *, import_complete: bool = False,
+) -> ReconcileLine:
     trust_jobs = [j for j in jobs if (j.get("report_type") or "") == "trust_listing"]
     if not trust_jobs:
         return ReconcileLine(
             "client_trust",
             "Client trust balances",
             STATUS_SKIPPED,
-            "No client trust listing on file — skipped.",
+            "No client trust balances on file — not part of this migration.",
         )
     has_recon = any(j.get("trust_reconciliation") for j in trust_jobs)
     if has_recon:
@@ -192,12 +220,21 @@ def _trust_status(jobs: Iterable[dict]) -> ReconcileLine:
             "Client trust balances were validated against the trust "
             "liability and trust bank balances.",
         )
+    if import_complete:
+        return ReconcileLine(
+            "client_trust",
+            "Client trust balances",
+            STATUS_SKIPPED,
+            "A client trust listing was uploaded. Running the trust "
+            "reconciliation report is optional — open it if you want "
+            "a side-by-side trust validation.",
+        )
     return ReconcileLine(
         "client_trust",
         "Client trust balances",
         STATUS_PENDING,
-        "A trust listing is on file — open the trust reconciliation "
-        "report to validate it.",
+        "A client trust listing is on file — open the trust "
+        "reconciliation report to validate it.",
     )
 
 
@@ -206,23 +243,23 @@ def _import_status(jobs: Iterable[dict]) -> ReconcileLine:
     if imported:
         return ReconcileLine(
             "import",
-            "Imported to QuickBooks",
+            "Transaction history imported",
             STATUS_COMPLETED,
-            "Journal entries from PCLaw were posted to QuickBooks.",
+            "Your PCLaw transaction history is in QuickBooks.",
         )
     if _has_unmapped_blocker(jobs):
         return ReconcileLine(
             "import",
-            "Imported to QuickBooks",
+            "Transaction history imported",
             STATUS_BLOCKED,
             "QuickBooks is missing one or more accounts — go back to "
             "Step 3 to create them, then retry Step 5.",
         )
     return ReconcileLine(
         "import",
-        "Imported to QuickBooks",
+        "Transaction history imported",
         STATUS_PENDING,
-        "Nothing has been posted to QuickBooks yet — finish Step 5 first.",
+        "Nothing has been sent to QuickBooks yet — finish Step 5 first.",
     )
 
 
@@ -230,7 +267,7 @@ def _accounts_status(jobs: Iterable[dict], mapping_count: int) -> ReconcileLine:
     if mapping_count <= 0:
         return ReconcileLine(
             "accounts",
-            "Account mapping",
+            "Accounts matched",
             STATUS_PENDING,
             "No PCLaw accounts have been matched to QuickBooks yet.",
         )
@@ -246,7 +283,7 @@ def _accounts_status(jobs: Iterable[dict], mapping_count: int) -> ReconcileLine:
         detail += f" {created} new QuickBooks account(s) created during setup."
     return ReconcileLine(
         "accounts",
-        "Account mapping",
+        "Accounts matched",
         STATUS_COMPLETED,
         detail,
     )
@@ -301,10 +338,14 @@ def build_reconciliation_summary(
     primary_conn = conns[0] if conns else {}
 
     import_line = _import_status(jobs_list)
+    import_complete = import_line.status == STATUS_COMPLETED
     accounts_line = _accounts_status(jobs_list, account_mapping_count)
-    starting_line = _starting_balance_status(jobs_list)
-    ending_line = _final_balance_status(jobs_list)
-    trust_line = _trust_status(jobs_list)
+    starting_line = _starting_balance_status(
+        jobs_list, import_complete=import_complete)
+    ending_line = _final_balance_status(
+        jobs_list, import_complete=import_complete)
+    trust_line = _trust_status(
+        jobs_list, import_complete=import_complete)
 
     lines = [import_line, accounts_line, starting_line, ending_line, trust_line]
 

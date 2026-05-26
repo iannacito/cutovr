@@ -9,7 +9,7 @@
     <h1>Send to QuickBooks.</h1>
     <p data-testid="step5-clarification" style="max-width:64ch;">
       We&rsquo;ll send everything to
-      <strong>{{ qbo_connection.company_name or qbo_connection.realm_id or 'your QuickBooks Online company' }}</strong>
+      <strong>{{ qbo_connection.company_name or 'your QuickBooks Online company' }}</strong>
       for you. You do not need to enter anything manually in QuickBooks.
     </p>
   </div>
@@ -28,12 +28,12 @@
           Entries created in QuickBooks: <strong>{{ job.import_summary.qbo_je_count }}</strong>.
         </p>
       </details>
-      <div class="actions-row" style="margin-top:var(--space-4);">
+      <div class="actions-row workflow-cta-row" style="margin-top:var(--space-4);">
+        <a class="btn btn-link" href="{{ url_for('job_detail', job_id=job.id) }}">Open the job</a>
         <a class="btn btn-primary btn-lg" href="{{ url_for('reconcile_balances') }}"
            data-testid="step5-next-cta">
           Proceed to Step 6: Final balance check &rarr;
         </a>
-        <a class="btn btn-link" href="{{ url_for('job_detail', job_id=job.id) }}">Open the job</a>
       </div>
     </section>
   {% else %}
@@ -47,9 +47,11 @@
       <details class="quiet" style="margin-top:var(--space-3);">
         <summary>Details</summary>
         <p style="max-width:64ch;margin-top:var(--space-2);">
-          Source file: <code>{{ job.source_file }}</code><br>
-          Destination: <strong>{{ qbo_connection.company_name or qbo_connection.realm_id }}</strong>
+          Destination: <strong>{{ qbo_connection.company_name or 'your QuickBooks Online company' }}</strong>
           {% if qbo_is_sandbox %}<span class="badge">Sandbox</span>{% endif %}
+        </p>
+        <p class="muted" style="font-size:.85rem;margin-top:var(--space-2);">
+          Source file: <code>{{ job.source_file }}</code>
         </p>
         {% if (job.summary or {}).balanced is defined %}
           <p class="muted">
@@ -61,7 +63,7 @@
 
       <form action="{{ url_for('import_to_qbo', job_id=job.id) }}" method="post"
             {% if not qbo_is_sandbox and qbo_real_import %}
-            onsubmit="return confirm('Post records to QuickBooks Online company {{ qbo_connection.company_name or qbo_connection.realm_id }}?');"
+            onsubmit="return confirm('Post records to QuickBooks Online company {{ qbo_connection.company_name or 'your QuickBooks Online company' }}?');"
             {% endif %}>
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         {% if not qbo_is_sandbox and qbo_real_import %}

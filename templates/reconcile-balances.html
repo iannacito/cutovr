@@ -45,21 +45,34 @@
       <p class="eyebrow">At a glance</p>
       <dl class="summary-grid" data-testid="step6-at-a-glance">
         <div><dt>Firm</dt><dd>{{ summary.firm_name }}</dd></div>
-        <div><dt>Cutover date</dt>
+        <div><dt>Switchover date</dt>
           <dd>{{ summary.cutover_date or '—' }}</dd></div>
         <div><dt>QuickBooks company</dt>
-          <dd>{{ summary.qbo_company_name or summary.qbo_realm_id or '—' }}</dd></div>
+          <dd>{{ summary.qbo_company_name or '—' }}</dd></div>
         <div><dt>Reports uploaded</dt>
           <dd>{{ summary.reports_uploaded|length }}</dd></div>
         <div><dt>Accounts matched</dt>
           <dd>{{ summary.accounts_matched_count }}</dd></div>
         <div><dt>New QuickBooks accounts created</dt>
           <dd>{{ summary.accounts_created_count }}</dd></div>
-        <div><dt>Journal entries posted</dt>
-          <dd>{{ summary.journal_entries_count }}</dd></div>
-        <div><dt>Source transactions imported</dt>
+        <div><dt>Transactions imported</dt>
           <dd>{{ summary.transactions_imported }}</dd></div>
       </dl>
+      {% if summary.qbo_realm_id or summary.journal_entries_count %}
+        <details class="quiet" style="margin-top:var(--space-4);">
+          <summary>Technical details (for support)</summary>
+          <dl class="summary-grid" style="margin-top:var(--space-3);">
+            {% if summary.journal_entries_count %}
+              <div><dt>Journal entries posted</dt>
+                <dd>{{ summary.journal_entries_count }}</dd></div>
+            {% endif %}
+            {% if summary.qbo_realm_id %}
+              <div><dt>QuickBooks realm ID</dt>
+                <dd><code>{{ summary.qbo_realm_id }}</code></dd></div>
+            {% endif %}
+          </dl>
+        </details>
+      {% endif %}
     </section>
 
     <section class="card" style="padding:var(--space-6);margin-bottom:var(--space-6);">
