@@ -4455,7 +4455,7 @@ def oauth_callback():
                details=connect_details)
 
         flash(
-            f"Connected to QuickBooks: {company_label} (realmId {realm_id}). "
+            f"Connected to QuickBooks: {company_label}. "
             "If this is the wrong company, click Disconnect QuickBooks and reconnect.",
             "success",
         )
@@ -5025,8 +5025,8 @@ def _import_to_qbo_impl(job_id):
                 "balanced": source_debit == source_credit,
             }
             flash(
-                "Amazing! Your migration is in QuickBooks. "
-                "You're now ready to move on to Step 6.",
+                "Your migration is in QuickBooks. "
+                "Open the final balance check when you're ready.",
                 "success",
             )
 

@@ -9,7 +9,7 @@
     <h1 class="display" style="font-size:clamp(1.8rem,3.5vw,2.6rem);">Match your PCLaw accounts to QuickBooks.</h1>
     <p class="muted" style="max-width:60ch;">
       Pick the matching QuickBooks account for each PCLaw account in
-      <strong>{{ qbo_connection.company_name or qbo_connection.realm_id or 'your QuickBooks company' }}</strong>.
+      <strong>{{ qbo_connection.company_name or 'your QuickBooks company' }}</strong>.
       You only do this once.
     </p>
   </header>
@@ -212,16 +212,16 @@
     <p style="max-width:62ch;margin:0 0 var(--space-4);">
       You&rsquo;re now ready to move on to Step 4.
     </p>
-    <div class="actions-row">
-      <a class="btn btn-primary btn-lg"
-         href="{{ url_for('import_job_entry') }}"
-         data-testid="step3-next-cta">
-        Proceed to Step 4: Review import &rarr;
-      </a>
+    <div class="actions-row workflow-cta-row" data-testid="step3-complete-actions">
       <a class="btn"
          href="{{ url_for('dashboard') }}#intake"
          data-testid="step3-back-cta">
         &larr; Back to Step 2: Upload reports
+      </a>
+      <a class="btn btn-primary btn-lg"
+         href="{{ url_for('import_job_entry') }}"
+         data-testid="step3-next-cta">
+        Proceed to Step 4: Review import &rarr;
       </a>
     </div>
   </section>

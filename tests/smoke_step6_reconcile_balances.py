@@ -435,7 +435,7 @@ def r7_reconciliation_summary_classification():
     assert "B LLP" in body
     assert "Demo QBO" in body
     assert "Reconciliation" in body
-    assert "[COMPLETED] Imported to QuickBooks" in body
+    assert "[COMPLETED] Transaction history imported" in body
     assert "Status: Migration demo complete." in body
     # Must not leak SMTP env material.
     for forbidden in ("SMTP_HOST", "SMTP_PASSWORD"):
