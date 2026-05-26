@@ -35,32 +35,11 @@
       </div>
     </nav>
   {% endif %}
-  <div class="workflow-stepper__header">
-    <div class="workflow-stepper__heading">
-      <p class="eyebrow workflow-stepper__eyebrow">
-        {% if workflow_current %}
-          Migration progress &middot; Step {{ workflow_current.index }} of {{ workflow_current.total }}
-        {% else %}
-          Migration progress &middot; Complete
-        {% endif %}
-      </p>
-      <h2 class="workflow-stepper__title">
-        {% if workflow_current %}
-          {{ workflow_current.label }}
-        {% else %}
-          You&rsquo;re finished.
-        {% endif %}
-      </h2>
-      <p class="workflow-stepper__lede">
-        {% if workflow_current %}
-          {{ workflow_current.description }}
-        {% else %}
-          Save the final balance check and the audit report for your records.
-        {% endif %}
-      </p>
-    </div>
-  </div>
-
+  {# The repeated "Migration progress · Step X of 6 / step name / description"
+     block was redundant — every step page already prints the same eyebrow + h1
+     in its own hero below. Lawyers in user testing saw the wall of identical
+     text twice and asked us to drop the top one. We keep the progress bar,
+     stepper rail, and back/next nav so progress and navigation stay visible. #}
   <div
     class="workflow-progress"
     role="progressbar"

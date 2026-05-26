@@ -1,0 +1,72 @@
+{% extends "_base.html" %}
+{% block title %}Welcome back &mdash; {{ firm.name }}{% endblock %}
+{% block content %}
+<section class="page page--prose" data-testid="welcome-back-page">
+  <div class="hero">
+    <p class="eyebrow">Welcome back</p>
+    <h1>Pick up where you left off?</h1>
+    <p style="max-width:64ch;">
+      You have a migration in progress for <strong>{{ firm.name }}</strong>.
+      You can keep going from where you stopped, or start a brand-new
+      migration. Nothing in QuickBooks changes either way.
+    </p>
+  </div>
+
+  <div class="grid-two" style="margin-bottom:var(--space-8);">
+    <article class="card" data-testid="welcome-back-continue-card"
+             style="padding:var(--space-6);">
+      <p class="eyebrow">Recommended</p>
+      <h2 style="margin-top:0;">Continue where you left off</h2>
+      <p>
+        We&rsquo;ll take you straight to the next step:
+        {% if current_stage %}
+          <strong>Step {{ current_stage.index }} of {{ current_stage.total }} &mdash; {{ current_stage.label }}</strong>.
+        {% else %}
+          <strong>your migration dashboard</strong>.
+        {% endif %}
+      </p>
+      <p class="muted" style="font-size:.9rem;">
+        Your uploaded reports, saved account matches, and QuickBooks
+        connection are all still here.
+      </p>
+      <div class="actions-row" style="margin-top:var(--space-4);">
+        <a class="btn btn-primary btn-lg"
+           href="{{ continue_url }}"
+           data-testid="welcome-back-continue-cta">
+          Continue migration &rarr;
+        </a>
+      </div>
+    </article>
+
+    <article class="card" data-testid="welcome-back-start-fresh-card"
+             style="padding:var(--space-6);">
+      <p class="eyebrow">Or start over</p>
+      <h2 style="margin-top:0;">Start a new migration</h2>
+      <p>
+        We&rsquo;ll archive your in-progress uploads and saved account
+        matches in this app, then take you to Step 1 to start fresh.
+      </p>
+      <p class="muted" style="font-size:.9rem;">
+        Nothing is deleted from QuickBooks. Any entries already posted
+        to QuickBooks stay where they are.
+      </p>
+      <form action="{{ url_for('welcome_back_start_fresh') }}" method="post"
+            data-testid="welcome-back-start-fresh-form"
+            onsubmit="return confirm('Archive this in-progress migration and start a new one? Nothing will be removed from QuickBooks.');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="actions-row" style="margin-top:var(--space-4);">
+          <button class="btn btn-secondary btn-lg" type="submit"
+                  data-testid="welcome-back-start-fresh-cta">
+            Start a new migration
+          </button>
+        </div>
+      </form>
+    </article>
+  </div>
+
+  <p class="muted" style="font-size:.88rem;">
+    Not sure? Picking <em>Continue</em> is always safe. You can come
+    back to this choice anytime by signing out and signing back in.
+  </p>
+</section>
+{% endblock %}

@@ -179,10 +179,11 @@ def s2_step2_dashboard_has_no_migration_setup_content():
     assert 'name="ledger_files"' in body
 
     _assert_no_migration_setup(body, "/dashboard (Step 2 upload stage)")
-    # And the "Back to Step 1: Setup" link still works as navigation,
-    # which is what survives. It's an anchor, not Migration Setup
-    # content — verify it stayed.
-    assert 'data-testid="step2-back-link"' in body
+    # And the "Back to Step 1: Setup" link still works as navigation.
+    # The dashboard-panel duplicate was removed (workflow-polish PR);
+    # the canonical back link now lives in the workflow stepper at the
+    # top of the page. Confirm the text is present *somewhere*.
+    assert "Back to Step 1: Setup" in body
 
     print("S2 OK: /dashboard at Step 2 contains the upload form and "
           "no Migration Setup form/card/section/copy")
@@ -210,8 +211,10 @@ def s3_step2_uploaded_reports_has_no_migration_setup_content():
 
 def s4_step2_back_link_targets_step1_setup():
     """The Step 2 page must still expose 'Back to Step 1: Setup' as
-    navigation — that's a link, not content. Confirm it survived the
-    cleanup and points at /cutover (a.k.a. /migration-setup)."""
+    navigation — that's a link, not content. The redundant duplicate in
+    the dashboard panel was removed (workflow-polish PR); the canonical
+    back link now lives in the workflow stepper at the top of the page.
+    Confirm the stepper back link is present and targets /cutover."""
     client = appmod.app.test_client()
     _signup_and_login(client, "s4@example.test")
     user = appmod.db.get_user_by_email("s4@example.test")
@@ -220,28 +223,28 @@ def s4_step2_back_link_targets_step1_setup():
     r = client.get("/dashboard", follow_redirects=False)
     body = r.get_data(as_text=True)
 
-    # The navigation footer link exists.
-    assert 'data-testid="step2-back-link"' in body
-    # It targets /cutover (or its alias /migration-setup), not '#'.
-    # Anchor attributes may appear in any order; match an <a ...>
-    # tag that carries both href and the step2-back-link testid.
+    # The visible label still says 'Back to Step 1: Setup'.
+    assert "Back to Step 1: Setup" in body
+    # And the stepper back link points at /cutover (or its alias).
+    # Match an anchor whose class includes the stepper back-link class.
     nav_link = re.search(
-        r'<a\b[^>]*\bhref="([^"]+)"[^>]*\bdata-testid="step2-back-link"',
+        r'<a\b[^>]*\bclass="[^"]*workflow-stepper__back-link[^"]*"'
+        r'[^>]*\bhref="([^"]+)"',
         body,
     ) or re.search(
-        r'<a\b[^>]*\bdata-testid="step2-back-link"[^>]*\bhref="([^"]+)"',
+        r'<a\b[^>]*\bhref="([^"]+)"[^>]*\bclass="[^"]*workflow-stepper__back-link',
         body,
     )
-    assert nav_link is not None, "step2-back-link must render with an href"
+    assert nav_link is not None, (
+        "workflow stepper must render a back link on the Step 2 page"
+    )
     href = nav_link.group(1)
     assert "/cutover" in href or "/migration-setup" in href, (
-        f"step2-back-link should target Step 1 setup route, got {href!r}"
+        f"stepper back link should target Step 1 setup route, got {href!r}"
     )
-    # And the visible label still says 'Back to Step 1: Setup'.
-    assert "Back to Step 1: Setup" in body
 
-    print("S4 OK: Step 2 navigation still links back to Step 1 Setup "
-          "via /cutover")
+    print("S4 OK: Step 2 stepper back link points at Step 1 Setup via "
+          "/cutover")
 
 
 def main():

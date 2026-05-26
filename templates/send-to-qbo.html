@@ -4,30 +4,24 @@
 <section class="page" data-testid="send-to-qbo-page">
   {% include "_workflow_stepper.html" %}
 
-  <div class="hero">
-    <p class="eyebrow">Step 5 of 6 &middot; Send</p>
-    <h1>Send to QuickBooks.</h1>
-    <p data-testid="step5-clarification" style="max-width:64ch;">
-      We&rsquo;ll send everything to
-      <strong>{{ qbo_connection.company_name or 'your QuickBooks Online company' }}</strong>
-      for you. You do not need to enter anything manually in QuickBooks.
-    </p>
-  </div>
-
   {% if already_imported %}
-    <section class="card success-panel" data-testid="already-imported"
-             style="padding:var(--space-6);margin-bottom:var(--space-6);">
-      <p class="eyebrow">Sent</p>
+    {# Surface the import-complete success panel as the FIRST piece of
+       page content after the stepper. User testing: lawyers had to
+       scroll past the hero + connect copy before seeing "Import
+       Complete" — they thought the import had failed. Pin this to the
+       top so the green confirmation is the first thing they read. #}
+    <section class="card success-panel import-complete-panel"
+             data-testid="already-imported"
+             data-testid-alt="import-complete-panel"
+             style="padding:var(--space-6);margin-bottom:var(--space-6);
+                    border:2px solid var(--success, #2f7d32);
+                    background:var(--success-bg, #ecfaee);">
+      <p class="eyebrow">Import complete</p>
       <h2 style="margin-top:0;">Amazing! Your migration is in QuickBooks.</h2>
       <p>
+        Your transactions are in <strong>{{ qbo_connection.company_name or 'your QuickBooks Online company' }}</strong>.
         You&rsquo;re ready for the final balance check.
       </p>
-      <details class="quiet" style="margin-top:var(--space-3);">
-        <summary>Details</summary>
-        <p class="muted" style="margin-top:var(--space-2);">
-          Entries created in QuickBooks: <strong>{{ job.import_summary.qbo_je_count }}</strong>.
-        </p>
-      </details>
       <div class="actions-row workflow-cta-row" style="margin-top:var(--space-4);">
         <a class="btn btn-link" href="{{ url_for('job_detail', job_id=job.id) }}">Open the job</a>
         <a class="btn btn-primary btn-lg" href="{{ url_for('reconcile_balances') }}"
@@ -35,8 +29,26 @@
           Proceed to Step 6: Final balance check &rarr;
         </a>
       </div>
+      <details class="quiet" style="margin-top:var(--space-3);">
+        <summary>Details</summary>
+        <p class="muted" style="margin-top:var(--space-2);">
+          Entries created in QuickBooks: <strong>{{ job.import_summary.qbo_je_count }}</strong>.
+        </p>
+      </details>
     </section>
   {% else %}
+    <div class="hero">
+      <p class="eyebrow">Step 5 of 6 &middot; Send</p>
+      <h1>Send to QuickBooks.</h1>
+      <p data-testid="step5-clarification" style="max-width:64ch;">
+        We&rsquo;ll send everything to
+        <strong>{{ qbo_connection.company_name or 'your QuickBooks Online company' }}</strong>
+        for you. You do not need to enter anything manually in QuickBooks.
+      </p>
+    </div>
+  {% endif %}
+
+  {% if not already_imported %}
     <section class="card" data-testid="send-to-qbo-card"
              style="padding:var(--space-6);margin-bottom:var(--space-6);">
       <p class="eyebrow">Ready to send</p>

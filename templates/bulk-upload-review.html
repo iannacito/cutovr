@@ -36,21 +36,41 @@
         <p class="eyebrow">Ready for Step 3</p>
         <h3>Amazing! Your reports are uploaded.</h3>
         <p>You&rsquo;re ready to match your accounts to QuickBooks.</p>
+        <p class="muted" style="margin-top:var(--space-2);">
+          Forgot one? You can add more files below before you continue
+          &mdash; no need to start over.
+        </p>
       </div>
       <div class="next-card__actions">
         <a class="btn btn-primary btn-lg" href="{{ url_for('match_accounts_entry') }}" data-testid="step2-proceed-to-step3">Proceed to Step 3: Match accounts &rarr;</a>
-        <a class="btn" href="#add-more-reports">Add more files</a>
+        <a class="btn btn-secondary btn-lg" href="#add-more-reports"
+           data-testid="step2-add-more-files-top">
+          Add more files &darr;
+        </a>
       </div>
     </div>
   {% endif %}
 
-  <section class="card" id="add-more-reports" style="margin-bottom:var(--space-8);">
-    <p class="eyebrow">Forgot one?</p>
-    <h3 style="margin:var(--space-1) 0 var(--space-2);">Add more files</h3>
-    <p class="muted" style="max-width:60ch;margin-bottom:var(--space-4);">
-      You can add more PCLaw exports without starting over.
+  {# Add-more-files is surfaced as a real, full-size card right under the
+     "ready for Step 3" panel so lawyers don't miss it below the fold.
+     The user tested with us said the prior tiny link was invisible to
+     anyone who didn't scroll. Keep the input large and the CTA loud. #}
+  <section class="card add-more-card" id="add-more-reports"
+           data-testid="step2-add-more-section"
+           style="padding:var(--space-6);margin-bottom:var(--space-8);
+                  border:2px solid var(--brand-2, var(--brand, #3851e8));
+                  background:var(--surface-1, #fff);">
+    <p class="eyebrow">Forgot one? Add more files here</p>
+    <h2 style="margin:var(--space-1) 0 var(--space-2);font-size:1.4rem;">
+      Add more files
+    </h2>
+    <p style="max-width:60ch;margin-bottom:var(--space-4);">
+      You can add more PCLaw exports without starting over. Drop them in
+      below and we&rsquo;ll merge them into this migration run.
     </p>
-    <form action="{{ url_for('bulk_upload_append', bulk_id=bulk.id) }}" method="post" enctype="multipart/form-data">
+    <form action="{{ url_for('bulk_upload_append', bulk_id=bulk.id) }}"
+          method="post" enctype="multipart/form-data"
+          data-testid="step2-add-more-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>
         <span>Additional PCLaw exports</span>
@@ -58,7 +78,10 @@
         <small class="muted" style="font-size:.85rem;">Hold Ctrl or &#8984; to select multiple CSVs.</small>
       </label>
       <div class="actions-row" style="margin-top:var(--space-4);">
-        <button class="btn btn-primary" type="submit">Add to this migration</button>
+        <button class="btn btn-primary btn-lg" type="submit"
+                data-testid="step2-add-more-submit">
+          Add to this migration
+        </button>
       </div>
     </form>
   </section>
