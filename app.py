@@ -5964,15 +5964,22 @@ def _build_account_mapping_rows(*, pclaw_accounts, qbo_accounts, saved_by_key):
         if key and key not in auto_by_name_norm:
             auto_by_name_norm[key] = a
 
+    from coa_apply import is_system_calculated_account as _is_system_calc
+
     rows = []
     matched_saved = 0
     matched_auto = 0
     unmatched = 0
     for idx, pa in enumerate(pclaw_accounts):
+        # System-calculated accounts (Net Income, Net Income (Loss),
+        # Current Year Earnings) are QuickBooks-managed totals; we never
+        # create or match them like normal accounts. Surface them with
+        # a plain-English explanation so lawyers don't have to act.
+        is_system_calc = _is_system_calc({"account_name": pa.get("name")})
         saved = saved_by_key.get((pa["number"], pa["name"]))
         suggestion = None
         match_basis = None
-        if not saved:
+        if not is_system_calc and not saved:
             num = (pa["number"] or "").strip() if pa.get("number") else ""
             if num and num in auto_by_number:
                 suggestion = auto_by_number[num]
@@ -5995,8 +6002,12 @@ def _build_account_mapping_rows(*, pclaw_accounts, qbo_accounts, saved_by_key):
             "current_qbo_name": (saved or {}).get("qbo_account_name") or (suggestion or {}).get("Name"),
             "is_saved": bool(saved),
             "is_suggestion": bool(suggestion and not saved),
+            "is_system_calculated": is_system_calc,
             "match_basis": match_basis,
         })
+        if is_system_calc:
+            # Treat as "handled" — do not flag as unmatched in the count.
+            continue
         if saved:
             matched_saved += 1
         elif suggestion:
@@ -6004,18 +6015,23 @@ def _build_account_mapping_rows(*, pclaw_accounts, qbo_accounts, saved_by_key):
         else:
             unmatched += 1
 
-    total = len(rows)
+    # Don't count system-calculated rows (Net Income, etc.) toward the
+    # "matched X of Y" headline — QuickBooks owns them and lawyers
+    # shouldn't see them as a pending task.
+    system_calc_count = sum(1 for r in rows if r.get("is_system_calculated"))
+    total = len(rows) - system_calc_count
     summary = {
         "total": total,
         "matched_saved": matched_saved,
         "matched_auto": matched_auto,
         "unmatched": unmatched,
         "matched": matched_saved + matched_auto,
+        "system_calculated": system_calc_count,
         # "many unmatched" threshold: any unmatched account is worth a
         # callout for lawyers, but we ask the template to render a stronger
         # banner once the unmatched share crosses 25% of accounts so the
         # CTA dominates the page on a fresh demo-style mismatch.
-        "many_unmatched": (unmatched > 0 and (unmatched * 4 >= total)),
+        "many_unmatched": (unmatched > 0 and total > 0 and (unmatched * 4 >= total)),
         "any_unmatched": unmatched > 0,
     }
     return rows, summary
@@ -6258,11 +6274,11 @@ def account_mapping_create_missing(job_id):
             ),
         )
         flash(
-            "We couldn't safely guess the QuickBooks account type for "
-            f"{len(plan.blocked)} account(s): {blocker_names}. "
-            "Upload your PCLaw Chart of Accounts (or set the type in the "
-            "COA step) so those rows can be created without risk of a "
-            "wrong type. Nothing has been created in QuickBooks yet.",
+            f"We need a bit more information for {len(plan.blocked)} "
+            f"account(s): {blocker_names}. Upload your account list with "
+            "a category for each (for example: Bank, Income, Expense), "
+            "or match those rows to an existing QuickBooks account. "
+            "Nothing has been created in QuickBooks yet.",
             "error" if not plan.to_create else "warning",
         )
         if not plan.to_create:

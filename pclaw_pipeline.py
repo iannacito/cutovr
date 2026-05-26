@@ -139,9 +139,19 @@ def derive_entity_hint(row, account_type):
 
 
 def find_unmapped_accounts(rows, account_mapping, mapping_mode):
-    """Return the set of PCLaw account keys that have no QBO match."""
+    """Return the set of PCLaw account keys that have no QBO match.
+
+    System-calculated accounts (Net Income / Net Income (Loss) / Current
+    Year Earnings) are excluded — QuickBooks computes those from posted
+    activity, so they should never appear on the "missing accounts"
+    blocker. We import them here lazily to avoid a circular import with
+    ``coa_apply``.
+    """
+    from coa_apply import is_system_calculated_account  # local import to avoid cycle
     unmapped = set()
     for row in rows:
+        if is_system_calculated_account({"account_name": row.get("account_name")}):
+            continue
         key = row["account_number"] if mapping_mode == "number" else row["account_name"]
         if key and key not in account_mapping:
             unmapped.add(f"{row.get('account_number', '')} {row.get('account_name', '')}".strip())
