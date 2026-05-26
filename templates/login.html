@@ -15,9 +15,16 @@
           <span>Email</span>
           <input type="email" name="email" required value="{{ email or '' }}" autofocus>
         </label>
-        <label>
+        <label class="pwd-field">
           <span>Password</span>
-          <input type="password" name="password" required>
+          <input type="password" name="password" required autocomplete="current-password">
+          <button type="button" class="pwd-toggle"
+                  data-password-toggle
+                  data-password-toggle-target="password"
+                  aria-label="Show password" aria-pressed="false"
+                  data-testid="login-password-toggle">
+            <span class="pwd-toggle-text" aria-hidden="true">Show</span>
+          </button>
         </label>
         <button class="btn btn-primary full-width" type="submit" style="margin-top:.5rem;">Sign in</button>
       </form>

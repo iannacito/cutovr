@@ -1825,6 +1825,79 @@ def reconcile_balances_send_report():
     )
 
 
+@app.route("/reconcile-balances/report.pdf")
+@login_required
+def reconcile_balances_report_pdf():
+    """Stream the final reconciliation report as a PDF download.
+
+    Auth model: same as the rest of Step 6 — the user must be logged
+    in, and we only ever build the PDF from the calling user's own
+    firm state via `_build_reconcile_view(firm_id)`. There is no way
+    to pass a firm id from the request, so this endpoint cannot be
+    used to read another firm's report.
+
+    Behaviour:
+      * If Step 5 hasn't completed yet (nothing imported / blocked),
+        we flash a friendly message and redirect back to the page
+        instead of returning an empty/confusing PDF.
+      * If ReportLab isn't installed (slim deploy), we flash a clear
+        message and redirect — never a 500 stack trace.
+      * On success, we set the right Content-Type and a
+        Content-Disposition that triggers a "download" with a
+        non-technical filename.
+    """
+    user = current_user()
+    firm_id = user["firm_id"]
+    cutover, items, stages, summary = _build_reconcile_view(firm_id)
+    reachable, reason = _step6_is_reachable(stages, summary)
+    if not reachable:
+        flash(
+            "Your migration report isn't ready yet — finish Step 5 "
+            "(Send to QuickBooks) first, then you can download the PDF.",
+            "info",
+        )
+        return redirect(url_for("reconcile_balances"))
+
+    try:
+        pdf_bytes = final_report.build_report_pdf(summary)
+    except ImportError:
+        # ReportLab missing — degrade gracefully.
+        flash(
+            "PDF download isn't available on this server yet. You can "
+            "email yourself the report or copy the on-page text.",
+            "error",
+        )
+        return redirect(url_for("reconcile_balances"))
+    except Exception:  # noqa: BLE001
+        # Never bubble a render error to the user.
+        flash(
+            "We couldn't build the PDF just now — please try again, or "
+            "email yourself the report instead.",
+            "error",
+        )
+        return redirect(url_for("reconcile_balances"))
+
+    try:
+        _audit(
+            "final_report_pdf_downloaded",
+            target_type="firm",
+            target_id=str(firm_id),
+            details=f"bytes={len(pdf_bytes)}",
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+    filename = "pclaw-migrate-final-report.pdf"
+    resp = Response(pdf_bytes, mimetype="application/pdf")
+    resp.headers["Content-Disposition"] = (
+        f'attachment; filename="{filename}"'
+    )
+    resp.headers["Content-Length"] = str(len(pdf_bytes))
+    # The PDF reflects per-user state; don't let intermediaries cache it.
+    resp.headers["Cache-Control"] = "private, no-store"
+    return resp
+
+
 @app.route("/firm/imports")
 @login_required
 def firm_imports():

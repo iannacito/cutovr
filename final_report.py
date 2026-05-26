@@ -489,3 +489,200 @@ def build_report_text(summary: ReconcileSummary) -> str:
     lines.append("")
 
     return "\n".join(lines)
+
+
+# --- PDF rendering ----------------------------------------------------
+#
+# We render a clean, customer-facing PDF of the same summary the page
+# shows. Stays deliberately non-technical: no realm ids, no job ids,
+# no journal-entry counts unless they're already in the on-screen
+# summary (we expose them as a small "By the numbers" block because
+# lawyers do want to see "we imported 87 transactions").
+#
+# ReportLab is the only external dep here. Importing inside the
+# function keeps the module import cheap for tests that don't render
+# PDFs (and lets us return a friendlier error if the dep is missing
+# on a slim deployment).
+
+_PDF_DEFAULT_SUPPORT_EMAIL = "support@pclawmigrate.com"
+
+
+def _status_phrase(summary: "ReconcileSummary") -> str:
+    if summary.is_complete:
+        return "Migration complete — QuickBooks matches PCLaw."
+    if summary.is_blocked:
+        return "Blocked — review the notes below before signing off."
+    return "Migration in progress."
+
+
+def build_report_pdf(
+    summary: "ReconcileSummary",
+    *,
+    support_email: Optional[str] = None,
+) -> bytes:
+    """Render `summary` as a single-file PDF and return the bytes.
+
+    The PDF is intentionally minimal: title, generation timestamp,
+    a one-line status, an "At a glance" block, a "By the numbers"
+    block, a reconciliation list, an optional warnings list, and a
+    support line. We never include QuickBooks realm ids, internal
+    job ids, or any technical identifier in the visible PDF.
+    """
+    # Local import — reportlab is an optional dep at module load.
+    from io import BytesIO
+    from reportlab.lib.pagesizes import LETTER
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.lib import colors
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, ListFlowable,
+        ListItem,
+    )
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=LETTER,
+        leftMargin=0.75 * inch,
+        rightMargin=0.75 * inch,
+        topMargin=0.75 * inch,
+        bottomMargin=0.75 * inch,
+        title=f"Migration summary — {summary.firm_name}",
+        author="PCLaw Migrate",
+    )
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        "TitleX", parent=styles["Title"], fontSize=18, leading=22,
+        textColor=colors.HexColor("#1f3b5b"),
+    )
+    h2 = ParagraphStyle(
+        "H2X", parent=styles["Heading2"], fontSize=13, leading=16,
+        textColor=colors.HexColor("#1f3b5b"), spaceBefore=10, spaceAfter=4,
+    )
+    body = ParagraphStyle(
+        "BodyX", parent=styles["BodyText"], fontSize=10.5, leading=15,
+    )
+    muted = ParagraphStyle(
+        "MutedX", parent=body, textColor=colors.HexColor("#56627a"),
+        fontSize=9.5,
+    )
+
+    story = []
+    story.append(Paragraph(
+        f"PCLaw &rarr; QuickBooks migration summary", title_style))
+    story.append(Paragraph(summary.firm_name, h2))
+    story.append(Paragraph(f"Generated {summary.generated_at}", muted))
+    story.append(Spacer(1, 10))
+
+    status_phrase = _status_phrase(summary)
+    story.append(Paragraph(f"<b>Status:</b> {status_phrase}", body))
+    story.append(Spacer(1, 12))
+
+    # At a glance — only customer-friendly fields. No realm id.
+    glance_rows = [["Firm", summary.firm_name]]
+    if summary.cutover_date:
+        glance_rows.append(["Switchover date", summary.cutover_date])
+    if summary.qbo_company_name:
+        glance_rows.append(
+            ["QuickBooks company", summary.qbo_company_name]
+        )
+    reports = ", ".join(summary.reports_uploaded) if summary.reports_uploaded \
+        else "(none on file)"
+    glance_rows.append(["Reports uploaded", reports])
+
+    story.append(Paragraph("At a glance", h2))
+    t = Table(glance_rows, colWidths=[2.0 * inch, 4.5 * inch])
+    t.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, -1), 10),
+        ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#56627a")),
+        ("TEXTCOLOR", (1, 0), (1, -1), colors.HexColor("#1a2333")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("LINEBELOW", (0, 0), (-1, -2), 0.25, colors.HexColor("#e3e6ec")),
+    ]))
+    story.append(t)
+    story.append(Spacer(1, 10))
+
+    # By the numbers — customer-friendly counts only.
+    number_rows = [
+        ["Accounts matched", str(summary.accounts_matched_count)],
+        ["New QuickBooks accounts created", str(summary.accounts_created_count)],
+        ["Transactions imported", str(summary.transactions_imported)],
+    ]
+    if summary.import_balanced is not None:
+        number_rows.append([
+            "Debits and credits balanced",
+            "Yes" if summary.import_balanced else "No",
+        ])
+    story.append(Paragraph("By the numbers", h2))
+    nt = Table(number_rows, colWidths=[3.5 * inch, 3.0 * inch])
+    nt.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, -1), 10),
+        ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#56627a")),
+        ("TEXTCOLOR", (1, 0), (1, -1), colors.HexColor("#1a2333")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("LINEBELOW", (0, 0), (-1, -2), 0.25, colors.HexColor("#e3e6ec")),
+    ]))
+    story.append(nt)
+    story.append(Spacer(1, 12))
+
+    # Reconciliation lines.
+    story.append(Paragraph("Reconciliation", h2))
+    badge_map = {
+        STATUS_COMPLETED: ("Done", colors.HexColor("#1f7a3a")),
+        STATUS_PENDING: ("Pending", colors.HexColor("#8a6a16")),
+        STATUS_BLOCKED: ("Blocked", colors.HexColor("#a01a1a")),
+        STATUS_SKIPPED: ("Skipped", colors.HexColor("#56627a")),
+    }
+    recon_rows = []
+    for line in summary.lines:
+        badge_text, badge_color = badge_map.get(
+            line.status, ("—", colors.HexColor("#56627a"))
+        )
+        recon_rows.append([
+            Paragraph(
+                f"<font color='{badge_color.hexval()}'><b>{badge_text}</b></font>",
+                body,
+            ),
+            Paragraph(
+                f"<b>{line.label}</b><br/>"
+                f"<font color='#56627a'>{line.detail}</font>",
+                body,
+            ),
+        ])
+    rt = Table(recon_rows, colWidths=[0.9 * inch, 5.6 * inch])
+    rt.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("LINEBELOW", (0, 0), (-1, -2), 0.25, colors.HexColor("#e3e6ec")),
+    ]))
+    story.append(rt)
+    story.append(Spacer(1, 10))
+
+    if summary.warnings:
+        story.append(Paragraph("Heads up", h2))
+        story.append(ListFlowable(
+            [ListItem(Paragraph(w, body)) for w in summary.warnings],
+            bulletType="bullet", leftIndent=14,
+        ))
+        story.append(Spacer(1, 10))
+
+    # Support footer — plain, no technical IDs.
+    se = (support_email or _PDF_DEFAULT_SUPPORT_EMAIL).strip()
+    story.append(Spacer(1, 8))
+    story.append(Paragraph(
+        f"Questions? Email <a href='mailto:{se}'>{se}</a>.",
+        muted,
+    ))
+
+    doc.build(story)
+    pdf_bytes = buf.getvalue()
+    buf.close()
+    return pdf_bytes

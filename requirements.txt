@@ -13,3 +13,6 @@ requests==2.32.3
 # gunicorn 21.2.0 has CVE-2024-1135 (Transfer-Encoding smuggling) fixed
 # in 22.0.0; bump to the latest stable 23.x.
 gunicorn==23.0.0
+# reportlab powers the Step 6 "Download PDF" button. Pure-Python wheel,
+# no system libs required, fine on Render's slim Python image.
+reportlab==4.2.5

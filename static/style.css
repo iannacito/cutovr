@@ -1097,3 +1097,29 @@ details.quiet > *:not(summary) { margin-top: var(--space-3); }
   color: var(--ink-muted);
   font-size: .92rem;
 }
+
+/* ---- Password show/hide toggle ----------------------------------- */
+.pwd-field { position: relative; }
+.pwd-field input[type=password],
+.pwd-field input[type=text] {
+  padding-right: 4.25rem;
+}
+.pwd-toggle {
+  position: absolute;
+  right: .35rem;
+  bottom: .35rem;
+  height: 2.25rem;
+  padding: 0 .65rem;
+  font: 500 .85rem/1 var(--font-sans);
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  color: var(--ink-muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+}
+.pwd-toggle:hover { color: var(--ink); border-color: var(--ink-muted); background: var(--bg-2); }
+.pwd-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pwd-toggle[aria-pressed="true"] { color: var(--ink); border-color: var(--ink); }

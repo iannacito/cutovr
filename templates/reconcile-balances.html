@@ -146,6 +146,22 @@
           Send final report
         </button>
       </form>
+
+      <div data-testid="step6-report-pdf-block"
+           style="max-width:42rem;margin-top:var(--space-5);
+                  padding-top:var(--space-4);
+                  border-top:1px solid var(--line, #e3e6ec);">
+        <p style="margin:0 0 var(--space-3);">
+          Prefer a file you can save or print? Download a clean PDF of
+          this report.
+        </p>
+        <a class="btn btn-secondary btn-lg"
+           href="{{ url_for('reconcile_balances_report_pdf') }}"
+           data-testid="step6-report-pdf-download"
+           download="pclaw-migrate-final-report.pdf">
+          Download PDF
+        </a>
+      </div>
     </section>
 
     {% if report_text %}
