@@ -202,6 +202,89 @@ def _make_session_permanent():
     session.permanent = True
 
 
+# ---------------------------------------------------------------------------
+# Canonical-domain redirect.
+#
+# Render assigns every service a default *.onrender.com URL that stays
+# reachable even after a custom domain is attached. We want customer traffic
+# to land on the branded https://www.pclawmigrate.com host, both for
+# consistency in support docs/email and so the canonical URL is the one users
+# bookmark and search engines index.
+#
+# Rules:
+#   * Only redirects in production (IS_PRODUCTION). Local dev untouched.
+#   * Only fires for the production Render host listed in REDIRECT_FROM_HOSTS;
+#     the demo Render host (if any) and the custom domain itself never
+#     redirect.
+#   * Only redirects safe (idempotent) methods — GET/HEAD. A POST that
+#     somehow landed here (e.g. a stale form action) is passed through to
+#     avoid breaking OAuth callbacks or webhook deliveries that expect to
+#     keep their method + body.
+#   * /healthz is excluded so Render's deploy health probe sees a direct
+#     200, not a 301 hop to a different host.
+#   * Preserves full path + query string verbatim.
+#
+# Operators can override the source host(s) and target via env vars without
+# editing code:
+#   CANONICAL_REDIRECT_FROM_HOSTS  comma-separated, default
+#                                  "pclaw-qbo-v2.onrender.com"
+#   CANONICAL_REDIRECT_TO          full origin, default
+#                                  "https://www.pclawmigrate.com"
+# ---------------------------------------------------------------------------
+_DEFAULT_CANONICAL_FROM_HOSTS = "pclaw-qbo-v2.onrender.com"
+_DEFAULT_CANONICAL_TO = "https://www.pclawmigrate.com"
+
+_canonical_redirect_from_hosts = {
+    h.strip().lower()
+    for h in os.environ.get(
+        "CANONICAL_REDIRECT_FROM_HOSTS", _DEFAULT_CANONICAL_FROM_HOSTS
+    ).split(",")
+    if h.strip()
+}
+_canonical_redirect_to = (
+    os.environ.get("CANONICAL_REDIRECT_TO", _DEFAULT_CANONICAL_TO).rstrip("/")
+)
+
+# Paths that must answer directly on the Render host so deploy health
+# checks (which may target the default *.onrender.com URL) never see a
+# redirect to an unrelated origin.
+_CANONICAL_REDIRECT_EXEMPT_PATHS = frozenset({"/healthz"})
+
+
+@app.before_request
+def _canonical_domain_redirect():
+    """Redirect default Render host to the branded custom domain in prod.
+
+    Returning ``None`` lets the request continue normally; returning a
+    Response short-circuits the rest of the pipeline (per Flask's
+    before_request contract).
+    """
+    if not IS_PRODUCTION:
+        return None
+    if not _canonical_redirect_from_hosts or not _canonical_redirect_to:
+        return None
+    # request.host is host[:port] after ProxyFix has applied
+    # X-Forwarded-Host. Lowercase + strip port for a tolerant compare.
+    host = (request.host or "").lower().split(":", 1)[0]
+    if host not in _canonical_redirect_from_hosts:
+        return None
+    if request.method not in ("GET", "HEAD"):
+        return None
+    if request.path in _CANONICAL_REDIRECT_EXEMPT_PATHS:
+        return None
+    # Preserve path + query string verbatim. request.full_path always
+    # starts with "/" and includes the "?" if a query exists (with a
+    # trailing "?" on path-only URLs, which we trim).
+    full_path = request.full_path
+    if full_path.endswith("?"):
+        full_path = full_path[:-1]
+    target = f"{_canonical_redirect_to}{full_path}"
+    # 301 = permanent. Browsers and crawlers cache it, which is what we
+    # want for the canonical URL. Safe for GET/HEAD only, which is why
+    # we gate on method above.
+    return redirect(target, code=301)
+
+
 @app.errorhandler(413)
 def _request_entity_too_large(_e):
     """Friendly message for uploads that exceed MAX_CONTENT_LENGTH."""
