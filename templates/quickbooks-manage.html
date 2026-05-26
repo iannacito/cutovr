@@ -13,6 +13,12 @@
       stored QuickBooks tokens, plus controls to reconnect or disconnect.
       Tokens are stored encrypted at rest and never displayed.
     </p>
+    <p class="muted" style="margin-top:var(--space-3);">
+      New to QuickBooks Online?
+      <a href="{{ url_for('quickbooks_guide') }}">Read the QuickBooks guide &rarr;</a>
+      &mdash; a plain-English orientation to what {{ app_name }} posts,
+      what stays untouched, and where to look in QBO after the import.
+    </p>
   </div>
 
   {% if qbo_is_sandbox %}

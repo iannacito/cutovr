@@ -6,18 +6,24 @@ Run from project root:
 
 Covers:
   T1 A normal logged-in customer (no OPERATOR_EMAILS, no DEMO_MODE) sees
-     only the customer-facing nav links and does NOT see Readiness,
-     Operator, or Demo links.
+     exactly the three customer-facing nav links — Migration, QuickBooks,
+     Support — and does NOT see Dashboard, Onboarding, Checklist,
+     QuickBooks guide, Readiness, Operator, or Demo as separate top-level
+     nav items.
   T2 An operator (email in OPERATOR_EMAILS) sees Readiness, Operator,
      and Demo links in addition to the customer nav.
   T3 The Readiness route is still reachable by a normal customer typing
      the URL directly (the link is hidden, not the page) — readiness is
      informational, not secret. (If this changes, this test will catch
      it.)
-  T4 Authenticated nav uses plain-English "QuickBooks guide" rather
-     than the "QBO guide" abbreviation.
+  T4 The QuickBooks guide is no longer a separate top-level nav item but
+     stays reachable from inside the QuickBooks page (a link on
+     /quickbooks points at /quickbooks-guide). The direct route also
+     still works. No "QBO" abbreviation appears in the nav.
   T5 The onboarding page's "Go-live readiness" CTA button is hidden
      from normal customers (operator-only).
+  T7 The /dashboard, /onboarding, /migration-checklist routes still
+     respond 200 so bookmarked links from the previous nav don't 404.
 """
 
 import importlib
@@ -66,6 +72,17 @@ def _signup(client, firm, email, password="passw0rd!1234"):
     )
 
 
+def _nav_block(body: str) -> str:
+    # Isolate the primary <nav>...</nav> so assertions about top-level nav
+    # links don't accidentally match identical link text inside page
+    # content (e.g. an in-page "QuickBooks guide" link on /quickbooks).
+    start = body.find('<nav aria-label="Primary">')
+    if start == -1:
+        return body
+    end = body.find("</nav>", start)
+    return body[start:end] if end != -1 else body[start:]
+
+
 def t1_normal_customer_does_not_see_internal_links():
     appmod = _reset_app({})
     c = appmod.app.test_client()
@@ -74,25 +91,33 @@ def t1_normal_customer_does_not_see_internal_links():
     r = c.get("/dashboard")
     assert r.status_code == 200
     body = r.get_data(as_text=True)
+    nav = _nav_block(body)
 
-    # Customer-facing links a normal customer must see.
+    # The three customer-facing top-level nav links a normal customer
+    # must see.
+    for needle in (">Migration<", ">QuickBooks<", ">Support<"):
+        assert needle in nav, f"normal customer nav missing {needle!r}"
+
+    # Items removed from top-level customer nav in the simplification.
+    # Their routes still work (see t7) but they're no longer in the chrome.
     for needle in (
         ">Dashboard<",
         ">Onboarding<",
         ">Checklist<",
-        ">QuickBooks<",
         ">QuickBooks guide<",
-        ">Support<",
     ):
-        assert needle in body, f"normal customer nav missing {needle!r}"
+        assert needle not in nav, (
+            f"top-level customer nav must no longer expose {needle!r} "
+            f"(it should be reachable from inside Migration or QuickBooks)"
+        )
 
-    # Internal links a normal customer must NOT see.
+    # Internal links a normal customer must NOT see anywhere in nav.
     for needle in (">Readiness<", ">Operator<", ">Demo<"):
-        assert needle not in body, (
+        assert needle not in nav, (
             f"normal customer nav must NOT expose internal link {needle!r}"
         )
 
-    print("T1 OK: normal customer nav shows only customer-facing links")
+    print("T1 OK: normal customer nav shows only Migration / QuickBooks / Support")
 
 
 def t2_operator_sees_internal_links():
@@ -104,9 +129,14 @@ def t2_operator_sees_internal_links():
     r = c.get("/dashboard")
     assert r.status_code == 200
     body = r.get_data(as_text=True)
+    nav = _nav_block(body)
 
     for needle in (">Readiness<", ">Operator<", ">Demo<"):
-        assert needle in body, f"operator nav missing internal link {needle!r}"
+        assert needle in nav, f"operator nav missing internal link {needle!r}"
+
+    # Operator still sees the three simplified customer nav links too.
+    for needle in (">Migration<", ">QuickBooks<", ">Support<"):
+        assert needle in nav, f"operator nav missing customer link {needle!r}"
 
     print("T2 OK: operator nav exposes Readiness, Operator, Demo links")
 
@@ -123,14 +153,34 @@ def t3_readiness_route_still_reachable_for_logged_in_users():
     print("T3 OK: /readiness route still reachable by logged-in users (link hidden, page not)")
 
 
-def t4_nav_uses_plain_english_quickbooks_guide():
+def t4_quickbooks_guide_reachable_from_quickbooks_page_not_top_nav():
     appmod = _reset_app({})
     c = appmod.app.test_client()
     _signup(c, "Customer Firm 4", "alice4@customer.test")
+
+    # Top-level nav no longer offers a separate "QuickBooks guide" link
+    # and never uses the QBO abbreviation. The route /quickbooks-guide
+    # is still public so existing bookmarks keep working.
     body = c.get("/dashboard").get_data(as_text=True)
-    assert ">QuickBooks guide<" in body, "nav should use plain-English 'QuickBooks guide'"
-    assert ">QBO guide<" not in body, "nav should not use the QBO abbreviation"
-    print("T4 OK: nav uses 'QuickBooks guide' not 'QBO guide'")
+    nav = _nav_block(body)
+    assert ">QuickBooks guide<" not in nav, (
+        "top-level nav should no longer have a separate 'QuickBooks guide' item"
+    )
+    assert "QBO" not in nav, "nav should not use the QBO abbreviation"
+
+    # The QuickBooks manage page surfaces the guide inline so customers
+    # who land on /quickbooks can still get to it in one click.
+    qbo_body = c.get("/quickbooks").get_data(as_text=True)
+    assert "/quickbooks-guide" in qbo_body, (
+        "/quickbooks page must link to the QuickBooks guide so it stays "
+        "discoverable after being removed from the top-level nav"
+    )
+
+    # Direct route still works.
+    r = c.get("/quickbooks-guide")
+    assert r.status_code == 200, "/quickbooks-guide direct route must keep working"
+
+    print("T4 OK: QuickBooks guide is reachable from /quickbooks (not a top-nav item)")
 
 
 def t5_onboarding_readiness_cta_hidden_from_customers():
@@ -160,11 +210,27 @@ def t6_onboarding_readiness_cta_visible_to_operators():
     print("T6 OK: onboarding 'Go-live readiness' CTA visible to operators")
 
 
+def t7_pre_simplification_routes_still_work_for_bookmarks():
+    # The nav was simplified to three items, but the underlying routes
+    # for the removed top-level items must still resolve so any bookmark
+    # someone saved from the old nav keeps working.
+    appmod = _reset_app({})
+    c = appmod.app.test_client()
+    _signup(c, "Customer Firm 7", "alice7@customer.test")
+    for path in ("/dashboard", "/onboarding", "/migration-checklist", "/quickbooks-guide"):
+        r = c.get(path)
+        assert r.status_code in (200, 302), (
+            f"bookmarked route {path} must still respond, got {r.status_code}"
+        )
+    print("T7 OK: /dashboard, /onboarding, /migration-checklist, /quickbooks-guide still respond")
+
+
 if __name__ == "__main__":
     t1_normal_customer_does_not_see_internal_links()
     t2_operator_sees_internal_links()
     t3_readiness_route_still_reachable_for_logged_in_users()
-    t4_nav_uses_plain_english_quickbooks_guide()
+    t4_quickbooks_guide_reachable_from_quickbooks_page_not_top_nav()
     t5_onboarding_readiness_cta_hidden_from_customers()
     t6_onboarding_readiness_cta_visible_to_operators()
-    print("ALL OK: customer nav hides internal links; operators see them.")
+    t7_pre_simplification_routes_still_work_for_bookmarks()
+    print("ALL OK: customer nav simplified to Migration/QuickBooks/Support; operator gates and bookmarked routes intact.")

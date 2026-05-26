@@ -24,11 +24,15 @@
       </a>
       <nav aria-label="Primary">
         {% if user %}
-          <a href="{{ url_for('dashboard') }}">Dashboard</a>
-          <a href="{{ url_for('onboarding') }}">Onboarding</a>
-          <a href="{{ url_for('migration_checklist') }}">Checklist</a>
+          {# Customer-facing nav is intentionally three items: Migration is
+             the active workflow (was Dashboard/Onboarding/Checklist),
+             QuickBooks is the connection/manage page (the QuickBooks guide
+             is linked from inside it instead of as a separate top-level
+             item), Support is help/chat. Operator/admin tools stay behind
+             the existing is_operator / demo_visible flags. #}
+          <a href="{{ url_for('dashboard') }}">Migration</a>
           <a href="{{ url_for('quickbooks_manage') }}">QuickBooks</a>
-          <a href="{{ url_for('quickbooks_guide') }}">QuickBooks guide</a>
+          <a href="{{ url_for('support') }}">Support</a>
           {% if is_operator %}
             <a href="{{ url_for('readiness_page') }}">Readiness</a>
             <a href="{{ url_for('operator_dashboard') }}">Operator</a>
@@ -36,7 +40,6 @@
           {% if demo_visible %}
             <a href="{{ url_for('demo_workspace') }}">Demo</a>
           {% endif %}
-          <a href="{{ url_for('support') }}">Support</a>
           <form action="{{ url_for('logout') }}" method="post" style="display:inline;">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="btn btn-link" type="submit" style="padding:0;">Log out</button>

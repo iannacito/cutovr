@@ -294,12 +294,18 @@ def g2_qbo_guide_linked_from_migration_checklist():
 
 
 def g3_qbo_guide_linked_from_authenticated_nav():
+    # The QuickBooks guide is no longer a top-level customer nav item; it is
+    # surfaced from inside the Migration (dashboard) and QuickBooks pages so
+    # customers can still reach it in one click.
     c = appmod.app.test_client()
     _signup_and_login(c, "g3@x.test", "G3 Firm")
-    body = c.get("/dashboard").get_data(as_text=True)
-    assert 'href="/quickbooks-guide"' in body, \
-        "authenticated nav should link to /quickbooks-guide"
-    print("G3 OK: authenticated nav exposes the QBO guide link")
+    dash_body = c.get("/dashboard").get_data(as_text=True)
+    qbo_body = c.get("/quickbooks").get_data(as_text=True)
+    assert 'href="/quickbooks-guide"' in dash_body, \
+        "Migration (dashboard) page should link to /quickbooks-guide"
+    assert "/quickbooks-guide" in qbo_body, \
+        "QuickBooks manage page should link to /quickbooks-guide"
+    print("G3 OK: QuickBooks guide reachable from Migration page and QuickBooks page")
 
 
 if __name__ == "__main__":
