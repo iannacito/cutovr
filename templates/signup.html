@@ -19,13 +19,27 @@
           <input type="email" name="email" required value="{{ email or '' }}" placeholder="ops@firm.com">
         </label>
         <div class="form-grid">
-          <label>
+          <label class="pwd-field">
             <span>Password (12+ chars)</span>
-            <input type="password" name="password" minlength="12" required>
+            <input type="password" name="password" minlength="12" required autocomplete="new-password">
+            <button type="button" class="pwd-toggle"
+                    data-password-toggle
+                    data-password-toggle-target="password"
+                    aria-label="Show password" aria-pressed="false"
+                    data-testid="signup-password-toggle">
+              <span class="pwd-toggle-text" aria-hidden="true">Show</span>
+            </button>
           </label>
-          <label>
+          <label class="pwd-field">
             <span>Confirm password</span>
-            <input type="password" name="confirm_password" minlength="12" required>
+            <input type="password" name="confirm_password" minlength="12" required autocomplete="new-password">
+            <button type="button" class="pwd-toggle"
+                    data-password-toggle
+                    data-password-toggle-target="confirm_password"
+                    aria-label="Show password" aria-pressed="false"
+                    data-testid="signup-confirm-password-toggle">
+              <span class="pwd-toggle-text" aria-hidden="true">Show</span>
+            </button>
           </label>
         </div>
         <button class="btn btn-primary full-width" type="submit" style="margin-top:.5rem;">Create firm workspace</button>
