@@ -167,7 +167,7 @@ def main():
                                side_effect=AssertionError("preview must not create Vendors")) as no_vend:
             r = c.get(f"/jobs/{job_id}/preview-import")
             assert r.status_code == 200, r.status_code
-            assert b"What would be posted" in r.data
+            assert b"Review what we" in r.data and b"send to QuickBooks" in r.data
             assert no_je.call_count == 0
             assert no_cust.call_count == 0
             assert no_vend.call_count == 0

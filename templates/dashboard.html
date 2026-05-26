@@ -61,7 +61,7 @@
       <p class="eyebrow">Step 2 of 6 &middot; Upload</p>
       <h2>Upload your PCLaw reports</h2>
       <p class="muted" style="margin-bottom:var(--space-5);">
-        Pick your PCLaw CSV exports and upload them all at once.
+        Add your PCLaw CSV exports. We&rsquo;ll figure out which is which.
       </p>
       <form action="{{ url_for('upload_bulk') }}" method="post" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -122,11 +122,11 @@
     {% if at_upload_stage %}
     <article class="card card--inset" data-testid="step2-nav">
       <p class="eyebrow">Step 2 navigation</p>
-      <h3>Where to next?</h3>
+      <h3>What&rsquo;s next</h3>
       {% if upload_ready_to_advance %}
         <p>
-          Your required reports are uploaded. Continue to Step 3 to pair
-          PCLaw accounts with QuickBooks accounts.
+          Great &mdash; your reports are uploaded. Next, we&rsquo;ll
+          match each PCLaw account to QuickBooks.
         </p>
         <div class="actions-row" style="margin-top:var(--space-4);">
           <a class="btn btn-primary btn-lg"
@@ -137,7 +137,7 @@
         </div>
       {% else %}
         <p>
-          Upload these to keep going:
+          We still need these to continue:
         </p>
         {% if upload_missing_reports %}
           <ul class="secure-list" style="margin-top:var(--space-3);">

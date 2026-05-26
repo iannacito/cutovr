@@ -9,12 +9,11 @@
   <section class="card detail-hero">
     <div class="flex-between">
       <div>
-        <p class="eyebrow">Step 4 of 6 &middot; Review import</p>
-        <h1>What would be posted to QuickBooks</h1>
-        <p class="muted" style="margin-top:.25rem;">
-          This is a <strong>dry run</strong>. Nothing has been sent to QuickBooks &mdash;
-          we are only showing you the journal entries we <em>would</em> create
-          if you confirmed the import.
+        <p class="eyebrow">Step 4 of 6 &middot; Review</p>
+        <h1>Review what we&rsquo;ll send to QuickBooks.</h1>
+        <p class="muted" style="margin-top:.25rem;max-width:60ch;">
+          Nothing has been sent yet. Take a look below &mdash;
+          when you&rsquo;re ready, go to Step 5.
         </p>
       </div>
       <div class="stack-sm" style="text-align:right;">
@@ -45,8 +44,8 @@
   {% else %}
 
   <section class="card">
-    <p class="eyebrow">Summary</p>
-    <h2>If you confirmed, this would post:</h2>
+    <p class="eyebrow">At a glance</p>
+    <h2>Here&rsquo;s what we&rsquo;ll send.</h2>
     <dl class="summary-grid">
       <div><dt>JournalEntry records</dt><dd>{{ preview.journal_entry_count }}</dd></div>
       <div><dt>Total source transactions</dt><dd>{{ preview.transaction_count_total }}</dd></div>
@@ -266,18 +265,17 @@
 
   {% endif %}{# preview_error else #}
 
-  <section class="card">
-    <p class="eyebrow">What happens when I confirm?</p>
-    <h2>Migration steps</h2>
-    <ol>
-      <li><strong>Validate</strong> &mdash; we already parsed your CSV and checked it for balance &amp; required columns.</li>
-      <li><strong>Map accounts</strong> &mdash; pair each PCLaw account with a QuickBooks account.</li>
-      <li><strong>Preview</strong> &mdash; (this page) see exactly what would be posted.</li>
-      <li><strong>Connect QuickBooks</strong> &mdash; authorize the QBO company that should receive the journal entries.</li>
-      <li><strong>Confirm import</strong> &mdash; on production, type <code>IMPORT</code> to post.</li>
-      <li><strong>Reconcile / Reverse</strong> &mdash; download the reconciliation report or post offsetting entries if needed.</li>
+  <details class="quiet" style="margin-top:var(--space-6);">
+    <summary>The six migration steps</summary>
+    <ol style="margin-top:var(--space-3);">
+      <li><strong>Set up</strong> your switchover date.</li>
+      <li><strong>Upload</strong> your PCLaw reports.</li>
+      <li><strong>Match</strong> each PCLaw account to QuickBooks.</li>
+      <li><strong>Review</strong> what we&rsquo;ll send. (You&rsquo;re here.)</li>
+      <li><strong>Send</strong> to QuickBooks.</li>
+      <li><strong>Final balance check</strong> &mdash; confirm everything matches.</li>
     </ol>
-  </section>
+  </details>
 
   <div class="actions-row" data-testid="step4-nav-footer"
        style="margin-top:var(--space-6);">

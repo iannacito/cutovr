@@ -175,7 +175,7 @@ def _run_flask_tests():
         assert resp.status_code == 200, resp.status_code
         body = resp.get_data(as_text=True)
         for needle in (
-            "Tell us about the cutover",
+            "switchover",          # plain-English replacement for "cutover"
             "Cutover date",
             "Opening balance",
             "Country",

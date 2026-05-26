@@ -344,7 +344,9 @@ def r6_checklist_step5_cta_and_copy():
     # template; normalise whitespace before checking the phrase.
     normalized = " ".join(body.split())
     assert "do not need to enter anything manually in QuickBooks" in normalized
-    assert "sends the prepared entries from PCLaw Migrate" in normalized
+    # Plain-English clarification (post copy-cleanup): explicitly says we
+    # send everything to QuickBooks on the user's behalf.
+    assert "send everything to QuickBooks" in normalized
     print("R6 OK: migration-checklist Step 5 CTA points at /import-job "
           "and renders the 'no manual QBO entry' clarification")
 

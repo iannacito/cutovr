@@ -139,10 +139,11 @@ def s3_bulk_review_has_append_form():
     # The append form action points at the new route.
     assert f"/upload/bulk/{bulk_id}/append" in body, \
         "review page should expose the append-files form action"
-    # A clear "Add more reports" CTA / heading is present.
+    # A clear "Add more reports" / "Add more files" CTA / heading is present.
     assert ("Add more reports" in body
+            or "Add more files" in body
             or "Upload additional reports" in body), \
-        "review page should call out an Add-more-reports affordance"
+        "review page should call out an Add-more-files affordance"
     # The legacy "Continue" CTA stays visible when nothing is missing
     # OR an "Upload missing files" CTA when something is missing.
     assert ("Continue &rarr;" in body
