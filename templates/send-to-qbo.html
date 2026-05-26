@@ -5,15 +5,12 @@
   {% include "_workflow_stepper.html" %}
 
   <div class="hero">
-    <p class="eyebrow">Step 5 of 6 &middot; Send to QuickBooks</p>
-    <h1>Send the prepared entries to QuickBooks</h1>
+    <p class="eyebrow">Step 5 of 6 &middot; Send</p>
+    <h1>Send to QuickBooks.</h1>
     <p data-testid="step5-clarification" style="max-width:64ch;">
-      This is the only step that writes to QuickBooks. The app posts the
-      prepared journal entries from PCLaw Migrate to
+      We&rsquo;ll send everything to
       <strong>{{ qbo_connection.company_name or qbo_connection.realm_id or 'your QuickBooks Online company' }}</strong>
-      for you &mdash; you do not need to enter anything manually in
-      QuickBooks. (You only touch QuickBooks Online directly to authorize
-      the connection and to verify results after the import.)
+      for you. You do not need to enter anything manually in QuickBooks.
     </p>
   </div>
 
@@ -21,42 +18,46 @@
     <section class="card success-panel" data-testid="already-imported"
              style="padding:var(--space-6);margin-bottom:var(--space-6);">
       <p class="eyebrow">Sent</p>
-      <h2 style="margin-top:0;">This migration has already been sent to QuickBooks.</h2>
+      <h2 style="margin-top:0;">Amazing! Your migration is in QuickBooks.</h2>
       <p>
-        QuickBooks entries created:
-        <strong>{{ job.import_summary.qbo_je_count }}</strong>.
-        Open the job to review the receipt or proceed to Step 6 to
-        reconcile balances.
+        You&rsquo;re ready for the final balance check.
       </p>
+      <details class="quiet" style="margin-top:var(--space-3);">
+        <summary>Details</summary>
+        <p class="muted" style="margin-top:var(--space-2);">
+          Entries created in QuickBooks: <strong>{{ job.import_summary.qbo_je_count }}</strong>.
+        </p>
+      </details>
       <div class="actions-row" style="margin-top:var(--space-4);">
         <a class="btn btn-primary btn-lg" href="{{ url_for('reconcile_balances') }}"
            data-testid="step5-next-cta">
-          Proceed to Step 6: Reconcile balances &rarr;
+          Proceed to Step 6: Final balance check &rarr;
         </a>
-        <a class="btn" href="{{ url_for('job_detail', job_id=job.id) }}">Open the job</a>
+        <a class="btn btn-link" href="{{ url_for('job_detail', job_id=job.id) }}">Open the job</a>
       </div>
     </section>
   {% else %}
     <section class="card" data-testid="send-to-qbo-card"
              style="padding:var(--space-6);margin-bottom:var(--space-6);">
-      <p class="eyebrow">Final confirmation</p>
-      <h2 style="margin-top:0;">Ready to post {{ (job.summary or {}).row_count or job.id }} record(s) to QuickBooks.</h2>
-      <p style="max-width:64ch;">
-        Source file: <code>{{ job.source_file }}</code><br>
-        Destination: <strong>{{ qbo_connection.company_name or qbo_connection.realm_id }}</strong>
-        {% if qbo_is_sandbox %}<span class="badge">Sandbox</span>{% endif %}
-      </p>
-      {% if (job.summary or {}).balanced is defined %}
-        <p class="muted">
-          Debits and credits balance:
-          <strong>{{ "Yes" if job.summary.balanced else "NO" }}</strong>.
-        </p>
-      {% endif %}
+      <p class="eyebrow">Ready to send</p>
+      <h2 style="margin-top:0;">You&rsquo;re ready to send {{ (job.summary or {}).row_count or job.id }} record(s) to QuickBooks.</h2>
       <p class="muted" style="max-width:64ch;">
-        You can post offsetting reversal entries afterwards if needed,
-        but the originals stay visible. Nothing is sent until you click
-        the button below.
+        Nothing is sent until you click the button below.
       </p>
+      <details class="quiet" style="margin-top:var(--space-3);">
+        <summary>Details</summary>
+        <p style="max-width:64ch;margin-top:var(--space-2);">
+          Source file: <code>{{ job.source_file }}</code><br>
+          Destination: <strong>{{ qbo_connection.company_name or qbo_connection.realm_id }}</strong>
+          {% if qbo_is_sandbox %}<span class="badge">Sandbox</span>{% endif %}
+        </p>
+        {% if (job.summary or {}).balanced is defined %}
+          <p class="muted">
+            Debits and credits balance:
+            <strong>{{ "Yes" if job.summary.balanced else "NO" }}</strong>.
+          </p>
+        {% endif %}
+      </details>
 
       <form action="{{ url_for('import_to_qbo', job_id=job.id) }}" method="post"
             {% if not qbo_is_sandbox and qbo_real_import %}

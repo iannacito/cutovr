@@ -6,18 +6,12 @@
 
   <header>
     <p class="eyebrow">Step 3 of 6 &middot; Match accounts</p>
-    <h1 class="display" style="font-size:clamp(1.8rem,3.5vw,2.6rem);">Pair each PCLaw account with QuickBooks.</h1>
+    <h1 class="display" style="font-size:clamp(1.8rem,3.5vw,2.6rem);">Match your PCLaw accounts to QuickBooks.</h1>
     <p class="muted" style="max-width:60ch;">
-      Match each PCLaw account to a QuickBooks account in
+      Pick the matching QuickBooks account for each PCLaw account in
       <strong>{{ qbo_connection.company_name or qbo_connection.realm_id or 'your QuickBooks company' }}</strong>.
+      You only do this once.
     </p>
-    <details class="quiet" style="margin-top:var(--space-3);">
-      <summary>About Account mapping</summary>
-      <p class="muted" style="max-width:60ch;margin-top:var(--space-2);">
-        We&rsquo;ll remember these matches for future imports to the same QuickBooks company,
-        so you only do this once.
-      </p>
-    </details>
   </header>
 
   {% if load_error %}
@@ -136,33 +130,31 @@
            style="padding:var(--space-6);margin-bottom:var(--space-5);border-color:{% if create_missing_offer.many_unmatched %}var(--warning,#b45309){% else %}var(--line){% endif %};background:{% if create_missing_offer.many_unmatched %}var(--warning-bg,#fff7ed){% else %}var(--surface-2,#fafafa){% endif %};">
     {% if create_missing_offer.single_unmatched %}
       <h2 style="margin-top:0;" data-testid="create-missing-headline">
-        1 QuickBooks account is missing. Create it from your PCLaw account list.
+        One account isn&rsquo;t in QuickBooks yet.
       </h2>
       <p style="max-width:70ch;">
-        One PCLaw account doesn&rsquo;t exist in QuickBooks yet:
         {% if create_missing_offer.unmatched_labels %}
-          <strong data-testid="create-missing-account-label">{{ create_missing_offer.unmatched_labels[0] }}</strong>.
+          <strong data-testid="create-missing-account-label">{{ create_missing_offer.unmatched_labels[0] }}</strong>
+          isn&rsquo;t in QuickBooks yet. We&rsquo;ll add it for you &mdash;
+          no need to open QuickBooks.
         {% else %}
-          see the table below.
+          We&rsquo;ll add the missing account to QuickBooks for you &mdash;
+          no need to open QuickBooks.
         {% endif %}
-        You do not need to add this manually in QuickBooks &mdash; we&rsquo;ll
-        create it for you with the right account type, then auto-match it.
       </p>
     {% elif create_missing_offer.many_unmatched %}
-      <h2 style="margin-top:0;" data-testid="create-missing-headline">QuickBooks is missing accounts from your PCLaw file.</h2>
+      <h2 style="margin-top:0;" data-testid="create-missing-headline">A few accounts aren&rsquo;t in QuickBooks yet.</h2>
       <p style="max-width:70ch;">
         <strong>{{ create_missing_offer.unmatched }} of {{ create_missing_offer.total }}</strong>
-        PCLaw accounts don&rsquo;t have a matching QuickBooks account yet. You
-        do not need to add them manually in QuickBooks &mdash; we can add the
-        missing accounts to QuickBooks for you, then auto-match the rest.
+        accounts aren&rsquo;t in QuickBooks. We&rsquo;ll add them for you
+        in one click &mdash; no need to open QuickBooks.
       </p>
     {% else %}
-      <h2 style="margin-top:0;" data-testid="create-missing-headline">A few PCLaw accounts aren&rsquo;t in QuickBooks yet.</h2>
+      <h2 style="margin-top:0;" data-testid="create-missing-headline">A few accounts aren&rsquo;t in QuickBooks yet.</h2>
       <p style="max-width:70ch;">
         <strong>{{ create_missing_offer.unmatched }} of {{ create_missing_offer.total }}</strong>
-        PCLaw accounts couldn&rsquo;t be auto-matched. You do not need to add
-        them manually in QuickBooks &mdash; we can create them in one click,
-        or you can pick a QuickBooks account yourself below.
+        accounts need a match. Let us add them for you, or pick a
+        QuickBooks account below.
       </p>
     {% endif %}
     {% if create_missing_offer.unmatched_labels and not create_missing_offer.single_unmatched %}
@@ -177,12 +169,11 @@
       </ul>
     {% endif %}
     <p class="muted" style="max-width:70ch;font-size:.9rem;">
-      This only creates the <em>accounts</em> needed for matching &mdash; no
-      transactions are posted in this step.
+      This just adds the empty accounts to QuickBooks. No transactions
+      are posted yet.
       {% if not create_missing_offer.has_coa %}
-        For accounts whose type we can&rsquo;t safely guess from the name,
-        you&rsquo;ll be asked to upload your PCLaw <em>Chart of Accounts</em>
-        first &mdash; we won&rsquo;t create an account with a wrong type.
+        If we can&rsquo;t tell what type an account is, we&rsquo;ll
+        ask you to upload your account list first.
       {% endif %}
     </p>
     <div class="actions-row" style="margin-top:var(--space-4);gap:var(--space-3);">
@@ -216,12 +207,10 @@
       Step 3 of 6 &middot; Complete
     </p>
     <h2 style="margin:var(--space-2) 0 var(--space-3);">
-      Step 3 complete: Accounts matched
+      Amazing! We&rsquo;ve matched your accounts.
     </h2>
     <p style="max-width:62ch;margin:0 0 var(--space-4);">
-      Every PCLaw account is paired with a QuickBooks account and saved.
-      Next, review exactly what will be sent to QuickBooks &mdash;
-      nothing posts until you say so.
+      You&rsquo;re now ready to move on to Step 4.
     </p>
     <div class="actions-row">
       <a class="btn btn-primary btn-lg"
@@ -234,24 +223,21 @@
          data-testid="step3-back-cta">
         &larr; Back to Step 2: Upload reports
       </a>
-      <a class="btn btn-link" href="{{ url_for('job_detail', job_id=job.id) }}">
-        Back to job
-      </a>
     </div>
   </section>
   {% endif %}
   <p class="muted" data-testid="mapping-summary"
      style="margin:0 0 var(--space-4);font-size:.9rem;">
-    Auto-matched
+    We matched
     <strong data-testid="summary-matched">{{ mapping_summary.matched }}</strong>
     of
     <strong data-testid="summary-total">{{ mapping_summary.total }}</strong>
-    accounts.
+    accounts for you.
     {% if mapping_summary.unmatched %}
       <strong data-testid="summary-unmatched">{{ mapping_summary.unmatched }}</strong>
-      need review.
+      still need a quick look.
     {% else %}
-      Every account is matched &mdash; review and save below.
+      Looks good &mdash; just save below.
     {% endif %}
   </p>
   {% endif %}
@@ -308,7 +294,7 @@
       </div>
       <div style="padding:var(--space-5) var(--space-6);border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:var(--space-4);flex-wrap:wrap;">
         <p class="muted" style="margin:0;font-size:.9rem;max-width:48ch;">
-          Saved matches override auto-matches. Leave a dropdown blank to keep the auto-match.
+          Leave a row blank to keep the suggested match.
         </p>
         <div class="actions-row">
           <a href="{{ url_for('job_detail', job_id=job.id) }}" class="btn btn-link">Cancel</a>

@@ -24,12 +24,11 @@
     </section>
   {% else %}
     <div class="hero">
-      <p class="eyebrow">Step 6 of 6 &middot; Reconcile balances</p>
+      <p class="eyebrow">Step 6 of 6 &middot; Final balance check</p>
       <h1>Final balance check</h1>
       <p style="max-width:64ch;">
-        Confirm that QuickBooks matches PCLaw and capture a record of
-        the migration. Each line below is a plain-English status &mdash;
-        no accounting jargon required.
+        Confirm QuickBooks matches PCLaw. Each line below is in plain
+        English &mdash; no accounting jargon.
       </p>
     </div>
 
@@ -37,8 +36,8 @@
       <div class="flash success" role="status"
            data-testid="step6-complete-banner"
            style="margin-bottom:var(--space-6);">
-        <strong>Step 6 complete: Reconciled.</strong>
-        Migration demo complete. You can email yourself a final report below.
+        <strong>You're done! Everything matches.</strong>
+        You can email yourself a copy of the final report below.
       </div>
     {% endif %}
 
@@ -100,13 +99,11 @@
 
     <section class="card" data-testid="step6-final-report"
              style="padding:var(--space-6);margin-bottom:var(--space-6);">
-      <p class="eyebrow">Optional &middot; Final report</p>
-      <h2 style="margin-top:0;">Email yourself a copy of this summary</h2>
+      <p class="eyebrow">Optional &middot; Email a copy</p>
+      <h2 style="margin-top:0;">Email yourself the final report</h2>
       <p style="max-width:64ch;">
-        We&rsquo;ll send a plain-text recap of the migration &mdash;
-        what was uploaded, what posted to QuickBooks, and the
-        reconciliation status &mdash; to the address you enter below.
-        No credentials or files are included.
+        A plain recap of what was uploaded, what posted to QuickBooks,
+        and the balance check.
       </p>
 
       {% if report_status %}
@@ -141,11 +138,10 @@
     {% if report_text %}
       <section class="card" data-testid="step6-report-preview"
                style="padding:var(--space-6);margin-bottom:var(--space-6);">
-        <p class="eyebrow">Report preview</p>
+        <p class="eyebrow">Your report</p>
         <h2 style="margin-top:0;">Your migration summary</h2>
         <p style="max-width:64ch;">
-          This is the exact text we&rsquo;d send. You can copy it from
-          here at any time &mdash; no need to wait on email.
+          You can copy this directly &mdash; no need to wait on email.
         </p>
         <pre data-testid="step6-report-text"
              style="white-space:pre-wrap;word-wrap:break-word;background:var(--surface-2, #f6f7f9);padding:var(--space-4);border-radius:var(--radius-2, 6px);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:0.875rem;line-height:1.5;overflow-x:auto;">{{ report_text }}</pre>

@@ -155,7 +155,9 @@ def w1_step3_complete_card_renders_when_all_saved():
     body = r.get_data(as_text=True)
     assert 'data-testid="step3-complete-card"' in body, \
         "expected Step 3 complete card when all accounts saved"
-    assert "Step 3 complete: Accounts matched" in body
+    # Plain-English completion message (post copy-cleanup).
+    assert "Amazing! We" in body and "matched your accounts" in body, \
+        "expected plain-English Step 3 success message"
     assert 'data-testid="step3-next-cta"' in body
     assert "Proceed to Step 4: Review import" in body
     print("W1 OK: Step 3 complete card + Proceed to Step 4: Review import CTA rendered")

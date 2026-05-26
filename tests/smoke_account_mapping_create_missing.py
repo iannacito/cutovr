@@ -258,7 +258,7 @@ def n2_banner_shown_when_accounts_missing_and_not_otherwise():
     assert "Create missing QuickBooks accounts" in body
     assert "Refresh QuickBooks accounts" in body
     # Lawyer-friendly clarification: this step only creates accounts, not transactions.
-    assert "needed for matching" in body
+    assert "adds the empty accounts" in body
     assert "no transactions are posted" in " ".join(body.split()).lower()
 
     # And when every account already matches the banner is suppressed.

@@ -182,10 +182,12 @@ def p5_account_mapping_friendlier_copy():
             user={"email": "p5@uipolish.test"},
             firm={"name": "P5 Firm"},
         )
-    assert "Pair each PCLaw account with QuickBooks" in body, \
+    assert "Match your PCLaw accounts to QuickBooks" in body, \
         "expected the new customer-friendly account-mapping headline"
-    assert "Account mapping" in body, \
-        "expected to keep the legacy 'Account mapping' string"
+    # Page identifies itself as Step 3: Match accounts (the customer-facing
+    # phrase). Legacy "Account mapping" jargon was removed from the body.
+    assert "Match accounts" in body, \
+        "expected the customer-friendly 'Match accounts' wording"
     assert "Auto-match" not in body or "Saved" in body  # sanity
     print("P5 OK: account mapping page uses friendly customer copy")
 

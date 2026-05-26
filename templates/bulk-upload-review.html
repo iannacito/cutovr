@@ -5,8 +5,8 @@
   {% include "_workflow_stepper.html" %}
 
   <div class="hero">
-    <p class="eyebrow">Step 2 of 6 &middot; Upload review</p>
-    <h1>We organized your files.</h1>
+    <p class="eyebrow">Step 2 of 6 &middot; Upload</p>
+    <h1>Your files are uploaded.</h1>
     <p class="meta-row" style="margin-top:var(--space-4);">
       <span><strong>{{ summary.file_count }}</strong> uploaded</span>
       <span><strong>{{ summary.categorized }}</strong> identified</span>
@@ -17,9 +17,9 @@
   {% if missing_required_labels %}
     <div class="next-card">
       <div class="next-card__body">
-        <p class="eyebrow">Still missing</p>
-        <h3>Upload these to keep going</h3>
-        <p>We&rsquo;ll keep what you&rsquo;ve already sent.</p>
+        <p class="eyebrow">Almost there</p>
+        <h3>We still need a few files</h3>
+        <p>Add these and you&rsquo;ll be ready for Step 3.</p>
         <ul class="secure-list" style="margin-top:var(--space-3);">
           {% for label in missing_required_labels %}
             <li>{{ label }}</li>
@@ -31,25 +31,24 @@
       </div>
     </div>
   {% else %}
-    <div class="next-card">
+    <div class="next-card" data-testid="step2-ready-card">
       <div class="next-card__body">
-        <p class="eyebrow">Ready</p>
-        <h3>Every required report is uploaded.</h3>
-        <p>Continue with the next step. Nothing posts to QuickBooks until you review each one.</p>
+        <p class="eyebrow">Ready for Step 3</p>
+        <h3>Amazing! Your reports are uploaded.</h3>
+        <p>You&rsquo;re ready to match your accounts to QuickBooks.</p>
       </div>
       <div class="next-card__actions">
-        <a class="btn btn-primary btn-lg" href="{{ url_for('migration_checklist') }}">Continue &rarr;</a>
-        <a class="btn" href="#add-more-reports">Add more reports</a>
+        <a class="btn btn-primary btn-lg" href="{{ url_for('match_accounts_entry') }}" data-testid="step2-proceed-to-step3">Proceed to Step 3: Match accounts &rarr;</a>
+        <a class="btn" href="#add-more-reports">Add more files</a>
       </div>
     </div>
   {% endif %}
 
   <section class="card" id="add-more-reports" style="margin-bottom:var(--space-8);">
     <p class="eyebrow">Forgot one?</p>
-    <h3 style="margin:var(--space-1) 0 var(--space-2);">Upload additional reports</h3>
+    <h3 style="margin:var(--space-1) 0 var(--space-2);">Add more files</h3>
     <p class="muted" style="max-width:60ch;margin-bottom:var(--space-4);">
-      Add more PCLaw CSV exports to this migration without starting over.
-      We&rsquo;ll identify each one and update the checklist.
+      You can add more PCLaw exports without starting over.
     </p>
     <form action="{{ url_for('bulk_upload_append', bulk_id=bulk.id) }}" method="post" enctype="multipart/form-data">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -64,8 +63,8 @@
     </form>
   </section>
 
-  <section>
-    <h2 style="margin-bottom:var(--space-4);">Per-file detection summary</h2>
+  <details class="quiet" style="margin-bottom:var(--space-8);">
+    <summary>Per-file detection summary</summary>
     <div class="card" style="padding:0;">
       <div class="table-wrap">
         <table>
@@ -139,10 +138,9 @@
       </div>
     </div>
     <p class="muted" style="margin-top:var(--space-4);font-size:.9rem;">
-      Each file is encrypted and saved as its own job. Nothing imports into
-      QuickBooks automatically &mdash; you&rsquo;ll review and confirm each
-      step from the checklist.
+      Each file is encrypted and saved separately. Nothing posts to
+      QuickBooks &mdash; you&rsquo;ll confirm each step yourself.
     </p>
-  </section>
+  </details>
 </section>
 {% endblock %}

@@ -34,33 +34,21 @@
           <p class="eyebrow">Step 3 complete &middot; Step 4 of 6 &middot; Review</p>
           <h3 data-testid="next-step-heading">Step 3 complete: Accounts matched. Next, review what will be sent to QuickBooks.</h3>
           <p>
-            Open the dry-run preview to see every journal entry that will be
-            posted. Nothing reaches QuickBooks until you click send on the
-            next step &mdash; this is your safety check.
+            Take a look at what we&rsquo;ll send. Nothing reaches
+            QuickBooks until you click send on the next step.
           </p>
         {% elif at_import_stage %}
-          <p class="eyebrow">Step 4 complete &middot; Step 5 of 6 &middot; Send to QuickBooks</p>
-          <h3 data-testid="next-step-heading">Step 4 complete: Review approved. Next, send to QuickBooks.</h3>
+          <p class="eyebrow">Step 4 complete &middot; Step 5 of 6 &middot; Send</p>
+          <h3 data-testid="next-step-heading">Step 4 complete: Reviewed. Next, send to QuickBooks.</h3>
           <p data-testid="step5-clarification">
-            This sends the prepared entries from PCLaw Migrate to
-            QuickBooks. You do not need to enter anything manually in
-            QuickBooks &mdash; the app posts every journal entry for you
-            once you click send. (You only ever touch QuickBooks Online
-            directly to authorize the connection and to verify results
-            after the import.)
-          </p>
-          <p class="muted" style="margin-top:var(--space-3);">
-            This is the only step that writes to QuickBooks &mdash;
-            everything before it has been safe to undo. After it runs
-            you&rsquo;ll get a confirmation and move straight to the
-            final balance check.
+            We&rsquo;ll send everything to QuickBooks for you. You do not
+            need to enter anything manually in QuickBooks.
           </p>
         {% elif at_reconcile_stage %}
-          <p class="eyebrow">Step 5 complete &middot; Step 6 of 6 &middot; Reconcile</p>
-          <h3 data-testid="next-step-heading">Step 5 complete: Sent to QuickBooks. Next, reconcile balances.</h3>
+          <p class="eyebrow">Step 5 complete &middot; Step 6 of 6 &middot; Final balance check</p>
+          <h3 data-testid="next-step-heading">Step 5 complete: Sent to QuickBooks. Next, the final balance check.</h3>
           <p>
-            Confirm your QuickBooks balances match the PCLaw ending trial
-            balance and save the audit report. This is the final step.
+            Confirm QuickBooks matches PCLaw &mdash; this is the last step.
           </p>
         {% elif workflow_current %}
           <p class="eyebrow">Step {{ workflow_current.index }} of {{ workflow_current.total }} &middot; Next step: {{ workflow_current.label }}</p>

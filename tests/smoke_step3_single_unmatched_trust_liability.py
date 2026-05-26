@@ -296,11 +296,11 @@ def t3_single_unmatched_banner_variant_and_reassurance():
         "banner must mark single-unmatched state for the 1-account case"
     assert 'data-unmatched-count="1"' in body
 
-    # Headline names the count.
-    assert "1 QuickBooks account is missing" in body, body[:2000]
+    # Headline calls out a single missing account in plain English.
+    assert "One account isn" in body and "in QuickBooks yet" in body, body[:2000]
 
     # Explicit reassurance the user should NOT add it manually.
-    assert "do not need to add this manually in QuickBooks" in body, \
+    assert "no need to open QuickBooks" in body, \
         "banner must reassure the user not to add the account manually"
 
     # The actual unmatched account is identified by number + name.

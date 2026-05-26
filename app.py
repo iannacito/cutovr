@@ -1277,7 +1277,11 @@ def cutover_setup():
             target_type="firm",
             target_id=str(firm_id),
         )
-        flash("Cutover settings saved.", "success")
+        flash(
+            "Got it — your switchover settings are saved. "
+            "You're ready for Step 2.",
+            "success",
+        )
         return redirect(url_for("migration_checklist"))
 
     ar_ap_strategy = (existing or {}).get("ar_ap_strategy") if existing else ""
@@ -2765,17 +2769,23 @@ def upload_bulk():
     )
 
     if summary["categorized"]:
-        flash(
-            f"Uploaded {len(files)} file(s). We identified "
-            f"{summary['categorized']} report(s) automatically. "
-            "Review the summary below.",
-            "success" if not summary["needs_review"] else "info",
-        )
+        if summary["needs_review"]:
+            flash(
+                f"Got it — {len(files)} file(s) uploaded. "
+                "A few need a quick look below.",
+                "info",
+            )
+        else:
+            flash(
+                "Amazing! Your files are uploaded and we figured out "
+                "what each one is.",
+                "success",
+            )
     else:
         flash(
-            "We couldn't auto-identify any of the uploaded files. "
-            "Pick a report type for each and continue, or re-upload "
-            "with files renamed to include their report type.",
+            "We couldn't tell what kind of report any of these files are. "
+            "Pick a type for each below, or upload again with the report "
+            "name in the filename.",
             "error",
         )
     return redirect(url_for("bulk_upload_review", bulk_id=bulk_id))
@@ -3001,9 +3011,8 @@ def bulk_upload_append(bulk_id):
         ),
     )
     flash(
-        f"Added {len(files)} file(s) to this migration. "
-        f"{added_categorized} were identified automatically. "
-        "Review the updated summary below.",
+        f"Added {len(files)} more file(s). "
+        f"{added_categorized} were identified automatically.",
         "success" if added_categorized else "info",
     )
     return redirect(url_for("bulk_upload_review", bulk_id=bulk_id))
@@ -5015,12 +5024,9 @@ def _import_to_qbo_impl(job_id):
                 "source_credit_total": str(source_credit),
                 "balanced": source_debit == source_credit,
             }
-            entity_msg = ""
-            if new_entities:
-                names = ", ".join(f"{k} '{n}'" for k, n, _ in new_entities)
-                entity_msg = f" Also created in QBO: {names}."
             flash(
-                f"Created {len(created)} JournalEntry record(s) in QuickBooks Online.{entity_msg}",
+                "Amazing! Your migration is in QuickBooks. "
+                "You're now ready to move on to Step 6.",
                 "success",
             )
 
@@ -5694,11 +5700,15 @@ def account_mapping(job_id):
         _audit("account_mapping_saved", target_type="job", target_id=job_id,
                details=f"saved {saved} mapping(s) skipped {skipped}")
         if saved:
-            flash(f"Saved {saved} account mapping(s). Click Import to retry.", "success")
+            flash(
+                f"Saved {saved} account mapping(s). "
+                "We'll remember these matches for next time.",
+                "success",
+            )
         else:
             flash(
-                "No account mappings were changed. Pick a QuickBooks account "
-                "for at least one row and click Save mappings.",
+                "Nothing changed yet. Pick a QuickBooks account for at "
+                "least one row and click Save matches.",
                 "info",
             )
         return redirect(url_for("account_mapping", job_id=job_id))
