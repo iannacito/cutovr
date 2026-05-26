@@ -81,6 +81,46 @@ def _norm(token: Optional[str]) -> str:
     return "".join(ch for ch in str(token).lower() if ch.isalnum())
 
 
+# Pseudo / system-calculated accounts that QuickBooks computes on the fly
+# (Net Income, Net Income (Loss), Current Year Earnings). PCLaw exports
+# sometimes list these on the chart of accounts as if they were normal
+# rows, but QBO calculates them inherently from posted activity — creating
+# a real account with one of these names would conflict with QBO's
+# auto-calculated total and cause reconciliation problems. We detect them
+# by normalized name and short-circuit both type mapping and the create
+# plan so the customer-facing UI can explain "QuickBooks calculates this
+# automatically".
+_SYSTEM_CALCULATED_NAME_TOKENS = (
+    "netincome",
+    "netincomeloss",
+    "netloss",
+    "currentyearearnings",
+    "currentearnings",
+)
+
+
+def is_system_calculated_account(row: dict) -> bool:
+    """Return True if this account is one QuickBooks computes itself.
+
+    Pure, side-effect-free. Used by ``map_pclaw_account_to_qbo_type`` to
+    short-circuit, and by the create-plan builder to exclude these rows
+    from QBO writes entirely.
+    """
+    name_norm = _norm((row or {}).get("account_name"))
+    if not name_norm:
+        return False
+    # Use ``in`` rather than equality so common decorations like
+    # "Net Income (Loss)", "Net Income / Loss", or a leading account
+    # number prefix in the name still match.
+    return any(token in name_norm for token in _SYSTEM_CALCULATED_NAME_TOKENS)
+
+
+SYSTEM_CALCULATED_EXPLANATION = (
+    "QuickBooks calculates this automatically, so we won't create it "
+    "as a separate account."
+)
+
+
 # (account_type, detail_type) tuples keyed by normalized hint tokens.
 # Every entry here is a *safe* mapping — if a hint is missing from this
 # table we refuse to guess.
@@ -105,9 +145,31 @@ _TYPE_TABLE: dict[str, tuple[str, str]] = {
     "prepaidexpenses": ("Other Current Asset", "PrepaidExpenses"),
     "inventory": ("Other Current Asset", "Inventory"),
 
-    # Fixed assets
+    # Fixed assets — common law-firm asset accounts. PCLaw's account list
+    # frequently uses bare names like "Computers", "Furniture & Fixtures",
+    # "Leasehold Improvements", and "Office Equipment" with the high-level
+    # "Fixed Asset" category. Mapping each to its canonical QBO sub-type
+    # avoids the previous failure where only the generic "Office Equipment"
+    # row landed in Fixed Asset while the related rows stayed unmatched.
     "fixedasset": ("Fixed Asset", "FurnitureAndFixtures"),
+    "fixedassets": ("Fixed Asset", "FurnitureAndFixtures"),
     "equipment": ("Fixed Asset", "MachineryAndEquipment"),
+    "officeequipment": ("Fixed Asset", "MachineryAndEquipment"),
+    "computer": ("Fixed Asset", "MachineryAndEquipment"),
+    "computers": ("Fixed Asset", "MachineryAndEquipment"),
+    "computerequipment": ("Fixed Asset", "MachineryAndEquipment"),
+    "computerhardware": ("Fixed Asset", "MachineryAndEquipment"),
+    "furniturefixtures": ("Fixed Asset", "FurnitureAndFixtures"),
+    "furnitureandfixtures": ("Fixed Asset", "FurnitureAndFixtures"),
+    "furniture": ("Fixed Asset", "FurnitureAndFixtures"),
+    "leaseholdimprovement": ("Fixed Asset", "LeaseholdImprovements"),
+    "leaseholdimprovements": ("Fixed Asset", "LeaseholdImprovements"),
+    "officeconstruction": ("Fixed Asset", "LeaseholdImprovements"),
+    "buildings": ("Fixed Asset", "Buildings"),
+    "building": ("Fixed Asset", "Buildings"),
+    "vehicles": ("Fixed Asset", "Vehicles"),
+    "vehicle": ("Fixed Asset", "Vehicles"),
+    "accumulateddepreciation": ("Fixed Asset", "AccumulatedDepreciation"),
 
     # Payables
     "accountspayable": ("Accounts Payable", "AccountsPayable"),
@@ -120,8 +182,16 @@ _TYPE_TABLE: dict[str, tuple[str, str]] = {
     "trustaccountsliabilities": ("Other Current Liability", "TrustAccountsLiabilities"),
     "clienttrustliability": ("Other Current Liability", "TrustAccountsLiabilities"),
 
-    # Long-term liabilities
+    # Long-term liabilities — law firms commonly carry partner / shareholder
+    # loans and bank loans (e.g. "Loan From John Smith"). Map the generic
+    # "loan" hint to NotesPayable so the account-list upload can drive
+    # creation safely.
     "longtermliability": ("Long Term Liability", "NotesPayable"),
+    "loan": ("Long Term Liability", "NotesPayable"),
+    "loanfromshareholder": ("Long Term Liability", "ShareholderNotesPayable"),
+    "shareholderloan": ("Long Term Liability", "ShareholderNotesPayable"),
+    "partnerloan": ("Long Term Liability", "NotesPayable"),
+    "notespayable": ("Long Term Liability", "NotesPayable"),
 
     # Equity
     "equity": ("Equity", "OwnersEquity"),
@@ -232,6 +302,31 @@ _SAFE_NAME_PATTERNS: list[tuple[str, str, tuple[str, str]]] = [
     ("savingsaccount", "contains", ("Bank", "Savings")),
     ("cashoperating", "contains", ("Bank", "Checking")),
 
+    # ---- Fixed Asset — name patterns. Many law-firm account lists
+    # name the row with the asset itself ("Computers", "Furniture &
+    # Fixtures", "Leasehold Improvements", "Office Construction")
+    # instead of a sub-type label. We resolve these directly so the
+    # uploaded account list doesn't need a detail_type column. The
+    # "contains" mode is safe here because each token is unambiguous
+    # across legal-services charts of accounts.
+    ("leaseholdimprovement", "contains", ("Fixed Asset", "LeaseholdImprovements")),
+    ("officeconstruction", "contains", ("Fixed Asset", "LeaseholdImprovements")),
+    ("furnitureandfixtures", "contains", ("Fixed Asset", "FurnitureAndFixtures")),
+    ("furniturefixtures", "contains", ("Fixed Asset", "FurnitureAndFixtures")),
+    ("officeequipment", "contains", ("Fixed Asset", "MachineryAndEquipment")),
+    ("computerequipment", "contains", ("Fixed Asset", "MachineryAndEquipment")),
+    ("computerhardware", "contains", ("Fixed Asset", "MachineryAndEquipment")),
+
+    # ---- Long-term liability — partner / shareholder loans. PCLaw
+    # account lists often spell these out with a person's name attached
+    # ("Loan From John Smith"). Match "loanfrom" anywhere so we cover
+    # both that pattern and "Loan from Shareholder".
+    ("loanfromshareholder", "contains", ("Long Term Liability", "ShareholderNotesPayable")),
+    ("shareholderloan", "contains", ("Long Term Liability", "ShareholderNotesPayable")),
+    ("loanfrom", "contains", ("Long Term Liability", "NotesPayable")),
+    ("partnerloan", "contains", ("Long Term Liability", "NotesPayable")),
+    ("notespayable", "contains", ("Long Term Liability", "NotesPayable")),
+
     # ---- Generic suffix patterns. These come last and use endswith so
     # "Income Tax Payable" is NOT mapped to Income — only true suffix
     # accounts like "Rent Expense" or "Legal Fees Income" qualify. The
@@ -262,12 +357,47 @@ def map_pclaw_account_to_qbo_type(row: dict) -> dict:
     account_type_in = (row.get("account_type") or "").strip()
     detail_in = (row.get("detail_type") or "").strip()
 
-    # 1. Explicit detail_type hint wins if recognised.
+    # Short-circuit system-calculated accounts (Net Income, Net Income
+    # (Loss), Current Year Earnings). QuickBooks computes these from
+    # posted activity, so we never create them as real accounts.
+    if is_system_calculated_account({"account_name": name}):
+        return {
+            "account_type": None,
+            "detail_type": None,
+            "decision": "skipped",
+            "warnings": [],
+            "blocked_reason": None,
+            "skip_reason": SYSTEM_CALCULATED_EXPLANATION,
+            "match_hint": "system_calculated",
+        }
+
+    # 1. Explicit detail_type hint wins if recognised. For the
+    # account_type hint we use a *generic* set — when the COA only says
+    # "Fixed Asset" we still want a more specific account_name match
+    # (e.g. "Computers" -> MachineryAndEquipment instead of the bucket
+    # default FurnitureAndFixtures) to win. The set is intentionally
+    # narrow: it covers categories where multiple sub-types are common
+    # and the bucket label alone is too vague. Categories like
+    # "Other Current Liability" or "Accounts Payable" are NOT in this
+    # set because mis-routing a Payable-named row off them would defeat
+    # the AR/AP name-vs-type cross-check below.
+    _GENERIC_TYPE_BUCKETS = {
+        "fixedasset", "fixedassets",
+    }
     candidates = [
         ("detail_type", detail_in),
-        ("account_type", account_type_in),
-        ("account_name", name),
     ]
+    norm_account_type = _norm(account_type_in)
+    if norm_account_type in _GENERIC_TYPE_BUCKETS:
+        candidates += [
+            ("account_name", name),
+            ("account_type", account_type_in),
+        ]
+    else:
+        candidates += [
+            ("account_type", account_type_in),
+            ("account_name", name),
+        ]
 
     resolved_type: Optional[str] = None
     resolved_detail: Optional[str] = None
@@ -339,35 +469,49 @@ def map_pclaw_account_to_qbo_type(row: dict) -> dict:
             if hit:
                 # Sanity guard: account names that contain "payable" or
                 # "receivable" should never be classified by these generic
-                # patterns — AR/AP have their own dedicated handling above
-                # and a misclassification here would be a real safety bug
+                # patterns *as Income / Expense / Equity / Bank / Fixed
+                # Asset* — AR/AP have dedicated handling above and a
+                # misclassification here would be a real safety bug
                 # (e.g. "Income Tax Payable" must not become Income).
-                if "payable" in name_norm or "receivable" in name_norm:
+                # Liability targets (Long Term Liability / Other Current
+                # Liability) are the *correct* category for accounts
+                # whose names include "Payable" (e.g. "Notes Payable"),
+                # so we allow those through.
+                payable_or_receivable = (
+                    "payable" in name_norm or "receivable" in name_norm
+                )
+                if payable_or_receivable and not (
+                    t.startswith("Long Term Liability")
+                    or t.startswith("Other Current Liability")
+                ):
                     continue
                 resolved_type, resolved_detail = t, st
                 match_hint = "account_name_pattern"
                 break
 
     if not resolved_type:
+        # Customer-friendly wording. Lawyers don't think in
+        # "AccountType / AccountSubType" — they think "what kind of
+        # account is this?" The blocker should point to a concrete
+        # next action (upload the account list or pick an existing
+        # QuickBooks account) rather than explaining QBO's API schema.
         return {
             "account_type": None,
             "detail_type": None,
             "decision": "blocked",
             "warnings": [],
             "blocked_reason": (
-                "Could not safely map this account to a QuickBooks "
-                "AccountType / AccountSubType. PCLaw type "
-                f"'{account_type_in or '(blank)'}' / detail "
-                f"'{detail_in or '(blank)'}' is not in the safe mapping "
-                "table. Edit the CSV with a more specific type "
-                "(e.g. 'Bank', 'Accounts Receivable', 'Expense') and "
-                "re-upload, or create this account manually in QuickBooks."
+                "We need a little more information to add this account "
+                "to QuickBooks. Upload your account list with a category "
+                "for this account (for example: Bank, Income, Expense), "
+                "or pick an existing QuickBooks account to match it to."
                 + (
-                    " (Recognised as a high-level category but too broad "
-                    "to map safely — pick a specific sub-type.)"
+                    " The category we found is too broad — pick something "
+                    "more specific."
                     if saw_ambiguous_bucket else ""
                 )
             ),
+            "skip_reason": None,
             "match_hint": None,
         }
 
@@ -393,14 +537,12 @@ def map_pclaw_account_to_qbo_type(row: dict) -> dict:
                 "decision": "blocked",
                 "warnings": [],
                 "blocked_reason": (
-                    f"Account name '{name}' looks like a QuickBooks "
-                    f"{expected_type} account, but the resolved type is "
-                    f"'{resolved_type}/{resolved_detail}'. QuickBooks "
-                    "Accounts Receivable and Accounts Payable cannot be "
-                    "auto-mapped to a generic Liability or Asset — set "
-                    f"the account type to '{expected_type}' on the COA "
-                    "step (or rename the account) and re-preview."
+                    f"This account looks like {expected_type}, but the "
+                    "uploaded account list categorises it differently. "
+                    f"Set the category to {expected_type} on your account "
+                    "list (or rename the account) and try again."
                 ),
+                "skip_reason": None,
                 "match_hint": None,
             }
 
@@ -437,6 +579,7 @@ def map_pclaw_account_to_qbo_type(row: dict) -> dict:
         "decision": "warn" if warnings else "ok",
         "warnings": warnings,
         "blocked_reason": None,
+        "skip_reason": None,
         "match_hint": match_hint,
     }
 
@@ -454,9 +597,10 @@ class CreatePlanEntry:
     pclaw_detail_type: str
     qbo_account_type: Optional[str]
     qbo_detail_type: Optional[str]
-    decision: str                    # 'ok' | 'warn' | 'blocked'
+    decision: str                    # 'ok' | 'warn' | 'blocked' | 'skipped'
     warnings: list[str] = field(default_factory=list)
     blocked_reason: Optional[str] = None
+    skip_reason: Optional[str] = None
     active: bool = True
 
     def to_dict(self) -> dict:
@@ -469,6 +613,7 @@ class CreatePlan:
     to_create: list[CreatePlanEntry] # decision in ('ok', 'warn')
     blocked: list[CreatePlanEntry]   # cannot create without operator action
     soft_conflicts: list[dict]       # name-match w/ different AcctNum
+    skipped: list[CreatePlanEntry] = field(default_factory=list)  # system-calculated (Net Income, etc.)
 
     @property
     def has_blockers(self) -> bool:
@@ -478,18 +623,25 @@ class CreatePlan:
     def has_warnings(self) -> bool:
         return any(e.decision == "warn" for e in self.to_create)
 
+    @property
+    def has_skipped(self) -> bool:
+        return bool(self.skipped)
+
     def to_dict(self) -> dict:
         return {
             "matched_count": len(self.matched),
             "to_create_count": len(self.to_create),
             "blocked_count": len(self.blocked),
+            "skipped_count": len(self.skipped),
             "soft_conflict_count": len(self.soft_conflicts),
             "matched": self.matched,
             "to_create": [e.to_dict() for e in self.to_create],
             "blocked": [e.to_dict() for e in self.blocked],
+            "skipped": [e.to_dict() for e in self.skipped],
             "soft_conflicts": self.soft_conflicts,
             "has_blockers": self.has_blockers,
             "has_warnings": self.has_warnings,
+            "has_skipped": self.has_skipped,
         }
 
 
@@ -530,6 +682,7 @@ def build_create_plan(
 
     to_create: list[CreatePlanEntry] = []
     blocked: list[CreatePlanEntry] = []
+    skipped: list[CreatePlanEntry] = []
 
     for row in coa_rows:
         num = (row.get("account_number") or "").strip()
@@ -565,10 +718,13 @@ def build_create_plan(
             decision=decision["decision"],
             warnings=list(decision["warnings"]),
             blocked_reason=decision["blocked_reason"],
+            skip_reason=decision.get("skip_reason"),
             active=bool(row.get("active", True)),
         )
         if entry.decision == "blocked":
             blocked.append(entry)
+        elif entry.decision == "skipped":
+            skipped.append(entry)
         else:
             to_create.append(entry)
 
@@ -577,6 +733,7 @@ def build_create_plan(
         to_create=to_create,
         blocked=blocked,
         soft_conflicts=soft_conflicts,
+        skipped=skipped,
     )
 
 

@@ -1,30 +1,30 @@
 {% extends "_base.html" %}
-{% block title %}Create Chart of Accounts &mdash; {{ job.company }}{% endblock %}
+{% block title %}Create your account list &mdash; {{ job.company }}{% endblock %}
 {% block content %}
 <section class="detail-page">
   <a href="{{ url_for('coa_preview', job_id=job.id) }}" class="back-link">&larr; Back to preview</a>
 
   <section class="card detail-hero">
-    <p class="eyebrow">Chart of Accounts &middot; Confirm create</p>
+    <p class="eyebrow">Account list &middot; Confirm create</p>
     <h1>{{ job.company }}</h1>
     <p class="muted">
-      The next step will create new QuickBooks Online <code>Account</code>
-      records. Existing accounts (matched by AcctNum or Name above) are
-      <strong>not</strong> recreated.
+      The next step adds the new accounts to QuickBooks. Accounts that
+      already match (by number or name above) are <strong>not</strong>
+      recreated.
     </p>
   </section>
 
   {% if qbo_env_status == 'production' %}
   <div class="flash error">
-    <strong>Production mode.</strong> This will create real Chart of
-    Accounts records in QuickBooks Online company
+    <strong>Production mode.</strong> This will add real accounts to
+    your QuickBooks company
     &ldquo;{{ qbo_connection.company_name or qbo_connection.realm_id }}&rdquo;.
     Verify the company name above matches your firm before confirming.
   </div>
   {% else %}
   <div class="flash info">
-    <strong>Sandbox mode.</strong> Accounts will be created in the
-    QuickBooks Online Sandbox company
+    <strong>Sandbox mode.</strong> Accounts will be added to the
+    QuickBooks Sandbox company
     &ldquo;{{ qbo_connection.company_name or qbo_connection.realm_id }}&rdquo;.
   </div>
   {% endif %}
@@ -63,15 +63,14 @@
 
   {% if plan.blocked %}
   <section class="card error-panel">
-    <p class="eyebrow" style="color:var(--error);">Blocked &mdash; cannot auto-create</p>
-    <h2>{{ plan.blocked_count }} account(s) need manual resolution</h2>
+    <p class="eyebrow" style="color:var(--error);">A few accounts need your help</p>
+    <h2>{{ plan.blocked_count }} account(s) need a category</h2>
     <p>
-      These accounts cannot be safely mapped to a QuickBooks
-      <code>AccountType</code> / <code>AccountSubType</code>. Edit the
-      Chart of Accounts CSV to use a more specific type (e.g. &ldquo;Bank&rdquo;,
-      &ldquo;Accounts Receivable&rdquo;, &ldquo;Expense&rdquo;), re-upload, or create these
-      accounts directly in QuickBooks. <strong>You cannot confirm until
-      this list is empty.</strong>
+      We need a category for these accounts before we can add them.
+      Open your account list and set a category (for example: Bank,
+      Income, Expense, Fixed Asset), re-upload, or add these accounts
+      directly in QuickBooks. <strong>You can confirm once this list is
+      empty.</strong>
     </p>
     <div class="table-wrap">
       <table>
@@ -98,6 +97,24 @@
         </tbody>
       </table>
     </div>
+  </section>
+  {% endif %}
+
+  {% if plan.skipped %}
+  <section class="card" data-testid="plan-skipped-panel">
+    <p class="eyebrow">Skipped &mdash; QuickBooks calculates these</p>
+    <h2>{{ plan.skipped_count }} account(s) we won&rsquo;t create</h2>
+    <p class="muted" style="max-width:70ch;">
+      QuickBooks calculates these automatically from your posted activity,
+      so we won&rsquo;t create them as separate accounts.
+    </p>
+    <ul style="margin:0;padding-left:var(--space-5);">
+      {% for a in plan.skipped %}
+        <li>
+          {% if a.account_number %}<code>{{ a.account_number }}</code> &middot; {% endif %}{{ a.account_name }}
+        </li>
+      {% endfor %}
+    </ul>
   </section>
   {% endif %}
 

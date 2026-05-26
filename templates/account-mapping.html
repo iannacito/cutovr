@@ -123,6 +123,7 @@
 
   {% if create_missing_offer %}
   <section class="card"
+           id="create-missing-banner"
            data-testid="create-missing-banner"
            data-unmatched-count="{{ create_missing_offer.unmatched }}"
            data-many-unmatched="{{ 'yes' if create_missing_offer.many_unmatched else 'no' }}"
@@ -172,7 +173,7 @@
       This just adds the empty accounts to QuickBooks. No transactions
       are posted yet.
       {% if not create_missing_offer.has_coa %}
-        If we can&rsquo;t tell what type an account is, we&rsquo;ll
+        If we&rsquo;re not sure what kind of account it is, we&rsquo;ll
         ask you to upload your account list first.
       {% endif %}
     </p>
@@ -256,7 +257,7 @@
           </thead>
           <tbody>
             {% for r in rows %}
-              <tr>
+              <tr {% if r.is_system_calculated %}data-testid="row-system-calculated"{% endif %}>
                 <td>
                   <strong>
                     {% if r.pclaw_number %}<code>{{ r.pclaw_number }}</code> &middot; {% endif %}{{ r.pclaw_name or '(no name)' }}
@@ -264,12 +265,24 @@
                   {% if not r.pclaw_number %}
                     <p class="muted" style="margin:.2rem 0 0;font-size:.85rem;">No account number</p>
                   {% endif %}
+                  {% if r.is_system_calculated %}
+                    <p class="muted" data-testid="system-calculated-note"
+                       style="margin:.3rem 0 0;font-size:.85rem;">
+                      QuickBooks calculates this automatically, so we won&rsquo;t
+                      create it as a separate account.
+                    </p>
+                  {% endif %}
                   <input type="hidden" name="pclaw_num[{{ r.idx }}]" value="{{ r.pclaw_number or '' }}">
                   <input type="hidden" name="pclaw_name[{{ r.idx }}]" value="{{ r.pclaw_name or '' }}">
                 </td>
                 <td>
+                  {% if r.is_system_calculated %}
+                    <span class="muted" style="font-size:.9rem;">
+                      No match needed
+                    </span>
+                  {% else %}
                   <select name="mapping[{{ r.idx }}]" style="width:100%;">
-                    <option value="">&mdash; pick QuickBooks account &mdash;</option>
+                    <option value="">&mdash; pick an existing QuickBooks account &mdash;</option>
                     {% for a in qbo_accounts %}
                       <option value="{{ a.Id }}"
                         {% if r.current_qbo_id == a.Id %}selected{% endif %}>
@@ -277,14 +290,30 @@
                       </option>
                     {% endfor %}
                   </select>
+                  {% endif %}
                 </td>
                 <td>
-                  {% if r.is_saved %}
+                  {% if r.is_system_calculated %}
+                    <span class="badge" data-testid="badge-system-calculated">
+                      Skipped &mdash; calculated by QuickBooks
+                    </span>
+                  {% elif r.is_saved %}
                     <span class="badge success">Saved</span>
                   {% elif r.is_suggestion %}
                     <span class="badge">Auto-match</span>
                   {% else %}
                     <span class="badge error">Unmatched</span>
+                    <p class="muted"
+                       data-testid="row-create-hint-{{ r.idx }}"
+                       style="margin:.35rem 0 0;font-size:.8rem;">
+                      Or
+                      <a href="#create-missing-banner"
+                         data-testid="row-create-in-qbo-link-{{ r.idx }}">
+                        add this account to QuickBooks
+                      </a>
+                      &mdash; this only creates the empty account, no
+                      transactions are posted.
+                    </p>
                   {% endif %}
                 </td>
               </tr>
