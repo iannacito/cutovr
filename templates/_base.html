@@ -45,6 +45,7 @@
             <button class="btn btn-link" type="submit" style="padding:0;">Log out</button>
           </form>
         {% else %}
+          <a href="{{ url_for('pricing') }}">Pricing</a>
           <a href="{{ url_for('onboarding') }}">Onboarding</a>
           <a href="{{ url_for('support') }}">Support</a>
           <a href="{{ url_for('login') }}">Sign in</a>
@@ -76,6 +77,7 @@
     <div class="site-footer__inner">
       <div>&copy; {{ now_year }} {{ company_name }} &mdash; PCLaw to QuickBooks Online</div>
       <div class="site-footer__links">
+        <a href="{{ url_for('pricing') }}">Pricing</a>
         <a href="{{ url_for('privacy') }}">Privacy</a>
         <a href="{{ url_for('terms') }}">Terms</a>
         <a href="{{ url_for('support') }}">Support</a>
