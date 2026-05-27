@@ -45,6 +45,17 @@ services:
         value: production    # enables Secure cookies + requires SECRET_KEY
       - key: PYTHON_VERSION
         value: "3.11.9"
+      # Stripe Checkout. Set all four in the Render dashboard once the
+      # Stripe products exist. The /pricing page degrades gracefully if
+      # they are missing — see STRIPE_SETUP.md.
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_PRICE_ESSENTIAL
+        sync: false
+      - key: STRIPE_PRICE_STANDARD
+        sync: false
+      - key: STRIPE_PRICE_COMPLETE
+        sync: false
     disk:
       name: pclaw-qbo-data
       mountPath: /var/data

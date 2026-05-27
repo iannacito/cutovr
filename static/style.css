@@ -1063,6 +1063,69 @@ details.quiet > *:not(summary) { margin-top: var(--space-3); }
   color: var(--ink);
 }
 
+/* Compact pricing hero: pulls the cards closer to the top of the fold
+   so customers see the tiers without scrolling. */
+.pricing-hero--compact .pricing-hero__inner {
+  padding: var(--space-10) var(--space-6) var(--space-6);
+}
+.pricing-hero--compact .pricing-hero__title {
+  font-size: clamp(1.8rem, 3.4vw, 2.5rem);
+  margin-bottom: var(--space-3);
+}
+.pricing-hero--compact .pricing-hero__lede {
+  font-size: 1.02rem;
+}
+.pricing-tiers-section .landing-section__inner {
+  padding-top: var(--space-8);
+}
+
+/* Add-ons strip: a tight band that sits directly under the cards in
+   the same section, so customers see add-ons without scrolling past
+   another hero. Three items, side-by-side on desktop. */
+.pricing-addons-strip {
+  margin-top: var(--space-10);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--line);
+}
+.pricing-addons-strip__eyebrow {
+  font-size: .78rem;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin: 0 0 var(--space-4);
+}
+.pricing-addons--compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+.pricing-addons--compact .pricing-addons__item {
+  padding: var(--space-4) var(--space-5);
+  align-items: flex-start;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.pricing-addons--compact .pricing-addons__item h3 {
+  font-size: .98rem;
+}
+.pricing-addons--compact .pricing-addons__item p {
+  font-size: .88rem;
+}
+.pricing-addons--compact .pricing-addons__price {
+  font-size: 1.05rem;
+  margin-top: var(--space-1);
+}
+
+.pricing-fineprint__note {
+  display: inline-block;
+  margin-top: var(--space-2);
+  color: var(--ink-muted);
+  font-size: .9rem;
+}
+
+.pricing-tier__form {
+  margin: 0;
+}
+
 /* FAQ ----------------------------------------------------------------- */
 .pricing-faq {
   display: grid;
@@ -1107,6 +1170,7 @@ details.quiet > *:not(summary) { margin-top: var(--space-3); }
 @media (max-width: 1020px) {
   .landing-coverage { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .pricing-tiers { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pricing-addons--compact { grid-template-columns: 1fr; }
 }
 @media (max-width: 920px) {
   .landing-hero__inner { padding: var(--space-16) var(--space-6) var(--space-12); }

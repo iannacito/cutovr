@@ -90,6 +90,7 @@ import cutover_workflow
 import customer_workflow
 import final_report
 import bulk_upload
+import stripe_checkout
 from rate_limit import RateLimiter, client_ip
 import csv as _csv
 from io import StringIO
@@ -2080,7 +2081,103 @@ def pricing():
     wants to bring over, not firm size. Kept simple and lawyer-friendly:
     no accounting jargon in the package names or descriptions.
     """
-    return render_template("pricing.html")
+    return render_template(
+        "pricing.html",
+        stripe_plans=stripe_checkout.plan_configs(),
+        stripe_enabled=stripe_checkout.stripe_enabled(),
+    )
+
+
+def _checkout_base_url() -> str:
+    """Best-effort base URL for Stripe success/cancel redirects.
+
+    Prefer the explicit PUBLIC_APP_URL env var (the custom domain) so
+    customers always land back on the canonical hostname after Stripe,
+    not the raw Render URL. Fall back to whatever the current request is
+    on if that's not configured.
+    """
+    public = (os.environ.get("PUBLIC_APP_URL") or "").strip().rstrip("/")
+    if public:
+        return public
+    return request.url_root.rstrip("/")
+
+
+@app.route("/pricing/checkout/<plan>", methods=["POST"])
+def pricing_checkout(plan):
+    """Start a Stripe Checkout Session for a base plan.
+
+    Returns a 303 redirect to the Stripe-hosted checkout page. If Stripe
+    is not configured (missing key or price ID), we don't 500 — we send
+    the customer back to /pricing with a friendly message so the page
+    stays usable in demo / staging environments.
+    """
+    plan = (plan or "").strip().lower()
+    if plan not in stripe_checkout.BASE_PLANS:
+        abort(404)
+
+    if not stripe_checkout.plan_configured(plan):
+        flash(
+            "Online checkout is being set up. Please contact support to purchase this plan.",
+            "info",
+        )
+        return redirect(url_for("pricing") + "#pricing-tiers")
+
+    # Best-effort: include the logged-in user's email so Stripe prefills
+    # the receipt + customer record. Pricing is public, so this is
+    # optional.
+    customer_email = None
+    user = current_user()
+    if user and getattr(user, "email", None):
+        customer_email = user.email
+
+    try:
+        url = stripe_checkout.create_checkout_session(
+            plan,
+            base_url=_checkout_base_url(),
+            customer_email=customer_email,
+        )
+    except stripe_checkout.StripeNotConfigured:
+        flash(
+            "Online checkout is being set up. Please contact support to purchase this plan.",
+            "info",
+        )
+        return redirect(url_for("pricing") + "#pricing-tiers")
+    except Exception:  # pragma: no cover - network/API failures
+        logging.exception("Stripe checkout session creation failed for plan=%s", plan)
+        flash(
+            "We couldn't start checkout right now. Please try again in a moment, or contact support.",
+            "error",
+        )
+        return redirect(url_for("pricing") + "#pricing-tiers")
+
+    # 303 See Other is the canonical pattern for POST -> redirect, but
+    # Flask's default redirect() uses 302; either works for browsers.
+    return redirect(url, code=303)
+
+
+@app.route("/pricing/checkout/success")
+def pricing_checkout_success():
+    """Landing page after a successful Stripe Checkout.
+
+    Stripe substitutes the session_id into the URL we gave it. We don't
+    rely on it for fulfillment (that should be webhook-driven), but we
+    do show a friendly confirmation page.
+    """
+    return render_template(
+        "pricing-checkout-success.html",
+        session_id=(request.args.get("session_id") or "").strip()[:128],
+    )
+
+
+@app.route("/pricing/checkout/cancel")
+def pricing_checkout_cancel():
+    """Landing page when the customer cancels out of Stripe Checkout.
+
+    Keep this lightweight — just nudge them back to /pricing without
+    making them feel like they did something wrong.
+    """
+    flash("No problem — your migration plan wasn't purchased. You can pick again any time.", "info")
+    return redirect(url_for("pricing") + "#pricing-tiers")
 
 
 @app.route("/quickbooks-guide")

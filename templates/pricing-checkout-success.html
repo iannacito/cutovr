@@ -1,0 +1,31 @@
+{% extends "_base.html" %}
+{% block title %}{{ app_name }} &mdash; Payment received{% endblock %}
+{% block meta_description %}Thanks for purchasing your PCLaw to QuickBooks migration. Next steps inside.{% endblock %}
+{% block content %}
+
+<section class="landing-cta">
+  <div class="landing-cta__inner">
+    <p class="eyebrow">Payment received</p>
+    <h1 class="display landing-cta__title">Thanks &mdash; you're all set.</h1>
+    <p class="landing-cta__lede">
+      Stripe has your payment. We've recorded your purchase and you can
+      head straight into the guided migration workflow.
+    </p>
+    <div class="landing-cta__buttons">
+      {% if user %}
+        <a class="btn btn-primary btn-lg" href="{{ url_for('dashboard') }}">Go to your dashboard</a>
+      {% else %}
+        <a class="btn btn-primary btn-lg" href="{{ url_for('signup') }}">Create your workspace</a>
+        <a class="btn btn-secondary btn-lg" href="{{ url_for('login') }}">Sign in</a>
+      {% endif %}
+      <a class="btn btn-link btn-lg" href="{{ url_for('support') }}">Need help? Contact support</a>
+    </div>
+    {% if session_id %}
+    <p class="note landing-cta__footnote">
+      Reference: <code>{{ session_id }}</code>
+    </p>
+    {% endif %}
+  </div>
+</section>
+
+{% endblock %}
