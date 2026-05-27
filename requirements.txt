@@ -16,3 +16,7 @@ gunicorn==23.0.0
 # reportlab powers the Step 6 "Download PDF" button. Pure-Python wheel,
 # no system libs required, fine on Render's slim Python image.
 reportlab==4.2.5
+# stripe powers /pricing/checkout/<plan>. Server-side only; no key ever
+# leaves the backend. Pinned to a recent stable release that supports the
+# Checkout Sessions API used in stripe_checkout.py.
+stripe==11.4.1
