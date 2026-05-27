@@ -2072,6 +2072,17 @@ def support():
     return render_template("support.html")
 
 
+@app.route("/pricing")
+def pricing():
+    """Public pricing page.
+
+    Pricing tiers are keyed off how much historical PCLaw data a firm
+    wants to bring over, not firm size. Kept simple and lawyer-friendly:
+    no accounting jargon in the package names or descriptions.
+    """
+    return render_template("pricing.html")
+
+
 @app.route("/quickbooks-guide")
 def quickbooks_guide():
     """Plain-English orientation to QuickBooks Online for new customers.
