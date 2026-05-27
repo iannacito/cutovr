@@ -13,6 +13,12 @@
       stored QuickBooks tokens, plus controls to reconnect or disconnect.
       Tokens are stored encrypted at rest and never displayed.
     </p>
+    <p class="muted" style="margin-top:var(--space-3);">
+      New to QuickBooks Online?
+      <a href="{{ url_for('quickbooks_guide') }}">Read the QuickBooks guide &rarr;</a>
+      &mdash; a plain-English orientation to what {{ app_name }} posts,
+      what stays untouched, and where to look in QBO after the import.
+    </p>
   </div>
 
   {% if qbo_is_sandbox %}
@@ -37,9 +43,12 @@
       <p class="note">
         Existing connections shown below still work, but you cannot start
         a new one until these items are fixed in Render and the deploy is
-        restarted. Open the
-        <a href="{{ url_for('readiness_page') }}">readiness checklist</a>
-        for full remediation hints.
+        restarted.
+        {% if is_operator %}
+          Open the
+          <a href="{{ url_for('readiness_page') }}">readiness checklist</a>
+          for full remediation hints.
+        {% endif %}
       </p>
     </div>
   {% else %}
