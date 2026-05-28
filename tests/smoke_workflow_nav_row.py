@@ -71,23 +71,30 @@ def n1_step1_page_renders_nav_row_with_cta_only():
     print("OK  N1  Step 1 dashboard renders nav-row wrapper (CTA-only)")
 
 
-def n2_nav_row_precedes_title():
-    """The nav row must come before the title block. If it landed after
-    the title the back/next CTAs would sit in different rows again —
-    which is exactly the visual bug we just fixed."""
+def n2_nav_row_precedes_progress_bar():
+    """The nav row must come before the progress bar. If it landed after
+    the progress bar the back/next CTAs would sit in different rows
+    again — which is exactly the visual bug we just fixed.
+
+    (The stepper's own h2 title/eyebrow/lede block was removed in the
+    workflow-polish PR because every step page already prints the same
+    eyebrow + h1 in its own hero immediately below — having the same
+    text twice on every step page confused lawyers in user testing. The
+    progress bar is the next stable anchor after the nav row.)
+    """
     client = appmod.app.test_client()
     _signup_login(client, "nav-order@example.test")
     r = client.get("/dashboard")
     body = r.get_data(as_text=True)
     nav_idx = body.find("workflow-stepper__nav")
-    title_idx = body.find("workflow-stepper__title")
-    assert nav_idx != -1 and title_idx != -1, \
-        f"expected nav + title in body (nav={nav_idx}, title={title_idx})"
-    assert nav_idx < title_idx, (
-        "nav-row must render before the title block so back/next CTAs "
-        f"share a row (nav={nav_idx}, title={title_idx})"
+    progress_idx = body.find("workflow-progress")
+    assert nav_idx != -1 and progress_idx != -1, \
+        f"expected nav + progress in body (nav={nav_idx}, progress={progress_idx})"
+    assert nav_idx < progress_idx, (
+        "nav-row must render before the progress bar so back/next CTAs "
+        f"share a row (nav={nav_idx}, progress={progress_idx})"
     )
-    print("OK  N2  nav row is rendered before the title block")
+    print("OK  N2  nav row is rendered before the progress bar")
 
 
 def n3_nav_halves_present_when_both_back_and_cta_exist():
@@ -134,7 +141,7 @@ def n4_all_step_pages_emit_nav_row():
 
 def main():
     n1_step1_page_renders_nav_row_with_cta_only()
-    n2_nav_row_precedes_title()
+    n2_nav_row_precedes_progress_bar()
     n3_nav_halves_present_when_both_back_and_cta_exist()
     n4_all_step_pages_emit_nav_row()
     print("\nAll workflow nav-row smoke tests passed.")

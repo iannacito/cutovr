@@ -262,8 +262,13 @@ def _stage_cta(
             return fallback
 
     if stage_key == STAGE_SETUP:
-        return ("Proceed to Step 2: Upload reports",
-                u("cutover_setup", "/cutover"))
+        # User testing: lawyers parsed "Proceed to Step 2: Upload reports"
+        # as instructional rather than as the next action. "Step 2: Upload
+        # Your Reports" reads as a clear, plain-English next button. Point
+        # at the upload area on the dashboard so this button actually moves
+        # the user forward rather than self-linking back to Step 1.
+        return ("Step 2: Upload Your Reports",
+                u("dashboard", "/dashboard") + "#intake")
     if stage_key == STAGE_UPLOAD:
         if ready_to_advance:
             return ("Proceed to Step 3: Match accounts",

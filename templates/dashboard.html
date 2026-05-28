@@ -151,11 +151,10 @@
            data-testid="view-uploaded-reports-link">
           View uploaded reports &rarr;
         </a>
-        <a class="btn btn-link"
-           href="{{ url_for('cutover_setup') }}"
-           data-testid="step2-back-link">
-          &larr; Back to Step 1: Setup
-        </a>
+        {# Back-to-Step-1 was duplicated here — the workflow stepper at the
+           top of the page already shows the left-aligned back link. Having
+           it twice (once in the stepper, once in this panel) made the
+           Step 2 page feel like it had four buttons doing two things. #}
       </div>
     </article>
     {% endif %}

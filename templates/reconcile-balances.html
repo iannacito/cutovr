@@ -75,11 +75,27 @@
       {% endif %}
     </section>
 
+    {# Split the reconciliation lines into "core" (completed / pending /
+       blocked — the user has to see these) and "optional skipped"
+       (uploads that simply weren't part of this migration). User testing
+       showed lawyers reading three "Skipped" badges as failures. We now
+       surface only the work that actually happened up top, and tuck the
+       optional ones into a quiet details section below. #}
+    {% set core_lines = [] %}
+    {% set skipped_lines = [] %}
+    {% for line in summary.lines %}
+      {% if line.status == 'skipped' %}
+        {% set _ = skipped_lines.append(line) %}
+      {% else %}
+        {% set _ = core_lines.append(line) %}
+      {% endif %}
+    {% endfor %}
+
     <section class="card" style="padding:var(--space-6);margin-bottom:var(--space-6);">
-      <p class="eyebrow">Reconciliation</p>
+      <p class="eyebrow">What we completed</p>
       <ul class="secure-list" data-testid="step6-reconcile-lines"
           style="margin-top:var(--space-3);">
-        {% for line in summary.lines %}
+        {% for line in core_lines %}
           <li data-status="{{ line.status }}" data-testid="step6-line-{{ line.key }}"
               style="margin-bottom:var(--space-3);">
             {% if line.status == 'completed' %}
@@ -88,14 +104,28 @@
               <span class="badge">Pending</span>
             {% elif line.status == 'blocked' %}
               <span class="badge error">Blocked</span>
-            {% else %}
-              <span class="badge">Skipped</span>
             {% endif %}
             <strong style="margin-left:var(--space-2);">{{ line.label }}</strong>
             <div class="muted" style="margin-top:var(--space-1);">{{ line.detail }}</div>
           </li>
         {% endfor %}
       </ul>
+      {% if skipped_lines %}
+        <details class="quiet" data-testid="step6-skipped-details"
+                 style="margin-top:var(--space-4);">
+          <summary>Optional reports not used in this migration ({{ skipped_lines|length }})</summary>
+          <ul class="secure-list" data-testid="step6-skipped-lines"
+              style="margin-top:var(--space-3);">
+            {% for line in skipped_lines %}
+              <li data-status="skipped" data-testid="step6-line-{{ line.key }}"
+                  style="margin-bottom:var(--space-3);">
+                <strong>{{ line.label }}</strong>
+                <div class="muted" style="margin-top:var(--space-1);">{{ line.detail }}</div>
+              </li>
+            {% endfor %}
+          </ul>
+        </details>
+      {% endif %}
     </section>
 
     {% if summary.warnings %}

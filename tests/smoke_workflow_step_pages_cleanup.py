@@ -302,16 +302,21 @@ def c7_dashboard_step2_is_focused():
     # Recent migrations + Recent activity hidden at upload stage.
     assert "Recent migrations" not in body
     assert "Recent activity (last 10)" not in body
-    # Step 2 has its own nav card with the View Uploaded Reports link
-    # and the Back to Step 1 link.
+    # Step 2 has its own nav card with the View Uploaded Reports link.
+    # The redundant "Back to Step 1: Setup" duplicate in this panel was
+    # removed in the workflow-polish PR — the workflow stepper above
+    # already shows it. The visible back-to-Step-1 navigation is now
+    # only the stepper's back link.
     assert 'data-testid="step2-nav"' in body
     assert 'data-testid="view-uploaded-reports-link"' in body
     assert "/uploaded-reports" in body
-    assert 'data-testid="step2-back-link"' in body
+    assert "Back to Step 1: Setup" in body, (
+        "stepper back link must still be present somewhere on Step 2"
+    )
     # Upload form still present — Step 2 still does its primary job.
     assert "Upload your PCLaw reports" in body
     print("C7 OK: Step 2 dashboard hides workspace/recent/audit; "
-          "exposes View Uploaded Reports + Back to Step 1")
+          "exposes View Uploaded Reports + stepper Back to Step 1")
 
 
 def c8_match_accounts_step_nav_buttons_present():

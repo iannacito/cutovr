@@ -174,9 +174,15 @@ app.secret_key = _secret
 # for a year of data fit comfortably under 25 MB; this stops a runaway
 # upload from filling the Render disk.
 try:
-    _session_hours = int(os.environ.get("SESSION_HOURS", "12"))
+    # Bumped from 12 to 24 hours after production users reported being
+    # logged out mid-QuickBooks-OAuth. A QBO connect can stretch over
+    # multiple browser tabs and sign-in attempts when the user has to
+    # find their QuickBooks credentials, complete 2FA, or pick the right
+    # company. 24 hours gives a normal workday plus slack without
+    # weakening the law-firm-data baseline (Flask default is 31 days).
+    _session_hours = int(os.environ.get("SESSION_HOURS", "24"))
 except ValueError:
-    _session_hours = 12
+    _session_hours = 24
 try:
     _max_upload_mb = int(os.environ.get("MAX_UPLOAD_MB", "25"))
 except ValueError:
@@ -199,8 +205,22 @@ def _make_session_permanent():
     timeout actually applies. Without ``session.permanent = True`` Flask
     treats the session as a transient browser-lifetime cookie and
     PERMANENT_SESSION_LIFETIME is ignored.
+
+    Also roll the cookie expiry forward on every request from a logged-in
+    user. Flask only re-sends the Set-Cookie header (with a fresh expiry)
+    when ``session.modified`` is True. Without that, an active user
+    clicking around for hours could still see their session "expire" at
+    a fixed wall-clock time relative to login — and crucially, a slow
+    QuickBooks OAuth round-trip (sign-in + 2FA on Intuit can take
+    minutes) was at risk of landing back on the app *just* after the
+    cookie's recorded expiry, making the callback look like an auth
+    timeout. Bumping `modified` for logged-in users keeps the cookie
+    sliding forward so the typical QBO redirect always finds an active
+    session.
     """
     session.permanent = True
+    if session.get("user_id"):
+        session.modified = True
 
 
 @app.errorhandler(413)
@@ -883,6 +903,13 @@ def login():
         next_url = request.args.get("next") or request.form.get("next")
         if _is_safe_local_redirect(next_url):
             return redirect(next_url)
+        # If the user has a migration in progress, pause on the
+        # welcome-back chooser so they can pick "continue" or "start
+        # fresh" rather than being silently dropped back into the middle
+        # of a half-finished run. Brand-new and finished users skip the
+        # chooser and land on the dashboard as before.
+        if _firm_has_in_progress_migration(user["firm_id"]):
+            return redirect(url_for("welcome_back"))
         return redirect(url_for("dashboard"))
     return render_template("login.html")
 
@@ -1177,6 +1204,149 @@ def _build_firm_checklist(firm_id):
         account_mapping_count=_firm_account_mapping_count(firm_id),
     )
     return cutover, items, cutover_workflow.next_recommended_step(items)
+
+
+def _firm_has_in_progress_migration(firm_id) -> bool:
+    """Return True when this firm has a partially-completed migration.
+
+    "In progress" means: at least one workflow step is past the first
+    (cutover_setup) AND the final reconciliation step is not yet done.
+    A brand-new firm with no cutover settings and no jobs is NOT in
+    progress (they should land straight on the dashboard). A firm that
+    finished everything is also NOT in progress (no reason to ask them
+    if they want to continue or start fresh — they're done).
+
+    Used by the post-login flow to decide whether to show the
+    welcome-back chooser. The check is read-only and cheap; it reuses
+    the same checklist a dashboard load already builds.
+    """
+    cutover, items, next_step = _build_firm_checklist(firm_id)
+    if not items:
+        return False
+    # No work done at all -> not in progress.
+    any_started = any(
+        item.status != cutover_workflow.STATUS_NOT_STARTED for item in items
+    )
+    if not any_started:
+        return False
+    # Everything done -> migration finished, not "in progress".
+    if next_step is None:
+        return False
+    # Only the first item touched (just saved cutover settings) is too
+    # early to be a real interruption — let those users continue straight
+    # onto the dashboard instead of forcing a yes/no chooser.
+    if (next_step.key == cutover_workflow.STEP_COA_UPLOAD
+            and not demo_mode.filter_active_jobs(
+                db.list_jobs_for_firm(firm_id, limit=1))):
+        # Cutover is saved but no uploads yet — call this "not in
+        # progress" so first-time users don't bounce through the chooser.
+        # We still treat any user with at least one uploaded file as
+        # in-progress so the chooser is the safety net for real returns.
+        return False
+    return True
+
+
+@app.route("/welcome-back")
+@login_required
+def welcome_back():
+    """Post-login chooser: continue where you left off, or start fresh.
+
+    User testing: lawyers who signed out mid-migration and came back
+    were dropped straight into the middle of the workflow with no
+    indication that the prior run was still active. The chooser gives
+    them a plain-English fork:
+
+      - "Continue where you left off" sends them to the next step the
+        workflow stepper recommends — same destination as the previous
+        post-login redirect.
+      - "Start a new migration" runs the same firm-scoped reset that
+        powers the demo workflow (archive prior jobs, clear saved
+        account mappings) so the dashboard renders a clean slate. It
+        does NOT touch QuickBooks Online data — any entries already
+        posted to QBO remain there and must be cleaned up inside
+        QuickBooks if the user wants to remove them.
+    """
+    user = current_user()
+    firm_id = user["firm_id"]
+    cutover, items, next_step = _build_firm_checklist(firm_id)
+    firm_jobs = demo_mode.filter_active_jobs(
+        db.list_jobs_for_firm(firm_id, limit=500)
+    )
+    match_blocked, blocked_job_id = _firm_match_blocked_state(firm_id)
+    stages = customer_workflow.build_customer_stages(
+        items, url_for=url_for, has_jobs=bool(firm_jobs),
+        match_blocked=match_blocked,
+        match_blocked_job_id=blocked_job_id,
+    )
+    current = customer_workflow.current_stage(stages)
+    # Continue-URL: prefer the stage CTA (it knows the right per-stage
+    # page); fall back to the dashboard if no stage has a CTA (e.g.
+    # everything is complete — which usually means we'd have skipped
+    # this page, but defensive).
+    continue_url = (
+        current.cta_url if current and current.cta_url else url_for("dashboard")
+    )
+    return render_template(
+        "welcome-back.html",
+        cutover=cutover,
+        next_step=next_step,
+        current_stage=current.to_dict() if current else None,
+        continue_url=continue_url,
+        jobs_count=len(firm_jobs),
+    )
+
+
+@app.route("/welcome-back/start-fresh", methods=["POST"])
+@login_required
+def welcome_back_start_fresh():
+    """Archive the firm's in-progress migration and send them to Step 1.
+
+    Side effects:
+      - Archives every job for the firm (status -> "Archived (run id …)")
+        so the dashboard / checklist render a fresh state. The job rows
+        stay in the DB so the operator panel and audit log keep full
+        history.
+      - Clears the firm's saved account mappings so the next migration
+        re-walks Step 3.
+      - Writes an audit row.
+
+    Explicitly NOT side effects:
+      - No QuickBooks Online records are deleted or modified. Any
+        entries already posted to QBO remain there.
+      - No firm/user/QBO-connection rows are deleted — re-connecting is
+        not required.
+    """
+    user = current_user()
+    firm_id = user["firm_id"]
+    # Reuse the demo workspace reset helper — its contract is "archive
+    # prior jobs, clear saved account mappings, do not touch QBO" which
+    # is exactly what production "start fresh" needs. The helper itself
+    # writes no demo-specific data; only its name is demo-flavored.
+    run_id = demo_mode.new_demo_run_id()
+    result = demo_mode.reset_demo_workspace(db, firm_id, run_id)
+    # Production deploys don't store a per-firm "current demo run id",
+    # but in demo mode we still want the run-id roll-forward so the demo
+    # data set salts uniquely. Setting it is a no-op if demo mode is off.
+    try:
+        _set_demo_run_id(firm_id, run_id)
+    except Exception:
+        pass
+    _audit(
+        "workspace_start_fresh",
+        target_type="firm",
+        target_id=str(firm_id),
+        details=(
+            f"run_id={run_id} archived_jobs={result['archived_jobs']} "
+            f"cleared_mappings={result.get('cleared_mappings', 0)}"
+        ),
+    )
+    flash(
+        "Starting a new migration. Your prior uploads and saved account "
+        "matches have been archived in this app — nothing was deleted "
+        "from QuickBooks.",
+        "success",
+    )
+    return redirect(url_for("cutover_setup"))
 
 
 @app.route("/dashboard")
@@ -4448,12 +4618,25 @@ def oauth_callback():
                 next_url = url_for("job_detail", job_id=return_job_id)
             except Exception:
                 next_url = None
+        # Audit the no-session callback so operators can spot a pattern
+        # if it starts happening regularly (cookie domain drift,
+        # SameSite tightening in a customer browser, etc.). No secret
+        # material is recorded — just whether we saw a state/code/realm.
+        db.audit(
+            action="oauth_callback_no_session",
+            target_type="job", target_id=return_job_id or "",
+            details=(
+                f"have_state={bool(state)} have_code={bool(code)} "
+                f"have_realm={bool(realm_id)}"
+            ),
+        )
         flash(
-            "Your session timed out during the QuickBooks redirect. "
-            "Please log in again, then re-click "
-            "Connect to QuickBooks on the job page."
-            + _support_suffix(),
-            "error",
+            "We need to confirm it's you before finishing the "
+            "QuickBooks connection. Log in again and then click "
+            "Connect to QuickBooks on the job page — your uploads and "
+            "saved progress are still here. Nothing was sent to "
+            "QuickBooks." + _support_suffix(),
+            "info",
         )
         # `next` is sanitized by the login view (only same-origin paths
         # are honored) so we cannot be used as an open redirect here.
