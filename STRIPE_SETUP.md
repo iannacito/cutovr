@@ -1,8 +1,8 @@
 # Stripe Checkout setup
 
-This app uses **server-side Stripe Checkout Sessions** to sell the three
-fixed-price PCLaw → QuickBooks migration packages. The "Custom" tier is
-quote-based and routes to `/support` instead of Stripe.
+This app uses **server-side Stripe Checkout Sessions** to sell the two
+fixed-price PCLaw → QuickBooks migration packages. The "5-Year History"
+tier is quote-based and routes to `/support` instead of Stripe.
 
 The integration is entirely env-var driven. No Stripe keys live in the
 repo, and no Stripe key is ever rendered into the HTML — secret keys
@@ -16,9 +16,11 @@ the thing you wire in.
 
 | Plan slug   | Public label              | Amount  | Env var                         |
 |-------------|---------------------------|---------|---------------------------------|
-| `essential` | Essential — Current Year  | $499    | `STRIPE_PRICE_ESSENTIAL`        |
-| `standard`  | Standard — 3-Year History | $999    | `STRIPE_PRICE_STANDARD`         |
-| `complete`  | Complete — 5-Year History | $1,999  | `STRIPE_PRICE_COMPLETE`         |
+| `essential` | Essential — Current Year  | $799    | `STRIPE_PRICE_ESSENTIAL`        |
+| `standard`  | Standard — Up to 3 Years  | $1,499  | `STRIPE_PRICE_STANDARD`         |
+
+The **5-Year History** tier is quote-based and does **not** go through
+Stripe Checkout — its CTA routes to `/support` so the team can quote it.
 
 Optional add-ons (not yet exposed as standalone buttons; reserved for
 future UI):
@@ -38,7 +40,6 @@ commit them):
 STRIPE_SECRET_KEY=sk_live_...          # or sk_test_... for staging
 STRIPE_PRICE_ESSENTIAL=price_...
 STRIPE_PRICE_STANDARD=price_...
-STRIPE_PRICE_COMPLETE=price_...
 ```
 
 Optional / future:
@@ -54,6 +55,10 @@ STRIPE_WEBHOOK_SECRET=whsec_...        # required if you set up a webhook
 success/cancel return URLs. If it's not set, the request's own host is
 used as a fallback — fine for local dev but **set it in production**
 so customers always return to the canonical domain.
+
+> **Note:** `STRIPE_PRICE_COMPLETE` is no longer required. The previous
+> "Complete — 5-Year History" tier has been replaced with a quote-based
+> 5-Year History option that does not flow through Stripe Checkout.
 
 ## Behavior when env vars are missing
 
@@ -79,8 +84,8 @@ exist, and safe to demo on staging without billing anyone.
 | GET    | `/pricing/checkout/success`       | Stripe `success_url` lands here.               |
 | GET    | `/pricing/checkout/cancel`        | Stripe `cancel_url` lands here, back to /pricing. |
 
-Only `essential`, `standard`, and `complete` are valid `<plan>` values
-on the checkout POST. Anything else returns 404. The "Custom" tier
+Only `essential` and `standard` are valid `<plan>` values on the
+checkout POST. Anything else returns 404. The "5-Year History" tier
 deliberately does **not** hit Stripe — it links to `/support` so the
 team can quote it.
 
@@ -90,7 +95,6 @@ team can quote it.
 export STRIPE_SECRET_KEY=sk_test_...
 export STRIPE_PRICE_ESSENTIAL=price_test_essential
 export STRIPE_PRICE_STANDARD=price_test_standard
-export STRIPE_PRICE_COMPLETE=price_test_complete
 python3 app.py
 ```
 

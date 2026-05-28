@@ -5,8 +5,8 @@ Run from project root:
     python3 tests/smoke_pricing_page.py
 
 Covers:
-  T1 GET /pricing renders publicly (no auth) and includes the four
-     packages, dollar amounts, and the FAQ headings.
+  T1 GET /pricing renders publicly (no auth) and includes the three
+     packages, dollar amounts (or Quote for 5-year), and the FAQ headings.
   T2 The pricing page does NOT use firm-size / number-of-people wording.
   T3 The landing page (/) includes a short pricing teaser with the three
      headline tiers and a link to /pricing.
@@ -14,6 +14,8 @@ Covers:
      and authenticated users should not be redirected away from it).
   T5 The pricing page avoids accountant-jargon abbreviations (COA, GL,
      QBO) in customer-facing copy.
+  T6 The pricing page no longer surfaces a "Custom" card or the prior
+     Complete / older pricing amounts.
 """
 
 import os
@@ -46,20 +48,18 @@ def t1_pricing_renders_with_packages_and_faq():
     body = r.get_data(as_text=True)
 
     must_contain = [
-        # Package names
+        # Package names (three tiers — no Custom, no Complete)
         "Essential",
         "Standard",
-        "Complete",
-        "Custom",
+        "5-Year History",
         # History framing
         "Current Year",
-        "3-Year History",
-        "5-Year History",
+        "Up to 3 Years",
+        "Up to 5 Years",
         # Prices
-        "$499",
-        "$999",
-        "$1,999",
-        # Quote-based tier signal
+        "$799",
+        "$1,499",
+        # Quote-based tier signal for 5-year history
         "Quote",
         # "Most common" badge for default tier
         "Most common",
@@ -118,10 +118,10 @@ def t3_landing_has_pricing_section_linking_to_pricing_page():
         # Three teaser cards (names + prices)
         "Essential",
         "Standard",
-        "Complete",
-        "$499",
-        "$999",
-        "$1,999",
+        "5-Year History",
+        "$799",
+        "$1,499",
+        "Quote",
         # Recommended badge on the teaser too
         "Most common",
         # Link to full pricing page
@@ -148,7 +148,7 @@ def t4_pricing_reachable_for_authenticated_users():
         f"/pricing should stay public for authenticated users, got {r.status_code}"
     )
     body = r.get_data(as_text=True)
-    assert "$999" in body, "/pricing for authed user missing tier content"
+    assert "$1,499" in body, "/pricing for authed user missing tier content"
     print("T4 OK: /pricing is reachable while signed in")
 
 
@@ -174,6 +174,30 @@ def t5_pricing_avoids_jargon_abbreviations():
     print("T5 OK: /pricing avoids COA/GL/QBO abbreviations in visible copy")
 
 
+def t6_pricing_drops_custom_and_old_amounts():
+    """User revised pricing: Custom column removed; old amounts retired."""
+    r = _get("/pricing")
+    body = r.get_data(as_text=True)
+    visible = re.sub(r"<[^>]+>", " ", body)
+
+    # No "Custom" card / column on the pricing page.
+    assert not re.search(r"\bCustom\b", visible), (
+        "/pricing still surfaces a 'Custom' tier/column — it should be removed"
+    )
+    # No "Complete" tier name (replaced by quote-based 5-Year History).
+    # Word-boundary so we don't trip on words containing "complete" in
+    # other copy that may exist elsewhere.
+    assert not re.search(r"\bComplete\b", visible), (
+        "/pricing still shows the retired 'Complete' tier label"
+    )
+    # The old base amounts must not appear.
+    for stale_amount in ("$499", "$999", "$1,999"):
+        assert stale_amount not in body, (
+            f"/pricing still references retired amount {stale_amount}"
+        )
+    print("T6 OK: /pricing has no Custom column and no retired amounts")
+
+
 if __name__ == "__main__":
     try:
         t1_pricing_renders_with_packages_and_faq()
@@ -181,6 +205,7 @@ if __name__ == "__main__":
         t3_landing_has_pricing_section_linking_to_pricing_page()
         t4_pricing_reachable_for_authenticated_users()
         t5_pricing_avoids_jargon_abbreviations()
+        t6_pricing_drops_custom_and_old_amounts()
         print("\nALL PRICING-PAGE SMOKE TESTS PASSED")
     finally:
         for path in (APP_DB, HIST_DB):
