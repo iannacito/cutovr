@@ -68,6 +68,25 @@ STATUS_NEEDS_REVIEW = "needs_review"
 STATUS_DUPLICATE = "duplicate"
 STATUS_UNREADABLE = "unreadable"
 STATUS_REJECTED = "rejected"
+# Recognised as a supplemental list (Client list, Vendor list) that the
+# app understands and accepts, but does not yet post to QuickBooks. The
+# review screen shows these as "Coming next — not posted yet" so the
+# customer is not misled into thinking their vendors / customers were
+# created in QuickBooks.
+STATUS_RECOGNIZED_NOT_POSTED = "recognized_not_posted"
+
+
+# Pseudo report types for supplemental lists. These never enter
+# ``REPORT_TYPES`` (so they don't accidentally drive importable flows)
+# but are surfaced on the upload review screen with a clear label and
+# a "Coming next — not posted yet" badge.
+RECOGNIZED_KIND_CLIENT_LIST = "client_list"
+RECOGNIZED_KIND_VENDOR_LIST = "vendor_list"
+
+RECOGNIZED_KIND_LABELS = {
+    RECOGNIZED_KIND_CLIENT_LIST: "Client list",
+    RECOGNIZED_KIND_VENDOR_LIST: "Vendor list",
+}
 
 
 # Required reports for the migration workflow. Order matters: the
@@ -153,6 +172,106 @@ class ClassificationResult:
             "detector_signals": list(self.detector_signals),
             "warning": self.warning,
         }
+
+
+# Filename + header hints for supplemental lists we recognise but do
+# not post to QuickBooks yet (Client list, Vendor list). The first hit
+# wins.
+_RECOGNIZED_FILENAME_HINTS: list[tuple[str, str]] = [
+    ("client_list", RECOGNIZED_KIND_CLIENT_LIST),
+    ("client-list", RECOGNIZED_KIND_CLIENT_LIST),
+    ("clientlist", RECOGNIZED_KIND_CLIENT_LIST),
+    ("clientlisting", RECOGNIZED_KIND_CLIENT_LIST),
+    ("client_listing", RECOGNIZED_KIND_CLIENT_LIST),
+    ("customer_list", RECOGNIZED_KIND_CLIENT_LIST),
+    ("customer-list", RECOGNIZED_KIND_CLIENT_LIST),
+    ("customerlist", RECOGNIZED_KIND_CLIENT_LIST),
+    ("customers", RECOGNIZED_KIND_CLIENT_LIST),
+    ("clients", RECOGNIZED_KIND_CLIENT_LIST),
+    ("vendor_list", RECOGNIZED_KIND_VENDOR_LIST),
+    ("vendor-list", RECOGNIZED_KIND_VENDOR_LIST),
+    ("vendorlist", RECOGNIZED_KIND_VENDOR_LIST),
+    ("vendors", RECOGNIZED_KIND_VENDOR_LIST),
+    ("payee_list", RECOGNIZED_KIND_VENDOR_LIST),
+    ("payeelist", RECOGNIZED_KIND_VENDOR_LIST),
+    ("payees", RECOGNIZED_KIND_VENDOR_LIST),
+    ("suppliers", RECOGNIZED_KIND_VENDOR_LIST),
+]
+
+
+# Header keywords that strongly imply a Client or Vendor list. Compared
+# against normalized (lowercase, alnum-only) headers. Each combination
+# must include a *name* column — the GL/Trust Listing exports already
+# carry ``client_id`` / ``matter_id`` columns, so client identifiers
+# alone are not enough to call a file a Client list.
+_RECOGNIZED_HEADER_HINTS = {
+    RECOGNIZED_KIND_CLIENT_LIST: (
+        ("clientid", "clientname"),
+        ("clientname", "billingaddress"),
+        ("customername", "customerid"),
+        ("customername", "billingaddress"),
+    ),
+    RECOGNIZED_KIND_VENDOR_LIST: (
+        ("vendorid", "vendorname"),
+        ("vendorname", "address"),
+        ("payeename", "payeeid"),
+        ("suppliername", "supplierid"),
+    ),
+}
+
+
+# Headers that, if present, mean a file is definitely NOT a supplemental
+# list — it's a real transactional report. Used to veto the recognised-
+# list path when the file is clearly a GL / Trial Balance / Trust
+# Listing with a ``client_id`` / ``customer_name`` column attached.
+_TRANSACTIONAL_HEADER_TOKENS = (
+    "transactionid",
+    "transid",
+    "txnid",
+    "debit",
+    "credit",
+    "openingbalance",
+    "trustbalance",
+)
+
+
+def detect_recognized_list_from_filename(filename: str) -> Optional[str]:
+    """Return a RECOGNIZED_KIND_* identifier or None for a filename.
+
+    Used in addition to the report-type classifier so that uploaded
+    Client / Vendor lists are surfaced on the review screen even when
+    the app cannot yet post them to QuickBooks. Returning None here
+    means "not recognised as a supplemental list".
+    """
+    token = _norm_filename_token(filename)
+    if not token:
+        return None
+    decorated = f"_{token}_"
+    for needle, kind in _RECOGNIZED_FILENAME_HINTS:
+        if needle in decorated or needle in token:
+            return kind
+    return None
+
+
+def detect_recognized_list_from_headers(headers: Iterable[str]) -> Optional[str]:
+    """Return a RECOGNIZED_KIND_* identifier or None from CSV headers.
+
+    Looks for the well-known Client / Vendor list header combinations.
+    Pure / side-effect free. Files whose headers also include
+    transactional columns (debit/credit/transaction_id/openingbalance/
+    trustbalance) are never recognised as a supplemental list — those
+    are real reports with a customer/vendor column attached.
+    """
+    if not headers:
+        return None
+    normed = set(_index_by_normalized_header(headers).keys())
+    if any(token in normed for token in _TRANSACTIONAL_HEADER_TOKENS):
+        return None
+    for kind, combinations in _RECOGNIZED_HEADER_HINTS.items():
+        for combo in combinations:
+            if all(token in normed for token in combo):
+                return kind
+    return None
 
 
 def _norm_filename_token(name: str) -> str:
@@ -301,6 +420,42 @@ def classify_csv(path: Path, filename: str) -> ClassificationResult:
                 "Could not read CSV headers. Make sure the file is a "
                 "PCLaw CSV export and try again."
             ),
+        )
+
+    # Recognise supplemental lists (Client list, Vendor list) before the
+    # report-type classifier so they don't get mis-typed as a Trust
+    # Listing or Trial Balance. Posting them to QuickBooks is not yet
+    # implemented, but the customer should still see clearly that we
+    # accepted the file — not get a "needs review" badge that suggests
+    # something is broken.
+    #
+    # We veto the recognised-list path whenever the headers look like a
+    # transactional report (debit/credit/transaction_id/etc.). A
+    # filename like "client_list_jan.csv" with GL headers is still a GL.
+    normed_for_veto = set(_index_by_normalized_header(headers).keys())
+    looks_transactional = any(
+        tok in normed_for_veto for tok in _TRANSACTIONAL_HEADER_TOKENS
+    )
+    recognized_filename = (
+        None if looks_transactional
+        else detect_recognized_list_from_filename(safe_name)
+    )
+    recognized_headers = detect_recognized_list_from_headers(headers)
+    recognized_kind = recognized_headers or recognized_filename
+    if recognized_kind:
+        kind_label = RECOGNIZED_KIND_LABELS.get(recognized_kind, recognized_kind)
+        return ClassificationResult(
+            filename=safe_name,
+            report_type=None,
+            report_label=kind_label,
+            confidence=CONFIDENCE_HIGH if recognized_headers else CONFIDENCE_MEDIUM,
+            status=STATUS_RECOGNIZED_NOT_POSTED,
+            reason=(
+                f"Recognised as a {kind_label}. We accept this file but "
+                "do not post it to QuickBooks yet — your Chart of "
+                "Accounts and General Ledger import will still work."
+            ),
+            headers=headers,
         )
 
     header_detected = detect_report_type(headers)
@@ -460,6 +615,14 @@ def summarize_bulk(
     for r in results:
         if r.report_type and r.status == STATUS_CATEGORIZED:
             by_type[r.report_type] = by_type.get(r.report_type, 0) + 1
+    recognized_not_posted = [
+        {
+            "filename": r.filename,
+            "label": r.report_label or "Recognised list",
+        }
+        for r in results
+        if r.status == STATUS_RECOGNIZED_NOT_POSTED
+    ]
     return {
         "file_count": len(results),
         "categorized": sum(1 for r in results if r.status == STATUS_CATEGORIZED),
@@ -467,6 +630,8 @@ def summarize_bulk(
             1 for r in results
             if r.status in (STATUS_NEEDS_REVIEW, STATUS_DUPLICATE, STATUS_UNREADABLE)
         ),
+        "recognized_not_posted_count": len(recognized_not_posted),
+        "recognized_not_posted": recognized_not_posted,
         "by_type": by_type,
         "missing_required": missing_required(results),
     }

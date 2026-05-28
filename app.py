@@ -3088,9 +3088,13 @@ def upload_bulk():
 
     if summary["categorized"]:
         if summary["needs_review"]:
+            # Plain-English: most files are fine, a couple need confirmation.
+            # Do NOT phrase as a warning/error on a first upload — the
+            # files are accepted, and the review step is normal.
             flash(
-                f"Got it — {len(files)} file(s) uploaded. "
-                "A few need a quick look below.",
+                f"Uploaded {len(files)} file(s). We matched most of them "
+                "to a report type automatically. Pick a type for the "
+                "few we weren't sure about below.",
                 "info",
             )
         else:
@@ -3100,11 +3104,14 @@ def upload_bulk():
                 "success",
             )
     else:
+        # No files were auto-categorized. This is mildly unusual but not
+        # an error — the customer just needs to pick a type for each
+        # file. Phrase it gently and tell them exactly what to do next.
         flash(
-            "We couldn't tell what kind of report any of these files are. "
-            "Pick a type for each below, or upload again with the report "
-            "name in the filename.",
-            "error",
+            f"Uploaded {len(files)} file(s). We couldn't tell which "
+            "report type each one is. Pick a type for each below to "
+            "continue.",
+            "info",
         )
     return redirect(url_for("bulk_upload_review", bulk_id=bulk_id))
 
@@ -3160,11 +3167,12 @@ def bulk_upload_review(bulk_id):
             bulk_upload.CONFIDENCE_NONE: "Not identified",
         },
         status_labels={
-            bulk_upload.STATUS_CATEGORIZED: "Categorized",
+            bulk_upload.STATUS_CATEGORIZED: "Identified",
             bulk_upload.STATUS_NEEDS_REVIEW: "Needs review",
             bulk_upload.STATUS_DUPLICATE: "Duplicate — pick one",
             bulk_upload.STATUS_UNREADABLE: "Could not read",
             bulk_upload.STATUS_REJECTED: "Rejected",
+            bulk_upload.STATUS_RECOGNIZED_NOT_POSTED: "Coming next — not posted yet",
         },
         **_workflow_stepper_context(user["firm_id"]),
     )
@@ -6152,60 +6160,143 @@ def _normalize_account_name(name) -> str:
 # spellings, Operating Bank vs Checking) where misclassification would
 # be a real bug. New entries should be unambiguous in the legal/
 # professional-services chart-of-accounts space.
-_ACCOUNT_NAME_ALIASES: list[tuple[str, str]] = [
+# Alias entries are (alias_token, canonical_token, mode).
+#
+# mode:
+#   "exact"   — the PCLaw normalized name (or canonical) must equal the
+#               token exactly. Used for short ambiguous abbreviations
+#               like "ar" / "ap" where substring containment would
+#               misfire on legitimate non-AR/AP names (e.g. "Wells
+#               Fargo" contains "ar"; "Gross Salaries" contains "ar";
+#               "Maintenance/Repair" contains "ap"). Substring matching
+#               on these tokens historically silently mapped unrelated
+#               accounts to Accounts Receivable / Accounts Payable —
+#               a dangerous default. Exact mode prevents that.
+#
+#   "contains" — alias and canonical are long, unambiguous compound terms
+#               (e.g. "clienttrustliability") where substring containment
+#               is safe across legal-services chart-of-accounts.
+_ACCOUNT_NAME_ALIASES: list[tuple[str, str, str]] = [
     # Trust liability variants — PCLaw frequently calls this "Client
     # Trust Liability" or "Trust Liability"; QBO's default subtype is
     # "Trust Accounts - Liabilities" which a user may have named
     # "Trust Liabilities" or "Trust Liability".
-    ("clienttrustliability", "trustliability"),
-    ("clienttrustliability", "trustliabilities"),
-    ("clienttrustliability", "trustaccountsliabilities"),
-    ("trustliability", "trustliabilities"),
-    ("trustliability", "trustaccountsliabilities"),
+    ("clienttrustliability", "trustliability", "contains"),
+    ("clienttrustliability", "trustliabilities", "contains"),
+    ("clienttrustliability", "trustaccountsliabilities", "contains"),
+    ("trustliability", "trustliabilities", "contains"),
+    ("trustliability", "trustaccountsliabilities", "contains"),
     # Trust bank — PCLaw "Trust Bank" vs QBO subtype "Trust Account".
-    ("trustbank", "trustaccount"),
-    ("trustbank", "trustbankaccount"),
+    ("trustbank", "trustaccount", "contains"),
+    ("trustbank", "trustbankaccount", "contains"),
     # Operating bank — PCLaw "Operating Bank" vs QBO common naming
     # "Operating Account" / "Checking".
-    ("operatingbank", "operatingaccount"),
-    ("operatingbank", "checkingaccount"),
-    # AR / AP — long-form vs short-form.
-    ("accountsreceivable", "ar"),
-    ("accountspayable", "ap"),
+    ("operatingbank", "operatingaccount", "contains"),
+    ("operatingbank", "checkingaccount", "contains"),
+    # AR / AP — long-form vs short-form. These are exact-only to prevent
+    # the historic substring-collision bug where any account name
+    # containing the letters "ar" or "ap" (e.g. "Wells Fargo", "Gross
+    # Salaries", "Maintenance/Repair") was silently auto-matched to
+    # Accounts Receivable or Accounts Payable.
+    ("accountsreceivable", "ar", "exact"),
+    ("accountspayable", "ap", "exact"),
 ]
+
+
+# QBO AccountType values that are NEVER a safe fallback for an unmatched
+# PCLaw account. If the only candidate QBO account is one of these types,
+# we refuse to auto-suggest it and leave the row as "Unmatched" so the
+# customer makes an explicit choice. Accounts Receivable / Accounts
+# Payable defaults caused real production data quality bugs (lawyer's
+# "Wells Fargo Business LOC" silently mapped to A/R).
+_NEVER_AUTO_FALLBACK_TYPES = frozenset({
+    "Accounts Receivable",
+    "Accounts Payable",
+})
+
+
+def _pclaw_name_strongly_implies_ar_ap(pclaw_norm: str) -> bool:
+    """Return True when the PCLaw account name clearly indicates AR or AP.
+
+    Used as the safety gate before suggesting any AR/AP QBO account.
+    We require an unambiguous compound term — not a stray "ar"/"ap"
+    substring — so that "Wells Fargo" or "Maintenance/Repair" never
+    triggers the AR/AP path.
+    """
+    if not pclaw_norm:
+        return False
+    ar_ap_markers = (
+        "accountsreceivable",
+        "accountspayable",
+        "accountreceivable",
+        "accountpayable",
+    )
+    return any(marker in pclaw_norm for marker in ar_ap_markers)
 
 
 def _alias_match(pclaw_norm: str, qbo_by_norm: dict) -> Optional[dict]:
     """Return a QBO account whose normalized name aliases the PCLaw name.
 
-    Match precedence (most specific first):
-      1. PCLaw name contains alias_token, QBO name equals canonical_token
-         (e.g. "clienttrustliability" -> QBO "trustliability").
-      2. PCLaw name equals alias_token, QBO name contains canonical_token
-         (e.g. "trustliability" -> QBO "trustaccountsliabilities").
-      3. Same in reverse — QBO uses the longer form, PCLaw uses shorter.
+    Each alias entry has a ``mode``:
+
+    * ``contains`` — substring match in either direction. Reserved for
+      long, unambiguous compound terms (e.g. "clienttrustliability").
+    * ``exact``    — the alias / canonical token must equal the
+      normalized name exactly. Used for short abbreviations like "ar"
+      and "ap" where containment misfires on unrelated names.
+
+    AR / AP candidates are additionally gated through
+    ``_pclaw_name_strongly_implies_ar_ap`` as a safety net: even if a
+    future alias entry leaks an AR/AP suggestion, we never return an
+    AR/AP QBO account unless the PCLaw name unambiguously says so.
 
     Returns None when no deterministic alias hits.
     """
     if not pclaw_norm:
         return None
-    for alias, canonical in _ACCOUNT_NAME_ALIASES:
-        # PCLaw side carries the alias, QBO has canonical exactly or as
-        # a containing substring.
-        if alias == pclaw_norm or alias in pclaw_norm:
-            if canonical in qbo_by_norm:
-                return qbo_by_norm[canonical]
-            # Try every QBO name that *contains* canonical token.
-            for qbo_norm, account in qbo_by_norm.items():
-                if canonical in qbo_norm:
-                    return account
-        # Reverse direction — PCLaw uses canonical, QBO uses alias.
-        if canonical == pclaw_norm or canonical in pclaw_norm:
-            if alias in qbo_by_norm:
-                return qbo_by_norm[alias]
-            for qbo_norm, account in qbo_by_norm.items():
-                if alias in qbo_norm:
-                    return account
+
+    def _is_ar_or_ap(account: dict) -> bool:
+        return (account or {}).get("AccountType") in _NEVER_AUTO_FALLBACK_TYPES
+
+    for alias, canonical, mode in _ACCOUNT_NAME_ALIASES:
+        candidate: Optional[dict] = None
+        if mode == "exact":
+            # Strict equality on either side. No substring containment.
+            if pclaw_norm == alias and canonical in qbo_by_norm:
+                candidate = qbo_by_norm[canonical]
+            elif pclaw_norm == canonical and alias in qbo_by_norm:
+                candidate = qbo_by_norm[alias]
+        else:
+            # Long compound terms — substring containment is safe.
+            if alias == pclaw_norm or alias in pclaw_norm:
+                if canonical in qbo_by_norm:
+                    candidate = qbo_by_norm[canonical]
+                else:
+                    for qbo_norm, account in qbo_by_norm.items():
+                        if canonical in qbo_norm:
+                            candidate = account
+                            break
+            if not candidate and (
+                canonical == pclaw_norm or canonical in pclaw_norm
+            ):
+                if alias in qbo_by_norm:
+                    candidate = qbo_by_norm[alias]
+                else:
+                    for qbo_norm, account in qbo_by_norm.items():
+                        if alias in qbo_norm:
+                            candidate = account
+                            break
+
+        if not candidate:
+            continue
+        # Safety net: never return an AR/AP QBO account unless the PCLaw
+        # name unambiguously indicates AR/AP. This guards future alias
+        # additions from re-introducing the silent-AR-fallback bug.
+        if _is_ar_or_ap(candidate) and not _pclaw_name_strongly_implies_ar_ap(
+            pclaw_norm
+        ):
+            continue
+        return candidate
     return None
 
 
@@ -6249,17 +6340,43 @@ def _build_account_mapping_rows(*, pclaw_accounts, qbo_accounts, saved_by_key):
         match_basis = None
         if not is_system_calc and not saved:
             num = (pa["number"] or "").strip() if pa.get("number") else ""
-            if num and num in auto_by_number:
+            name_key = _normalize_account_name(pa.get("name"))
+            name_implies_ar_ap = _pclaw_name_strongly_implies_ar_ap(name_key)
+
+            def _suggestion_is_safe(candidate):
+                """Refuse AR/AP suggestions unless the PCLaw name says so.
+
+                AR/AP defaults silently mapped law-firm accounts (e.g.
+                'Wells Fargo Business LOC', 'Gross Salaries-Supp') to
+                Accounts Receivable in QuickBooks. Even on exact-number
+                or exact-name matches we cross-check the account type
+                against the PCLaw name so a coincidentally-numbered AR
+                account in QBO cannot be silently chosen as a default.
+                """
+                if not candidate:
+                    return False
+                if (candidate.get("AccountType")
+                        in _NEVER_AUTO_FALLBACK_TYPES
+                        and not name_implies_ar_ap):
+                    return False
+                return True
+
+            if num and num in auto_by_number and _suggestion_is_safe(
+                auto_by_number[num]
+            ):
                 suggestion = auto_by_number[num]
                 match_basis = "AcctNum"
             else:
-                name_key = _normalize_account_name(pa.get("name"))
-                if name_key and name_key in auto_by_name_norm:
+                if (
+                    name_key
+                    and name_key in auto_by_name_norm
+                    and _suggestion_is_safe(auto_by_name_norm[name_key])
+                ):
                     suggestion = auto_by_name_norm[name_key]
                     match_basis = "Name"
                 elif name_key:
                     alias_hit = _alias_match(name_key, auto_by_name_norm)
-                    if alias_hit:
+                    if alias_hit and _suggestion_is_safe(alias_hit):
                         suggestion = alias_hit
                         match_basis = "Alias"
         rows.append({
@@ -6541,14 +6658,32 @@ def account_mapping_create_missing(job_id):
                 f"matched={len(plan.matched)}"
             ),
         )
-        flash(
-            f"We need a bit more information for {len(plan.blocked)} "
-            f"account(s): {blocker_names}. Upload your account list with "
-            "a category for each (for example: Bank, Income, Expense), "
-            "or match those rows to an existing QuickBooks account. "
-            "Nothing has been created in QuickBooks yet.",
-            "error" if not plan.to_create else "warning",
-        )
+        # Plain-English message. Tell the user what is happening, exactly
+        # what to do next, and avoid alarming red error styling when the
+        # user just needs to make a quick selection on a few rows. The
+        # category-picker on each unmatched row is the right next action.
+        if plan.to_create:
+            # Mixed result: we'll create the safe rows below and flash a
+            # gentler info-level message about the remaining ones.
+            flash(
+                f"We matched most accounts. {len(plan.blocked)} "
+                f"account(s) still need your choice: {blocker_names}. "
+                "On the row for each, pick what kind of account it is "
+                "(for example: Bank, Income, Expense).",
+                "info",
+            )
+        else:
+            # Nothing safe to create — every blocked row needs a category
+            # before we can move on. Surface as info-level guidance so it
+            # doesn't read as a hard error.
+            flash(
+                f"{len(plan.blocked)} account(s) need your choice "
+                f"before we can add them: {blocker_names}. On the row "
+                "for each, pick what kind of account it is (Bank, "
+                "Income, Expense, etc.). Nothing has been created in "
+                "QuickBooks yet.",
+                "info",
+            )
         if not plan.to_create:
             return redirect(url_for("account_mapping", job_id=job_id))
         # else: fall through and create the safe rows; the blocked ones
@@ -6919,9 +7054,14 @@ def delete_job(job_id):
     """
     job, user = _job_or_403(job_id)
 
-    if (request.form.get("confirm_delete") or "").strip().upper() != "DELETE":
+    # Accept the typed confirmation case-insensitively and ignore stray
+    # whitespace. Both "DELETE" and "delete" (and leading/trailing space)
+    # should pass; anything else fails with a plain-English nudge.
+    confirm = (request.form.get("confirm_delete") or "").strip()
+    if confirm.upper() != "DELETE":
         flash(
-            "Deletion not confirmed. Type DELETE in the confirmation box and try again.",
+            "Type DELETE in the confirmation box to remove this file, "
+            "then click Delete again.",
             "error",
         )
         return redirect(url_for("job_detail", job_id=job_id))
@@ -6930,10 +7070,27 @@ def delete_job(job_id):
     last_import_id = job.get("last_import_id")
 
     try:
-        if "encrypted_file" in job:
-            (UPLOAD_DIR / job["encrypted_file"]).unlink(missing_ok=True)
-        if "encrypted_output" in job:
-            (OUTPUT_DIR / job["encrypted_output"]).unlink(missing_ok=True)
+        # Some legacy job rows carry ``encrypted_file`` / ``encrypted_output``
+        # as an explicit None (e.g. failed uploads, demo seeds). ``Path / None``
+        # raises a ``TypeError`` that surfaced to the customer as the
+        # confusing "Deletion error: unsupported operand type(s) for /:
+        # 'PosixPath' and 'NoneType'" flash. Treat blank/None the same as
+        # "no file on disk" and continue cleaning up the rest of the job
+        # record.
+        enc_file = job.get("encrypted_file")
+        if enc_file:
+            try:
+                (UPLOAD_DIR / enc_file).unlink(missing_ok=True)
+            except OSError:
+                # Best-effort: a missing parent dir or permissions hiccup
+                # on a cleanup shouldn't block the rest of the delete.
+                pass
+        enc_out = job.get("encrypted_output")
+        if enc_out:
+            try:
+                (OUTPUT_DIR / enc_out).unlink(missing_ok=True)
+            except OSError:
+                pass
 
         if job_id in qbo_connections:
             del qbo_connections[job_id]
@@ -6953,20 +7110,33 @@ def delete_job(job_id):
 
         if had_qbo_results:
             flash(
-                "Local job data deleted. Note: this does NOT remove any journal "
-                "entries already posted to QuickBooks. To remove those, use "
-                "Reverse this import on the job page before deleting next time, "
-                "or void / delete them manually in QuickBooks.",
+                "File deleted. We did not change any journal entries "
+                "already posted to QuickBooks — to remove those, use "
+                "Reverse this import next time, or delete them in "
+                "QuickBooks.",
                 "success",
             )
         else:
             flash(
-                "Local job data deleted (encrypted file, QuickBooks tokens, job row).",
+                "File deleted.",
                 "success",
             )
-    except Exception as e:
-        _audit("delete_job_failed", target_type="job", target_id=job_id, details=str(e))
-        flash(f"Deletion error: {str(e)}", "error")
+    except Exception as e:  # noqa: BLE001 — last-resort safety net
+        # Never surface the raw Python exception to a customer. Log the
+        # detail to the audit trail and flash a plain-English message.
+        _audit(
+            "delete_job_failed",
+            target_type="job",
+            target_id=job_id,
+            details=f"{type(e).__name__}: {e!s}"[:300],
+        )
+        flash(
+            "Something went wrong while deleting this file. Refresh "
+            "the page and try again — if it keeps happening, contact "
+            "support.",
+            "error",
+        )
+        return redirect(url_for("job_detail", job_id=job_id))
 
     return redirect(url_for("dashboard"))
 

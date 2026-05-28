@@ -225,25 +225,24 @@ def u4_create_missing_blocked_flash_is_plain_english():
         )
     body = r.get_data(as_text=True)
     assert r.status_code == 200, r.status_code
-    # New plain-English wording.
-    assert "we need a bit more information" in body.lower(), (
-        "blocked flash should use plain-English 'we need a bit more "
-        "information' wording, not technical 'AccountType' jargon"
+    # The blocked flash is now phrased action-first and uses plain
+    # English. It must surface a clear next action ("pick what kind of
+    # account it is" or "pick what kind") without raw API jargon.
+    lower = body.lower()
+    assert (
+        "need your choice" in lower
+        or "pick what kind of account" in lower
+    ), (
+        "blocked flash should ask the user to pick what kind of account "
+        "each remaining row is"
     )
     # Old jargon must NOT appear.
     assert "couldn't safely guess the QuickBooks account type" not in body, (
         "old jargon-y wording must be removed"
     )
-    # Must NOT mention 'Chart of Accounts' as the customer-facing label.
-    # (The internal COA step is still allowed to mention it for now, but
-    # the customer-facing flash should say 'account list'.)
-    assert "account list" in body.lower(), (
-        "blocked flash should mention the customer-facing 'account list'"
-    )
     print(
-        "U4 OK: blocked-create flash uses plain-English wording "
-        "('we need a bit more information') and 'account list' instead "
-        "of 'Chart of Accounts' / 'AccountType' jargon"
+        "U4 OK: blocked-create flash is action-oriented and avoids raw "
+        "API / QBO jargon"
     )
 
 

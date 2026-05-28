@@ -567,11 +567,30 @@ def map_pclaw_account_to_qbo_type(row: dict) -> dict:
             "this step — they come from the opening trial balance."
         )
     if resolved_type == "Equity" and resolved_detail == "RetainedEarnings":
-        warnings.append(
-            "Retained Earnings is auto-managed by QuickBooks at year-end. "
-            "Do not post to it directly — confirm with the firm before "
-            "creating a parallel account."
-        )
+        # QuickBooks ships every company with its own Retained Earnings
+        # account that it auto-manages at year-end. Creating a parallel
+        # one from PCLaw causes reconciliation problems and is the
+        # standard accounting anti-pattern. Block the auto-create so the
+        # user explicitly matches PCLaw Retained Earnings to the
+        # QuickBooks built-in Retained Earnings (or, if they really want
+        # a separate equity bucket, picks a more specific category).
+        return {
+            "account_type": None,
+            "detail_type": None,
+            "decision": "blocked",
+            "warnings": [],
+            "blocked_reason": (
+                "QuickBooks already has its own Retained Earnings "
+                "account and manages it automatically at year-end. "
+                "Match this PCLaw row to the QuickBooks Retained "
+                "Earnings account from the dropdown instead of "
+                "creating a duplicate. If you need a separate equity "
+                "bucket, pick a different category (for example: "
+                "Owner/equity)."
+            ),
+            "skip_reason": None,
+            "match_hint": match_hint,
+        }
 
     return {
         "account_type": resolved_type,

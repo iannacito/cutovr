@@ -204,13 +204,20 @@ def c3_type_mapping_special_warnings():
     assert trust_bank["decision"] == "warn", trust_bank
     assert any("trust" in w.lower() for w in trust_bank["warnings"]), trust_bank
 
+    # PCLaw Retained Earnings is now BLOCKED rather than warned, because
+    # QuickBooks already has its own Retained Earnings account and
+    # blindly creating a parallel one is the standard accounting anti-
+    # pattern (Dan's May-28 walkthrough). The blocked reason must
+    # surface a plain-English next action.
     retained = coa_apply.map_pclaw_account_to_qbo_type({
         "account_name": "Retained Earnings",
         "account_type": "Equity",
         "detail_type": "Retained Earnings",
     })
-    assert retained["decision"] == "warn", retained
-    assert any("retained" in w.lower() for w in retained["warnings"]), retained
+    assert retained["decision"] == "blocked", retained
+    assert "retained earnings" in (retained.get("blocked_reason") or "").lower(), (
+        retained
+    )
     print("C3 type mapping (special warnings): OK")
 
 

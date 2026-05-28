@@ -11,8 +11,36 @@
       <span><strong>{{ summary.file_count }}</strong> uploaded</span>
       <span><strong>{{ summary.categorized }}</strong> identified</span>
       <span><strong>{{ summary.needs_review }}</strong> need a quick look</span>
+      {% if summary.recognized_not_posted_count %}
+        <span data-testid="recognized-not-posted-count">
+          <strong>{{ summary.recognized_not_posted_count }}</strong>
+          recognised, not posted yet
+        </span>
+      {% endif %}
     </p>
   </div>
+
+  {% if summary.recognized_not_posted %}
+    <div class="card" data-testid="recognized-not-posted-panel"
+         style="padding:var(--space-5);margin-bottom:var(--space-5);
+                background:var(--surface-2,#fafafa);">
+      <p class="eyebrow">Recognised — not posted to QuickBooks yet</p>
+      <h3 style="margin:var(--space-1) 0 var(--space-2);">
+        We saved your supplemental lists for later.
+      </h3>
+      <p style="max-width:60ch;">
+        These files were recognised, but QuickBooks posting for client
+        and vendor lists is coming next. Nothing is missing from your
+        migration — your account list and General Ledger import will
+        run as usual.
+      </p>
+      <ul class="secure-list" style="margin-top:var(--space-3);">
+        {% for entry in summary.recognized_not_posted %}
+          <li><strong>{{ entry.label }}</strong> &middot; <code>{{ entry.filename }}</code></li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
 
   {% if missing_required_labels %}
     <div class="next-card">
@@ -119,6 +147,11 @@
                 <td>
                   {% if r.status == 'categorized' %}
                     <span class="badge success">Identified</span>
+                  {% elif r.status == 'recognized_not_posted' %}
+                    <span class="badge"
+                          data-testid="badge-recognized-not-posted">
+                      Coming next &mdash; not posted yet
+                    </span>
                   {% elif r.status in ('needs_review', 'duplicate') %}
                     <span class="badge warn">{{ status_labels.get(r.status, r.status) }}</span>
                   {% elif r.status in ('unreadable', 'rejected') %}
@@ -135,7 +168,7 @@
                   {% endif %}
                 </td>
               </tr>
-              {% if r.status in ('needs_review', 'duplicate') or not r.report_type %}
+              {% if (r.status in ('needs_review', 'duplicate') or not r.report_type) and r.status != 'recognized_not_posted' %}
                 <tr>
                   <td colspan="4" style="background:var(--bg-2);">
                     <form action="{{ url_for('bulk_upload_correct', bulk_id=bulk.id) }}" method="post" style="display:flex;gap:var(--space-3);align-items:flex-end;flex-wrap:wrap;">
