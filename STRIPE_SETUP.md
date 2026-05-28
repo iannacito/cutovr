@@ -2,7 +2,7 @@
 
 This app uses **server-side Stripe Checkout Sessions** to sell the two
 fixed-price PCLaw → QuickBooks migration packages. The "Complete" tier
-(five or more years of history) is quote-based and routes to `/support`
+(3+ years of history) is quote-based and routes to `/support`
 instead of Stripe.
 
 The integration is entirely env-var driven. No Stripe keys live in the
@@ -20,7 +20,7 @@ the thing you wire in.
 | `essential` | Essential — Current Year  | $799    | `STRIPE_PRICE_ESSENTIAL`        |
 | `standard`  | Standard — Up to 3 Years  | $1,499  | `STRIPE_PRICE_STANDARD`         |
 
-The **Complete** tier (five or more years of history) is quote-based
+The **Complete** tier (3+ years of history) is quote-based
 and does **not** go through Stripe Checkout — its CTA routes to
 `/support` so the team can quote it.
 
@@ -60,7 +60,7 @@ so customers always return to the canonical domain.
 
 > **Note:** `STRIPE_PRICE_COMPLETE` is no longer required. The previous
 > fixed-price "Complete" tier has been replaced with a quote-based
-> "Complete" tier (five or more years of history) that does not flow
+> "Complete" tier (3+ years of history) that does not flow
 > through Stripe Checkout.
 
 ## Behavior when env vars are missing
