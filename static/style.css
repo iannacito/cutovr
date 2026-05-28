@@ -913,9 +913,12 @@ details.quiet > *:not(summary) { margin-top: var(--space-3); }
 
 .pricing-tiers {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-6);
   align-items: stretch;
+  max-width: 1040px;
+  margin: 0 auto;
+  width: 100%;
 }
 .pricing-tier {
   position: relative;
@@ -1086,6 +1089,9 @@ details.quiet > *:not(summary) { margin-top: var(--space-3); }
   margin-top: var(--space-10);
   padding-top: var(--space-6);
   border-top: 1px solid var(--line);
+  max-width: 1040px;
+  margin-left: auto;
+  margin-right: auto;
 }
 .pricing-addons-strip__eyebrow {
   font-size: .78rem;
@@ -1169,7 +1175,18 @@ details.quiet > *:not(summary) { margin-top: var(--space-3); }
 /* Landing-page responsive --------------------------------------------- */
 @media (max-width: 1020px) {
   .landing-coverage { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .pricing-tiers { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* With 3 pricing tiers, a 2-col grid leaves a lone third card stranded.
+     Drop straight to a single centered column at this breakpoint instead. */
+  .pricing-tiers {
+    grid-template-columns: 1fr;
+    max-width: 480px;
+  }
+  .landing-pricing {
+    grid-template-columns: 1fr;
+    max-width: 480px;
+    margin-left: auto;
+    margin-right: auto;
+  }
   .pricing-addons--compact { grid-template-columns: 1fr; }
 }
 @media (max-width: 920px) {
@@ -1195,9 +1212,20 @@ details.quiet > *:not(summary) { margin-top: var(--space-3); }
   .landing-cta__inner { padding: var(--space-12) var(--space-4); }
   .landing-cta__buttons { flex-direction: column; }
   .landing-cta__buttons .btn-lg { width: 100%; text-align: center; justify-content: center; }
-  .pricing-tiers { grid-template-columns: 1fr; }
+  .pricing-tiers {
+    grid-template-columns: 1fr;
+    max-width: 100%;
+    gap: var(--space-5);
+  }
+  .landing-pricing {
+    grid-template-columns: 1fr;
+    max-width: 100%;
+  }
   .pricing-hero__inner { padding: var(--space-12) var(--space-4) var(--space-8); }
+  .pricing-tier { padding: var(--space-6); }
   .pricing-addons__item { flex-direction: column; align-items: flex-start; gap: var(--space-2); }
+  .pricing-addons-strip { margin-top: var(--space-8); }
+  .pricing-fineprint { font-size: .9rem; }
 }
 
 /* =====================================================================
