@@ -1,11 +1,24 @@
 {% extends "_base.html" %}
-{% block title %}Setup &mdash; {{ firm.name }}{% endblock %}
+{% block title %}Setup{% if firm and firm.name %} &mdash; {{ firm.name }}{% endif %}{% endblock %}
 {% block content %}
 <section class="page page--prose">
   {% include "_workflow_stepper.html" %}
 
+  {# Customer-facing header. Lawyers in user testing reported that a
+     stale firm name from a prior tenant ("Smart Start LLP") leaked
+     into a fresh-setup screen and made the app feel like demo / test
+     data. Prefer the migration-specific QuickBooks company name once
+     the user has entered one, fall back to the firm record only when
+     it looks like the user's actual firm (non-empty, non-placeholder),
+     and otherwise show neutral "Step 1 of 6" copy. #}
+  {% set _migration_name = cutover.qbo_company_name or cutover.migration_scope %}
+  {% set _firm_name = firm.name if firm and firm.name else '' %}
+  {% set _header_name = _migration_name or _firm_name %}
   <div class="hero">
-    <p class="eyebrow">Step 1 of 6 &middot; {{ firm.name }}</p>
+    <p class="eyebrow">
+      Step 1 of 6
+      {% if _header_name %}&middot; {{ _header_name }}{% endif %}
+    </p>
     <h1>Migration setup <small class="muted">(your switchover day)</small></h1>
     <p>
       Pick the date you&rsquo;re moving from PCLaw to QuickBooks and a

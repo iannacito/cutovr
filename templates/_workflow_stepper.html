@@ -13,8 +13,16 @@
 ---------------------------------------------------------------------- #}
 {% if workflow_stages %}
 {# Set flags so the nav-row always renders when there is *any* nav action,
-   keeping the back/next CTAs perfectly level whether one or both exist. #}
-{% set _has_back = workflow_current and workflow_current.back_url %}
+   keeping the back/next CTAs perfectly level whether one or both exist.
+
+   Defensive override: the first stage (index 1) never renders a back
+   button regardless of upstream data. There is no previous step to
+   return to, so even if a back_url somehow gets populated, the partial
+   refuses to draw the link. (Forward CTAs on the current step are
+   left to customer_workflow._stage_cta, which de-jargons the label
+   per stage.) #}
+{% set _is_first = workflow_current and workflow_current.index == 1 %}
+{% set _has_back = (workflow_current and workflow_current.back_url) and not _is_first %}
 {% set _has_cta  = workflow_current and workflow_current.cta_url %}
 <aside class="workflow-stepper" aria-label="Migration progress">
   {% if _has_back or _has_cta %}

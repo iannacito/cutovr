@@ -350,6 +350,7 @@ def build_customer_stages(
     has_jobs: bool = False,
     match_blocked: bool = False,
     match_blocked_job_id: Optional[str] = None,
+    force_current_stage: Optional[str] = None,
 ) -> List[WorkflowStage]:
     """Project the detailed checklist into the 6-stage customer stepper.
 
@@ -370,6 +371,13 @@ def build_customer_stages(
         match-blocked state. When supplied, the Match stage's CTA
         deep-links to that job's account-mapping page so the user can
         click straight into "Create missing QuickBooks accounts".
+      force_current_stage: when set, anchor the stepper's "current"
+        marker to this stage key regardless of what the underlying
+        checklist rollup says. Use this when the user is *viewing*
+        a specific step's page (e.g. Step 1 / cutover setup) so the
+        nav row reflects "you are on Step N" rather than "Step N is
+        next" — without this, revisiting Step 1 after saving leaks a
+        misleading "Back to Step 1" CTA pointing at the page itself.
 
     Returns:
       A list of six WorkflowStage objects in display order. Exactly one
@@ -450,6 +458,19 @@ def build_customer_stages(
         if stage.status != STAGE_STATUS_COMPLETE:
             current_index = i
             break
+
+    # If the caller is pinning the stepper to a specific stage (because
+    # the user is on that step's page), override the computed current
+    # index. Stages before the forced one are marked complete; the
+    # forced stage becomes current; later stages become upcoming. This
+    # guarantees that the back / next CTAs always reflect the page the
+    # user is actually looking at, never a downstream "Back to this
+    # very page" loop.
+    if force_current_stage is not None:
+        for i, stage in enumerate(stages):
+            if stage.key == force_current_stage:
+                current_index = i
+                break
 
     ready_to_advance = _required_uploads_present(by_key)
 
