@@ -17,6 +17,11 @@ Covers:
      QBO) in customer-facing copy.
   T6 The pricing page no longer surfaces a "Custom" card or older
      fixed-price amounts on the Complete tier.
+  T7 The pricing page renders exactly three pricing tier cards (so the
+     grid is balanced and not left-heavy with a phantom fourth slot).
+  T8 The site stylesheet centers the pricing grid and lays it out as
+     three columns on desktop, collapsing to a single centered column
+     on narrow viewports — no leftover 4-column rule.
 """
 
 import os
@@ -203,6 +208,54 @@ def t6_pricing_drops_custom_and_old_amounts():
     print("T6 OK: /pricing has no Custom column and no retired amounts/labels")
 
 
+def t7_pricing_renders_exactly_three_tier_cards():
+    r = _get("/pricing")
+    body = r.get_data(as_text=True)
+    tier_cards = re.findall(r'class="pricing-tier(?:\s|")', body)
+    assert len(tier_cards) == 3, (
+        f"/pricing should render exactly 3 .pricing-tier cards, found {len(tier_cards)}"
+    )
+    print("T7 OK: /pricing renders exactly three pricing-tier cards")
+
+
+def t8_stylesheet_centers_three_column_grid():
+    css_path = ROOT / "static" / "style.css"
+    css = css_path.read_text()
+
+    # Locate the .pricing-tiers rule and inspect its declarations.
+    m = re.search(r"\.pricing-tiers\s*\{([^}]*)\}", css)
+    assert m, "could not find .pricing-tiers rule in style.css"
+    rule = m.group(1)
+    assert "repeat(3," in rule, (
+        ".pricing-tiers must use a 3-column grid on desktop "
+        "(found no repeat(3,...) in the rule)"
+    )
+    assert "margin: 0 auto" in rule or "margin:0 auto" in rule, (
+        ".pricing-tiers must be centered horizontally (margin: 0 auto)"
+    )
+
+    # Guard against the legacy 4-column rule resurfacing.
+    assert "repeat(4," not in rule, (
+        ".pricing-tiers must not declare a 4-column grid"
+    )
+
+    # A narrow-viewport rule must collapse pricing-tiers to a single column
+    # so three cards never end up as 2+1 with an orphan on the second row.
+    narrow_block = re.search(
+        r"@media\s*\(max-width:\s*1020px\)\s*\{([^@}]*\}[^@]*)*?\}",
+        css,
+        re.DOTALL,
+    )
+    assert narrow_block, "expected a max-width: 1020px responsive block"
+    # Search the whole post-1020px area for pricing-tiers collapsing to 1fr.
+    after_1020 = css[narrow_block.start():]
+    assert re.search(
+        r"\.pricing-tiers\s*\{[^}]*grid-template-columns:\s*1fr",
+        after_1020,
+    ), ".pricing-tiers should collapse to a single column at <=1020px"
+    print("T8 OK: stylesheet centers pricing grid and collapses cleanly on narrow viewports")
+
+
 if __name__ == "__main__":
     try:
         t1_pricing_renders_with_packages_and_faq()
@@ -211,6 +264,8 @@ if __name__ == "__main__":
         t4_pricing_reachable_for_authenticated_users()
         t5_pricing_avoids_jargon_abbreviations()
         t6_pricing_drops_custom_and_old_amounts()
+        t7_pricing_renders_exactly_three_tier_cards()
+        t8_stylesheet_centers_three_column_grid()
         print("\nALL PRICING-PAGE SMOKE TESTS PASSED")
     finally:
         for path in (APP_DB, HIST_DB):
