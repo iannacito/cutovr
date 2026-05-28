@@ -15,12 +15,15 @@ Covers:
      point at /pricing/checkout, and the friendly "being set up"
      message is shown. POSTing to /pricing/checkout/<plan> in that
      state redirects back to /pricing instead of 500.
-  T4 With Stripe env vars set, each base plan renders a real POST form
-     to /pricing/checkout/<plan>. POSTing creates a Stripe Checkout
-     Session (mocked) and redirects to the Stripe-hosted URL.
-  T5 POSTing to /pricing/checkout/<unknown> returns 404.
-  T6 The "Custom" tier still links to /support (no Stripe), regardless
-     of env-var state.
+  T4 With Stripe env vars set, each base plan (essential, standard)
+     renders a real POST form to /pricing/checkout/<plan>. POSTing
+     creates a Stripe Checkout Session (mocked) and redirects to the
+     Stripe-hosted URL.
+  T5 POSTing to /pricing/checkout/<unknown> returns 404 — and so do
+     retired or quote-only slugs (custom, complete, five_year). The
+     Complete tier is quote-based and has no Stripe slug.
+  T6 The Complete tier still links to /support (no Stripe),
+     regardless of env-var state.
   T7 The success and cancel landing routes both render without
      crashing.
 """
@@ -98,7 +101,6 @@ def t2_pricing_page_never_leaks_stripe_secret_key():
             "STRIPE_SECRET_KEY": sentinel,
             "STRIPE_PRICE_ESSENTIAL": "price_essential_x",
             "STRIPE_PRICE_STANDARD": "price_standard_x",
-            "STRIPE_PRICE_COMPLETE": "price_complete_x",
         },
     ):
         r = _client().get("/pricing")
@@ -106,7 +108,7 @@ def t2_pricing_page_never_leaks_stripe_secret_key():
         assert sentinel not in body, "Stripe secret key leaked into /pricing HTML!"
         # Price IDs are server-side metadata too — they're harmless to
         # leak, but we don't need to render them either.
-        for pid in ("price_essential_x", "price_standard_x", "price_complete_x"):
+        for pid in ("price_essential_x", "price_standard_x"):
             assert pid not in body, f"Stripe price id {pid!r} leaked into HTML"
     print("T2 OK: Stripe secret key + price IDs are never rendered in HTML")
 
@@ -130,7 +132,6 @@ def t3_checkout_graceful_when_stripe_not_configured():
     # CTAs still work — they fall back to signup links.
     assert "Start with Essential" in body
     assert "Start with Standard" in body
-    assert "Start with Complete" in body
 
     # POSTing the endpoint when unconfigured should NOT 500. It should
     # redirect back to /pricing with a flashed message.
@@ -152,15 +153,19 @@ def t4_checkout_creates_session_when_stripe_configured():
             "STRIPE_SECRET_KEY": "sk_test_dummy",
             "STRIPE_PRICE_ESSENTIAL": "price_essential_x",
             "STRIPE_PRICE_STANDARD": "price_standard_x",
-            "STRIPE_PRICE_COMPLETE": "price_complete_x",
         },
     ):
         # The /pricing page should now render real POST forms for each
         # base plan.
         body = _client().get("/pricing").get_data(as_text=True)
-        for plan in ("essential", "standard", "complete"):
+        for plan in ("essential", "standard"):
             needle = f'action="/pricing/checkout/{plan}"'
             assert needle in body, f"expected checkout form for {plan!r} on /pricing"
+        # The Complete tier is quote-based and must not have a Stripe
+        # checkout form — its CTA links to /support instead.
+        assert 'action="/pricing/checkout/complete"' not in body, (
+            "quote-based 'complete' tier should not have a checkout form"
+        )
 
         # Mock the create_checkout_session call so we don't hit the
         # network. We patch the helper in stripe_checkout, not the
@@ -197,29 +202,48 @@ def t5_unknown_plan_is_404():
             "STRIPE_SECRET_KEY": "sk_test_dummy",
             "STRIPE_PRICE_ESSENTIAL": "price_essential_x",
             "STRIPE_PRICE_STANDARD": "price_standard_x",
-            "STRIPE_PRICE_COMPLETE": "price_complete_x",
         },
     ):
         r = _client().post("/pricing/checkout/lifetime", follow_redirects=False)
         assert r.status_code == 404, (
             f"unknown plan slug should 404, got {r.status_code}"
         )
-        # Custom is intentionally not a Stripe plan — POSTing it should
-        # also 404, not 500.
-        r2 = _client().post("/pricing/checkout/custom", follow_redirects=False)
-        assert r2.status_code == 404, (
-            f"custom plan should not be a Stripe slug, got {r2.status_code}"
-        )
-    print("T5 OK: unknown / non-Stripe plan slugs return 404")
+        # Quote-only / retired slugs must NOT hit Stripe — they 404.
+        for retired_slug in ("custom", "complete", "five_year"):
+            r2 = _client().post(
+                f"/pricing/checkout/{retired_slug}", follow_redirects=False
+            )
+            assert r2.status_code == 404, (
+                f"quote-only/retired slug {retired_slug!r} should 404, "
+                f"got {r2.status_code}"
+            )
+    print("T5 OK: unknown / quote-only / retired plan slugs return 404")
 
 
-def t6_custom_tier_still_links_to_support():
+def t6_complete_tier_still_links_to_support():
     r = _client().get("/pricing")
     body = r.get_data(as_text=True)
-    # Find the Custom tier block; the CTA must still go to /support.
-    assert "Request a quote" in body, "Custom tier CTA copy missing"
-    assert 'href="/support"' in body, "Custom tier should link to /support"
-    print("T6 OK: Custom tier still routes to /support, not Stripe")
+    # The quote-based Complete tier must still route to /support,
+    # not Stripe.
+    assert "Request a quote" in body, "Complete tier CTA copy missing"
+    assert 'href="/support"' in body, "Complete tier should link to /support"
+    # And the rendered card must show a Quote-style price marker, not a
+    # dollar amount.
+    assert "pricing-tier__amount--quote" in body, (
+        "Complete tier should render the quote-style amount marker"
+    )
+    # The card must use the new "five or more years" wording, not the
+    # retired "Up to 5 Years" / "5-Year History" labels.
+    assert "Five or more years of history" in body, (
+        "Complete tier should use the 'Five or more years of history' wording"
+    )
+    assert "5-Year History" not in body, (
+        "retired '5-Year History' label should be gone"
+    )
+    assert "Up to 5 Years" not in body, (
+        "retired 'Up to 5 Years' label should be gone"
+    )
+    print("T6 OK: Complete tier still routes to /support, not Stripe")
 
 
 def t7_success_and_cancel_routes_render():
@@ -248,7 +272,7 @@ if __name__ == "__main__":
         t3_checkout_graceful_when_stripe_not_configured()
         t4_checkout_creates_session_when_stripe_configured()
         t5_unknown_plan_is_404()
-        t6_custom_tier_still_links_to_support()
+        t6_complete_tier_still_links_to_support()
         t7_success_and_cancel_routes_render()
         print("\nALL PRICING + STRIPE SMOKE TESTS PASSED")
     finally:

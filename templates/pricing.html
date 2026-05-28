@@ -25,7 +25,7 @@
         <header class="pricing-tier__head">
           <p class="pricing-tier__eyebrow">Essential</p>
           <h2 class="pricing-tier__name">Current Year</h2>
-          <p class="pricing-tier__price"><span class="pricing-tier__amount">$499</span></p>
+          <p class="pricing-tier__price"><span class="pricing-tier__amount">$799</span></p>
           <p class="pricing-tier__sub">Best for firms that only need this year moved over.</p>
         </header>
         <ul class="pricing-tier__list">
@@ -48,8 +48,8 @@
         <p class="pricing-tier__badge">Most common</p>
         <header class="pricing-tier__head">
           <p class="pricing-tier__eyebrow">Standard</p>
-          <h2 class="pricing-tier__name">3-Year History</h2>
-          <p class="pricing-tier__price"><span class="pricing-tier__amount">$999</span></p>
+          <h2 class="pricing-tier__name">Up to 3 Years</h2>
+          <p class="pricing-tier__price"><span class="pricing-tier__amount">$1,499</span></p>
           <p class="pricing-tier__sub">The default for most firms making the switch.</p>
         </header>
         <ul class="pricing-tier__list">
@@ -68,40 +68,18 @@
         {% endif %}
       </article>
 
-      <article class="pricing-tier">
+      <article class="pricing-tier pricing-tier--quote">
         <header class="pricing-tier__head">
           <p class="pricing-tier__eyebrow">Complete</p>
-          <h2 class="pricing-tier__name">5-Year History</h2>
-          <p class="pricing-tier__price"><span class="pricing-tier__amount">$1,999</span></p>
+          <h2 class="pricing-tier__name">Five or more years of history</h2>
+          <p class="pricing-tier__price"><span class="pricing-tier__amount pricing-tier__amount--quote">Quote</span></p>
           <p class="pricing-tier__sub">For firms that want a deeper historical record.</p>
         </header>
         <ul class="pricing-tier__list">
           <li>Everything in Standard</li>
-          <li>Up to 5 years of history</li>
+          <li>Five or more years of history</li>
           <li>Larger file volume</li>
           <li>Final reconciliation report</li>
-        </ul>
-        {% if stripe_plans.complete.is_configured %}
-        <form method="post" action="{{ url_for('pricing_checkout', plan='complete') }}" class="pricing-tier__form">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" class="btn btn-secondary btn-lg pricing-tier__cta">Buy Complete</button>
-        </form>
-        {% else %}
-        <a class="btn btn-secondary btn-lg pricing-tier__cta" href="{{ url_for('signup') }}">Start with Complete</a>
-        {% endif %}
-      </article>
-
-      <article class="pricing-tier pricing-tier--quote">
-        <header class="pricing-tier__head">
-          <p class="pricing-tier__eyebrow">Custom</p>
-          <h2 class="pricing-tier__name">More than 5 years</h2>
-          <p class="pricing-tier__price"><span class="pricing-tier__amount pricing-tier__amount--quote">Quote</span></p>
-          <p class="pricing-tier__sub">For deeper archives or unusually complex files.</p>
-        </header>
-        <ul class="pricing-tier__list">
-          <li>Tailored scope</li>
-          <li>Direct help from our team</li>
-          <li>Fixed quote before any work begins</li>
         </ul>
         <a class="btn btn-secondary btn-lg pricing-tier__cta" href="{{ url_for('support') }}">Request a quote</a>
       </article>
