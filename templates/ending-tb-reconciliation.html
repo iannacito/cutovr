@@ -1,17 +1,18 @@
 {% extends "_base.html" %}
-{% block title %}Ending TB reconciliation &mdash; {{ job.company }}{% endblock %}
+{% block title %}Final balance check &mdash; {{ job.company }}{% endblock %}
 {% block content %}
 <section class="detail-page">
-  <a href="{{ url_for('job_detail', job_id=job.id) }}" class="back-link">&larr; Back to job</a>
+  {% include "_workflow_stepper.html" %}
+
+  <a href="{{ url_for('reconcile_balances') }}" class="back-link">&larr; Back to Step 6</a>
 
   <section class="card detail-hero">
-    <p class="eyebrow">Job {{ job.id }} &middot; Ending Trial Balance reconciliation</p>
+    <p class="eyebrow">Step 6 of 6 &middot; Final balance check</p>
     <h1>{{ job.company }}</h1>
-    <p class="muted">
-      Compares the uploaded ending Trial Balance against expected
-      balances built from the firm's opening TB + parsed GL activity.
-      <strong>This is not a QuickBooks lookup</strong> &mdash; see the
-      limitation note at the bottom.
+    <p class="muted" style="max-width:64ch;">
+      We compare the ending balances you uploaded against what we
+      expect from your opening balances plus the transactions in this
+      migration. Each row below shows whether the two match.
     </p>
   </section>
 
@@ -27,7 +28,7 @@
             <span class="badge success">0</span>
           {% endif %}
         </dd></div>
-      <div><dt>Unexpected</dt>
+      <div><dt>Unexpected accounts</dt>
         <dd>
           {% if report.summary.unexpected_count %}
             <span class="badge warn">{{ report.summary.unexpected_count }}</span>
@@ -35,7 +36,7 @@
             <span class="badge success">0</span>
           {% endif %}
         </dd></div>
-      <div><dt>Missing</dt>
+      <div><dt>Missing accounts</dt>
         <dd>
           {% if report.summary.missing_count %}
             <span class="badge warn">{{ report.summary.missing_count }}</span>
@@ -43,39 +44,39 @@
             <span class="badge success">0</span>
           {% endif %}
         </dd></div>
-      <div><dt>Total absolute difference</dt>
+      <div><dt>Total difference</dt>
         <dd>${{ report.summary.total_abs_difference }}</dd></div>
-      <div><dt>Opening TB available</dt>
+      <div><dt>Opening balances available</dt>
         <dd>{{ 'Yes' if opening_available else 'No' }}</dd></div>
-      <div><dt>GL activity available</dt>
+      <div><dt>Transaction history available</dt>
         <dd>{{ 'Yes' if gl_available else 'No' }}</dd></div>
-      <div><dt>Overall pass</dt>
+      <div><dt>Overall result</dt>
         <dd>
           {% if report.summary.overall_pass %}
-            <span class="badge success">Pass</span>
+            <span class="badge success">Everything matches</span>
           {% else %}
-            <span class="badge error">Fail</span>
+            <span class="badge error">Differences found</span>
           {% endif %}
         </dd></div>
     </dl>
     <p style="margin-top:var(--space-3);">
-      <a class="btn" href="{{ url_for('ending_tb_reconciliation_csv', job_id=job.id) }}">Download reconciliation CSV</a>
+      <a class="btn" href="{{ url_for('ending_tb_reconciliation_csv', job_id=job.id) }}">Download as spreadsheet (CSV)</a>
     </p>
   </section>
 
   <section class="card">
-    <p class="eyebrow">Per-account reconciliation</p>
+    <p class="eyebrow">Per-account check</p>
     <table class="data-table">
       <thead>
         <tr>
           <th>Account #</th>
           <th>Account name</th>
           <th>Status</th>
-          <th>Opening net</th>
-          <th>GL net</th>
+          <th>Opening balance</th>
+          <th>Transactions</th>
           <th>Expected</th>
           <th>Actual</th>
-          <th>Diff</th>
+          <th>Difference</th>
         </tr>
       </thead>
       <tbody>
@@ -85,13 +86,13 @@
             <td>{{ row.account_name }}</td>
             <td>
               {% if row.status == 'match' %}
-                <span class="badge success">match</span>
+                <span class="badge success">Matches</span>
               {% elif row.status == 'diff' %}
-                <span class="badge error">diff</span>
+                <span class="badge error">Difference</span>
               {% elif row.status == 'unexpected' %}
-                <span class="badge warn">unexpected</span>
+                <span class="badge warn">Unexpected</span>
               {% else %}
-                <span class="badge warn">missing</span>
+                <span class="badge warn">Missing</span>
               {% endif %}
             </td>
             <td>{{ row.opening_net }}</td>
@@ -105,9 +106,18 @@
     </table>
   </section>
 
-  <section class="card" style="background:var(--surface-2);">
-    <p class="eyebrow">Limitation</p>
-    <p>{{ report.limitation }}</p>
-  </section>
+  <details class="quiet" style="margin-top:var(--space-4);">
+    <summary>About this check</summary>
+    <p style="margin-top:var(--space-2);max-width:64ch;">{{ report.limitation }}</p>
+  </details>
+
+  <div class="actions-row" style="margin-top:var(--space-6);margin-bottom:var(--space-8);">
+    <a class="btn" href="{{ url_for('reconcile_balances') }}">
+      &larr; Back to Step 6
+    </a>
+    <a class="btn btn-primary btn-lg" href="{{ url_for('dashboard') }}">
+      Return to Migration
+    </a>
+  </div>
 </section>
 {% endblock %}

@@ -149,15 +149,6 @@
         and the balance check.
       </p>
 
-      {% if report_status %}
-        <div class="flash {% if report_status == 'success' %}success{% elif report_status in ['info', 'queued'] %}info{% else %}error{% endif %}"
-             role="status" data-testid="step6-report-status"
-             data-status="{{ report_status }}"
-             style="margin-bottom:var(--space-4);">
-          {{ report_message }}
-        </div>
-      {% endif %}
-
       <form action="{{ url_for('reconcile_balances_send_report') }}"
             method="post" data-testid="step6-report-form"
             style="max-width:42rem;">
@@ -212,8 +203,10 @@
          data-testid="step6-back-to-step5-link">
         &larr; Back to Step 5
       </a>
-      <a class="btn btn-link" href="{{ url_for('migration_checklist') }}">
-        View migration checklist
+      <a class="btn btn-primary btn-lg"
+         href="{{ url_for('dashboard') }}"
+         data-testid="step6-return-to-migration">
+        {% if summary.is_complete %}Done &mdash; return to Migration{% else %}Return to Migration{% endif %}
       </a>
     </div>
   {% endif %}

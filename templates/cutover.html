@@ -71,14 +71,20 @@
       </p>
       <div class="form-grid">
         <label>
-          <span>QBO company name</span>
+          <span>QuickBooks company name</span>
           <input type="text" name="qbo_company_name" maxlength="200" value="{{ cutover.qbo_company_name or '' }}" placeholder="Smith &amp; Hart LLP (Operating)">
         </label>
-        <label>
-          <span>Realm ID <small class="muted">(optional)</small></span>
+      </div>
+      {# Realm ID is set automatically when QuickBooks is connected. We
+         keep the field available for operator support overrides but
+         tuck it behind a disclosure so normal customers never see it. #}
+      <details class="quiet" style="margin-top:var(--space-3);">
+        <summary>Advanced (for support team only)</summary>
+        <label style="display:block;margin-top:var(--space-3);max-width:32rem;">
+          <span>QuickBooks realm ID <small class="muted">(set automatically when you connect QuickBooks)</small></span>
           <input type="text" name="qbo_realm_id" maxlength="64" value="{{ cutover.qbo_realm_id or '' }}">
         </label>
-      </div>
+      </details>
       <label class="checkbox-row" style="margin-top:var(--space-3);display:flex;align-items:center;gap:var(--space-2);">
         <input type="checkbox" name="clio_involved" value="1" {% if cutover.clio_involved %}checked{% endif %} style="width:auto;">
         <span style="margin:0;">This firm uses Clio for trust / billing</span>
@@ -86,7 +92,7 @@
     </section>
 
     <section style="margin-bottom:var(--space-8);">
-      <h2>A/R and A/P</h2>
+      <h2>Accounts receivable &amp; accounts payable</h2>
       <p class="muted" style="margin-bottom:var(--space-4);">{{ guidance.ar_ap }}</p>
       <label>
         <span>How you&rsquo;d like to handle these</span>

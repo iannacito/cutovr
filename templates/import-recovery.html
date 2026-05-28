@@ -2,7 +2,7 @@
 {% block title %}Can't send to QuickBooks yet &mdash; {{ job.company }}{% endblock %}
 {% block content %}
 <section class="detail-page">
-  <a href="{{ url_for('job_detail', job_id=job.id) }}" class="back-link">&larr; Back to job</a>
+  <a href="{{ url_for('job_detail', job_id=job.id) }}" class="back-link">&larr; Back to migration</a>
 
   <header>
     <p class="eyebrow">Step 5 of 6 &middot; Send to QuickBooks</p>
@@ -26,7 +26,7 @@
       <div class="actions-row" style="margin-top:var(--space-4);">
         <a href="{{ recovery.demo_start_url }}" class="btn btn-primary btn-lg" data-testid="demo-restart-cta">Start a fresh demo run</a>
         <a href="{{ recovery.reupload_url or recovery.job_url }}" class="btn" data-testid="reupload-cta">Re-upload PCLaw export</a>
-        <a href="{{ recovery.job_url }}" class="btn btn-link">Back to job</a>
+        <a href="{{ recovery.job_url }}" class="btn btn-link">Back to migration</a>
       </div>
       <p class="muted" style="margin-top:var(--space-3);font-size:.9rem;">
         Tip: from the demo workspace you can re-download the bundled
@@ -44,7 +44,7 @@
       <div class="actions-row" style="margin-top:var(--space-4);">
         <a href="{{ recovery.reupload_url or recovery.job_url }}" class="btn btn-primary btn-lg" data-testid="reupload-cta">Re-upload PCLaw export</a>
         <a href="{{ recovery.match_accounts_url }}" class="btn">Review account matches</a>
-        <a href="{{ recovery.job_url }}" class="btn btn-link">Back to job</a>
+        <a href="{{ recovery.job_url }}" class="btn btn-link">Back to migration</a>
       </div>
     {% endif %}
 

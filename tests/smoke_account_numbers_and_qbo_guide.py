@@ -157,9 +157,11 @@ def a3_preview_import_template_has_account_number_columns():
             preview=fake_preview, preview_error=None,
             user={"email": "a3@x.test"}, firm={"name": "A3 Firm"},
         )
-    # Column headers exist for both PCLaw # and QBO #.
+    # Column headers exist for both PCLaw # and QuickBooks #. The
+    # "QBO" label was replaced with the plain-English "QuickBooks" per
+    # the walkthrough fixes.
     assert "<th>PCLaw #</th>" in body, "missing PCLaw # column header"
-    assert "<th>QBO #</th>" in body, "missing QBO # column header"
+    assert "<th>QuickBooks #</th>" in body, "missing QuickBooks # column header"
     # Both numbers render as code blocks for the account that has them.
     assert body.count("<code>1000</code>") >= 2, \
         f"expected PCLaw 1000 and QBO 1000 codes; body excerpt: {body[:500]}"

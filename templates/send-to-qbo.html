@@ -29,12 +29,15 @@
           Proceed to Step 6: Final balance check &rarr;
         </a>
       </div>
-      <details class="quiet" style="margin-top:var(--space-3);">
-        <summary>Details</summary>
-        <p class="muted" style="margin-top:var(--space-2);">
-          Entries created in QuickBooks: <strong>{{ job.import_summary.qbo_je_count }}</strong>.
-        </p>
-      </details>
+      {% set _je_count = (job.import_summary or {}).qbo_je_count %}
+      {% if _je_count %}
+        <details class="quiet" style="margin-top:var(--space-3);">
+          <summary>Details</summary>
+          <p class="muted" style="margin-top:var(--space-2);">
+            Entries created in QuickBooks: <strong>{{ _je_count }}</strong>.
+          </p>
+        </details>
+      {% endif %}
     </section>
   {% else %}
     <div class="hero">
@@ -52,7 +55,12 @@
     <section class="card" data-testid="send-to-qbo-card"
              style="padding:var(--space-6);margin-bottom:var(--space-6);">
       <p class="eyebrow">Ready to send</p>
-      <h2 style="margin-top:0;">You&rsquo;re ready to send {{ (job.summary or {}).row_count or job.id }} record(s) to QuickBooks.</h2>
+      {% set _row_count = (job.summary or {}).row_count %}
+      {% if _row_count %}
+        <h2 style="margin-top:0;">You&rsquo;re ready to send {{ _row_count }} record(s) to QuickBooks.</h2>
+      {% else %}
+        <h2 style="margin-top:0;">You&rsquo;re ready to send your transactions to QuickBooks.</h2>
+      {% endif %}
       <p class="muted" style="max-width:64ch;">
         Nothing is sent until you click the button below.
       </p>

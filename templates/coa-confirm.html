@@ -18,14 +18,14 @@
   <div class="flash error">
     <strong>Production mode.</strong> This will add real accounts to
     your QuickBooks company
-    &ldquo;{{ qbo_connection.company_name or qbo_connection.realm_id }}&rdquo;.
+    &ldquo;{{ qbo_connection.company_name or 'your QuickBooks Online company' }}&rdquo;.
     Verify the company name above matches your firm before confirming.
   </div>
   {% else %}
   <div class="flash info">
     <strong>Sandbox mode.</strong> Accounts will be added to the
     QuickBooks Sandbox company
-    &ldquo;{{ qbo_connection.company_name or qbo_connection.realm_id }}&rdquo;.
+    &ldquo;{{ qbo_connection.company_name or 'your QuickBooks Online company' }}&rdquo;.
   </div>
   {% endif %}
 

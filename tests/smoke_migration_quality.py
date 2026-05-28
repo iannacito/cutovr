@@ -176,10 +176,15 @@ def main():
         # === T2 Preview content shows JE count + totals + accounts ========
         r = c.get(f"/jobs/{job_id}/preview-import")
         body = r.data.decode()
-        assert "JournalEntry records" in body
+        # After the walkthrough plain-English pass, the at-a-glance card
+        # uses "Transactions ready" in the primary UI. The raw
+        # JournalEntry / debits / credits / mapped-account labels are
+        # tucked under the "Technical details (for support)" disclosure.
+        assert "Transactions ready" in body
         assert "Sandbox X" in body or "REALM-A" in body
-        # The test GL has 5 transactions and balances.
-        assert "Mapped accounts" in body
+        # The accountant-only labels are still rendered, but only
+        # inside the Technical details disclosure.
+        assert "Accounts matched" in body or "Mapped accounts" in body
         # If JE-0003 customer is in the GL (Johnson Family Law), preview
         # should advertise creating it.
         assert "Johnson Family Law" in body

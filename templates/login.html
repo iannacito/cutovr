@@ -3,9 +3,9 @@
 {% block content %}
 <section class="auth-page">
   <div class="auth-card">
-    <p class="eyebrow">Operator sign in</p>
+    <p class="eyebrow">Sign in</p>
     <h1 class="display">Welcome <em>back</em>.</h1>
-    <p class="lede">Pick up your migration where you left off. Encrypted ledgers, QuickBooks tokens, and account mappings stay tied to your firm workspace.</p>
+    <p class="lede">Pick up your migration where you left off. Your uploads, QuickBooks connection, and account matches stay tied to your firm.</p>
 
     <article class="card">
       <form method="post" class="stack-sm" novalidate>
@@ -31,7 +31,7 @@
     </article>
 
     <p class="auth-aside"><a href="{{ url_for('forgot_password') }}">Forgot your password?</a></p>
-    <p class="auth-aside">No account yet? <a href="{{ url_for('signup') }}">Create your firm workspace</a>.</p>
+    <p class="auth-aside">No account yet? <a href="{{ url_for('signup') }}">Create your account</a>.</p>
   </div>
 </section>
 {% endblock %}
