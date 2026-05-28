@@ -4,7 +4,8 @@ The pricing model is history-based, not firm-size-based:
 
   Essential        $799    Current Year
   Standard         $1,499  Up to 3 Years  (most common)
-  5-Year History           quote-based (NOT Stripe; handled via /support)
+  Complete                 Five or more years of history; quote-based
+                           (NOT Stripe; handled via /support)
 
 Add-ons:
   Extra historical year     $250
@@ -40,8 +41,8 @@ from typing import Optional
 # Keys here are the URL-safe plan slugs used in /pricing/checkout/<plan>.
 # The env var is the name of the Stripe Price ID for that line item.
 #
-# 5-Year History is intentionally absent: it's quote-based, so the UI
-# links to /support instead of hitting Stripe.
+# Complete (five or more years of history) is intentionally absent:
+# it's quote-based, so the UI links to /support instead of hitting Stripe.
 PLAN_ENV_VARS = {
     "essential": "STRIPE_PRICE_ESSENTIAL",
     "standard": "STRIPE_PRICE_STANDARD",
@@ -53,7 +54,7 @@ PLAN_ENV_VARS = {
 }
 
 # Plan slugs that show a "Buy now" Stripe button on the pricing page.
-# 5-Year History is excluded — it routes to /support for a quote.
+# Complete is excluded — it routes to /support for a quote.
 BASE_PLANS = ("essential", "standard")
 
 

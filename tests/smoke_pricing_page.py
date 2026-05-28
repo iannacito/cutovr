@@ -6,7 +6,8 @@ Run from project root:
 
 Covers:
   T1 GET /pricing renders publicly (no auth) and includes the three
-     packages, dollar amounts (or Quote for 5-year), and the FAQ headings.
+     packages, dollar amounts (or Quote for the Complete tier), and the
+     FAQ headings.
   T2 The pricing page does NOT use firm-size / number-of-people wording.
   T3 The landing page (/) includes a short pricing teaser with the three
      headline tiers and a link to /pricing.
@@ -14,8 +15,8 @@ Covers:
      and authenticated users should not be redirected away from it).
   T5 The pricing page avoids accountant-jargon abbreviations (COA, GL,
      QBO) in customer-facing copy.
-  T6 The pricing page no longer surfaces a "Custom" card or the prior
-     Complete / older pricing amounts.
+  T6 The pricing page no longer surfaces a "Custom" card or older
+     fixed-price amounts on the Complete tier.
 """
 
 import os
@@ -48,18 +49,18 @@ def t1_pricing_renders_with_packages_and_faq():
     body = r.get_data(as_text=True)
 
     must_contain = [
-        # Package names (three tiers — no Custom, no Complete)
+        # Package names (three tiers — no Custom column)
         "Essential",
         "Standard",
-        "5-Year History",
+        "Complete",
         # History framing
         "Current Year",
         "Up to 3 Years",
-        "Up to 5 Years",
+        "Five or more years of history",
         # Prices
         "$799",
         "$1,499",
-        # Quote-based tier signal for 5-year history
+        # Quote-based tier signal for the Complete tier
         "Quote",
         # "Most common" badge for default tier
         "Most common",
@@ -118,7 +119,7 @@ def t3_landing_has_pricing_section_linking_to_pricing_page():
         # Three teaser cards (names + prices)
         "Essential",
         "Standard",
-        "5-Year History",
+        "Complete",
         "$799",
         "$1,499",
         "Quote",
@@ -175,7 +176,8 @@ def t5_pricing_avoids_jargon_abbreviations():
 
 
 def t6_pricing_drops_custom_and_old_amounts():
-    """User revised pricing: Custom column removed; old amounts retired."""
+    """User revised pricing: Custom column removed; old fixed-price
+    amounts retired. The Complete tier is now quote-based."""
     r = _get("/pricing")
     body = r.get_data(as_text=True)
     visible = re.sub(r"<[^>]+>", " ", body)
@@ -184,18 +186,21 @@ def t6_pricing_drops_custom_and_old_amounts():
     assert not re.search(r"\bCustom\b", visible), (
         "/pricing still surfaces a 'Custom' tier/column — it should be removed"
     )
-    # No "Complete" tier name (replaced by quote-based 5-Year History).
-    # Word-boundary so we don't trip on words containing "complete" in
-    # other copy that may exist elsewhere.
-    assert not re.search(r"\bComplete\b", visible), (
-        "/pricing still shows the retired 'Complete' tier label"
+    # The retired "5-Year History" label should be gone — replaced by
+    # the cleaner "Complete" tier wording.
+    assert "5-Year History" not in visible, (
+        "/pricing still shows the retired '5-Year History' label"
     )
-    # The old base amounts must not appear.
+    assert "Up to 5 Years" not in visible, (
+        "/pricing still shows the retired 'Up to 5 Years' framing"
+    )
+    # The old base amounts must not appear (Complete is quote-based now,
+    # so $1,999 in particular must not resurface).
     for stale_amount in ("$499", "$999", "$1,999"):
         assert stale_amount not in body, (
             f"/pricing still references retired amount {stale_amount}"
         )
-    print("T6 OK: /pricing has no Custom column and no retired amounts")
+    print("T6 OK: /pricing has no Custom column and no retired amounts/labels")
 
 
 if __name__ == "__main__":

@@ -20,8 +20,9 @@ Covers:
      creates a Stripe Checkout Session (mocked) and redirects to the
      Stripe-hosted URL.
   T5 POSTing to /pricing/checkout/<unknown> returns 404 — and so do
-     retired or quote-only slugs (custom, complete, five_year).
-  T6 The 5-Year History tier still links to /support (no Stripe),
+     retired or quote-only slugs (custom, complete, five_year). The
+     Complete tier is quote-based and has no Stripe slug.
+  T6 The Complete tier still links to /support (no Stripe),
      regardless of env-var state.
   T7 The success and cancel landing routes both render without
      crashing.
@@ -160,9 +161,10 @@ def t4_checkout_creates_session_when_stripe_configured():
         for plan in ("essential", "standard"):
             needle = f'action="/pricing/checkout/{plan}"'
             assert needle in body, f"expected checkout form for {plan!r} on /pricing"
-        # The retired Complete plan must not have a checkout form anymore.
+        # The Complete tier is quote-based and must not have a Stripe
+        # checkout form — its CTA links to /support instead.
         assert 'action="/pricing/checkout/complete"' not in body, (
-            "retired 'complete' plan should not have a checkout form"
+            "quote-based 'complete' tier should not have a checkout form"
         )
 
         # Mock the create_checkout_session call so we don't hit the
@@ -218,19 +220,30 @@ def t5_unknown_plan_is_404():
     print("T5 OK: unknown / quote-only / retired plan slugs return 404")
 
 
-def t6_five_year_tier_still_links_to_support():
+def t6_complete_tier_still_links_to_support():
     r = _client().get("/pricing")
     body = r.get_data(as_text=True)
-    # The quote-based 5-Year History tier must still route to /support,
+    # The quote-based Complete tier must still route to /support,
     # not Stripe.
-    assert "Request a quote" in body, "5-Year History tier CTA copy missing"
-    assert 'href="/support"' in body, "5-Year History tier should link to /support"
+    assert "Request a quote" in body, "Complete tier CTA copy missing"
+    assert 'href="/support"' in body, "Complete tier should link to /support"
     # And the rendered card must show a Quote-style price marker, not a
     # dollar amount.
     assert "pricing-tier__amount--quote" in body, (
-        "5-Year History tier should render the quote-style amount marker"
+        "Complete tier should render the quote-style amount marker"
     )
-    print("T6 OK: 5-Year History tier still routes to /support, not Stripe")
+    # The card must use the new "five or more years" wording, not the
+    # retired "Up to 5 Years" / "5-Year History" labels.
+    assert "Five or more years of history" in body, (
+        "Complete tier should use the 'Five or more years of history' wording"
+    )
+    assert "5-Year History" not in body, (
+        "retired '5-Year History' label should be gone"
+    )
+    assert "Up to 5 Years" not in body, (
+        "retired 'Up to 5 Years' label should be gone"
+    )
+    print("T6 OK: Complete tier still routes to /support, not Stripe")
 
 
 def t7_success_and_cancel_routes_render():
@@ -259,7 +272,7 @@ if __name__ == "__main__":
         t3_checkout_graceful_when_stripe_not_configured()
         t4_checkout_creates_session_when_stripe_configured()
         t5_unknown_plan_is_404()
-        t6_five_year_tier_still_links_to_support()
+        t6_complete_tier_still_links_to_support()
         t7_success_and_cancel_routes_render()
         print("\nALL PRICING + STRIPE SMOKE TESTS PASSED")
     finally:

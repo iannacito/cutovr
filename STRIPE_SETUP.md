@@ -1,8 +1,9 @@
 # Stripe Checkout setup
 
 This app uses **server-side Stripe Checkout Sessions** to sell the two
-fixed-price PCLaw → QuickBooks migration packages. The "5-Year History"
-tier is quote-based and routes to `/support` instead of Stripe.
+fixed-price PCLaw → QuickBooks migration packages. The "Complete" tier
+(five or more years of history) is quote-based and routes to `/support`
+instead of Stripe.
 
 The integration is entirely env-var driven. No Stripe keys live in the
 repo, and no Stripe key is ever rendered into the HTML — secret keys
@@ -19,8 +20,9 @@ the thing you wire in.
 | `essential` | Essential — Current Year  | $799    | `STRIPE_PRICE_ESSENTIAL`        |
 | `standard`  | Standard — Up to 3 Years  | $1,499  | `STRIPE_PRICE_STANDARD`         |
 
-The **5-Year History** tier is quote-based and does **not** go through
-Stripe Checkout — its CTA routes to `/support` so the team can quote it.
+The **Complete** tier (five or more years of history) is quote-based
+and does **not** go through Stripe Checkout — its CTA routes to
+`/support` so the team can quote it.
 
 Optional add-ons (not yet exposed as standalone buttons; reserved for
 future UI):
@@ -57,8 +59,9 @@ used as a fallback — fine for local dev but **set it in production**
 so customers always return to the canonical domain.
 
 > **Note:** `STRIPE_PRICE_COMPLETE` is no longer required. The previous
-> "Complete — 5-Year History" tier has been replaced with a quote-based
-> 5-Year History option that does not flow through Stripe Checkout.
+> fixed-price "Complete" tier has been replaced with a quote-based
+> "Complete" tier (five or more years of history) that does not flow
+> through Stripe Checkout.
 
 ## Behavior when env vars are missing
 
@@ -85,7 +88,7 @@ exist, and safe to demo on staging without billing anyone.
 | GET    | `/pricing/checkout/cancel`        | Stripe `cancel_url` lands here, back to /pricing. |
 
 Only `essential` and `standard` are valid `<plan>` values on the
-checkout POST. Anything else returns 404. The "5-Year History" tier
+checkout POST. Anything else returns 404. The "Complete" tier
 deliberately does **not** hit Stripe — it links to `/support` so the
 team can quote it.
 
