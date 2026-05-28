@@ -312,17 +312,89 @@
                     <span class="badge">Auto-match</span>
                   {% else %}
                     <span class="badge error">Unmatched</span>
-                    <p class="muted"
-                       data-testid="row-create-hint-{{ r.idx }}"
-                       style="margin:.35rem 0 0;font-size:.8rem;">
-                      Or
-                      <a href="#create-missing-banner"
-                         data-testid="row-create-in-qbo-link-{{ r.idx }}">
-                        add this account to QuickBooks
-                      </a>
-                      &mdash; this only creates the empty account, no
-                      transactions are posted.
-                    </p>
+                    {# Row-level "Add to QuickBooks" CTA. Three states:
+                       (1) creatable=True -> simple Add button, the safe
+                           type was inferred from the name / COA upload.
+                       (2) needs_category=True -> inline category select
+                           + Add button. No write happens until the user
+                           picks a category.
+                       (3) neither (e.g. dry-run unavailable) -> just the
+                           "Add to QuickBooks" link the banner already
+                           anchored to. #}
+                    {% if r.creatable %}
+                      <form method="post"
+                            action="{{ url_for('account_mapping_add_account', job_id=job.id) }}"
+                            data-testid="row-add-form-{{ r.idx }}"
+                            style="margin:.35rem 0 0;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="pclaw_number" value="{{ r.pclaw_number or '' }}">
+                        <input type="hidden" name="pclaw_name" value="{{ r.pclaw_name or '' }}">
+                        {% if r.inferred_type_label %}
+                          <p class="muted" data-testid="row-inferred-type-{{ r.idx }}"
+                             style="margin:0 0 .35rem;font-size:.8rem;">
+                            We&rsquo;ll add this as
+                            <strong>{{ r.inferred_type_label }}</strong>.
+                            No transactions are posted.
+                          </p>
+                        {% endif %}
+                        <button class="btn btn-sm" type="submit"
+                                data-testid="row-add-button-{{ r.idx }}">
+                          Add this account to QuickBooks
+                        </button>
+                      </form>
+                    {% elif r.needs_category %}
+                      <form method="post"
+                            action="{{ url_for('account_mapping_add_account', job_id=job.id) }}"
+                            data-testid="row-category-form-{{ r.idx }}"
+                            style="margin:.35rem 0 0;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="pclaw_number" value="{{ r.pclaw_number or '' }}">
+                        <input type="hidden" name="pclaw_name" value="{{ r.pclaw_name or '' }}">
+                        <label for="row-category-{{ r.idx }}"
+                               style="display:block;margin:0 0 .25rem;font-size:.8rem;">
+                          What kind of account is this?
+                        </label>
+                        <select id="row-category-{{ r.idx }}"
+                                name="category"
+                                data-testid="row-category-select-{{ r.idx }}"
+                                style="margin:0 .35rem .35rem 0;max-width:18rem;"
+                                required>
+                          <option value="">&mdash; pick a category &mdash;</option>
+                          {% for cat in account_mapping_categories %}
+                            <option value="{{ cat[0] }}">{{ cat[1] }}</option>
+                          {% endfor %}
+                        </select>
+                        <button class="btn btn-sm" type="submit"
+                                data-testid="row-add-button-{{ r.idx }}">
+                          Add to QuickBooks
+                        </button>
+                        <p class="muted"
+                           style="margin:.25rem 0 0;font-size:.75rem;max-width:36ch;">
+                          We couldn&rsquo;t tell what kind of account this is.
+                          Pick the closest match &mdash; you can always
+                          rename or recategorise it in QuickBooks later.
+                        </p>
+                      </form>
+                    {% else %}
+                      <form method="post"
+                            action="{{ url_for('account_mapping_add_account', job_id=job.id) }}"
+                            data-testid="row-add-form-{{ r.idx }}"
+                            style="margin:.35rem 0 0;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="pclaw_number" value="{{ r.pclaw_number or '' }}">
+                        <input type="hidden" name="pclaw_name" value="{{ r.pclaw_name or '' }}">
+                        <button class="btn btn-sm" type="submit"
+                                data-testid="row-add-button-{{ r.idx }}">
+                          Add this account to QuickBooks
+                        </button>
+                      </form>
+                      <p class="muted"
+                         data-testid="row-create-hint-{{ r.idx }}"
+                         style="margin:.35rem 0 0;font-size:.8rem;">
+                         This only creates the empty account, no
+                         transactions are posted.
+                      </p>
+                    {% endif %}
                   {% endif %}
                 </td>
               </tr>

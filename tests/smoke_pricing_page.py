@@ -61,7 +61,7 @@ def t1_pricing_renders_with_packages_and_faq():
         # History framing
         "Current Year",
         "Up to 3 Years",
-        "Five or more years of history",
+        "3+ years of history",
         # Prices
         "$799",
         "$1,499",

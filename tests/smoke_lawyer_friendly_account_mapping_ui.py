@@ -140,26 +140,25 @@ def u2_unmatched_row_has_inline_create_link():
         r = client.get(f"/jobs/{job_id}/account-mapping")
     body = r.get_data(as_text=True)
     assert r.status_code == 200, r.status_code
-    # Inline "add this account to QuickBooks" link.
-    assert "add this account to QuickBooks" in body, (
-        "unmatched row should expose an inline 'add this account to "
-        "QuickBooks' link"
+    # Inline "Add this account to QuickBooks" button (case-insensitive
+    # so the templates can capitalize the button label).
+    assert "add this account to quickbooks" in body.lower(), (
+        "unmatched row should expose an inline 'Add this account to "
+        "QuickBooks' button"
     )
-    # Reassurance: this only creates the empty account. Template
-    # wrapping inserts whitespace, so collapse it before checking.
-    flat = " ".join(body.split())
-    assert "only creates the empty account" in flat, (
-        "unmatched row should reassure that this only creates the "
-        "empty account"
-    )
+    flat = " ".join(body.split()).lower()
+    # The reassurance text either lives on the row itself (when no
+    # safe inferred type) or on the banner. Confirm one of those
+    # places carries the 'no transactions are posted' line.
     assert "no transactions are posted" in flat, (
-        "unmatched row should say 'no transactions are posted'"
+        "unmatched row / banner should say 'no transactions are posted'"
     )
-    # The banner anchor target must exist so the row link can scroll.
+    # The banner anchor target must exist for any remaining ambiguous
+    # rows that still link to it.
     assert "create-missing-banner" in body, body[:200]
     print(
-        "U2 OK: each unmatched row exposes an inline 'add this account "
-        "to QuickBooks' link with a 'no transactions are posted' note"
+        "U2 OK: each unmatched row exposes an inline 'Add this account "
+        "to QuickBooks' button with a 'no transactions are posted' note"
     )
 
 

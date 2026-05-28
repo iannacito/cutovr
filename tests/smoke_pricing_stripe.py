@@ -232,17 +232,21 @@ def t6_complete_tier_still_links_to_support():
     assert "pricing-tier__amount--quote" in body, (
         "Complete tier should render the quote-style amount marker"
     )
-    # The card must use the new "five or more years" wording, not the
-    # retired "Up to 5 Years" / "5-Year History" labels.
-    assert "Five or more years of history" in body, (
-        "Complete tier should use the 'Five or more years of history' wording"
+    # The card must use the current "3+ years of history" wording, not
+    # any of the retired labels ("Up to 5 Years", "5-Year History",
+    # "Five or more years of history", "Four or more years of history").
+    assert "3+ years of history" in body, (
+        "Complete tier should use the '3+ years of history' wording"
     )
-    assert "5-Year History" not in body, (
-        "retired '5-Year History' label should be gone"
-    )
-    assert "Up to 5 Years" not in body, (
-        "retired 'Up to 5 Years' label should be gone"
-    )
+    for retired in (
+        "5-Year History",
+        "Up to 5 Years",
+        "Five or more years of history",
+        "Four or more years of history",
+    ):
+        assert retired not in body, (
+            f"retired pricing label {retired!r} should be gone"
+        )
     print("T6 OK: Complete tier still routes to /support, not Stripe")
 
 
