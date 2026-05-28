@@ -185,19 +185,51 @@ _TYPE_TABLE: dict[str, tuple[str, str]] = {
     # Long-term liabilities — law firms commonly carry partner / shareholder
     # loans and bank loans (e.g. "Loan From John Smith"). Map the generic
     # "loan" hint to NotesPayable so the account-list upload can drive
-    # creation safely.
+    # creation safely. Lines of credit (LOC) live in QBO as Long Term
+    # Liability / NotesPayable — a separate "Credit Card" type exists for
+    # actual revolving credit cards. We never auto-convert "LOC" into the
+    # credit-card type because the right answer depends on the firm's
+    # facility (bank-issued credit card vs. bank LOC) — both flow through
+    # this Long Term Liability default safely.
     "longtermliability": ("Long Term Liability", "NotesPayable"),
     "loan": ("Long Term Liability", "NotesPayable"),
     "loanfromshareholder": ("Long Term Liability", "ShareholderNotesPayable"),
     "shareholderloan": ("Long Term Liability", "ShareholderNotesPayable"),
     "partnerloan": ("Long Term Liability", "NotesPayable"),
     "notespayable": ("Long Term Liability", "NotesPayable"),
+    "lineofcredit": ("Long Term Liability", "LineOfCredit"),
+    "linesofcredit": ("Long Term Liability", "LineOfCredit"),
+    "loc": ("Long Term Liability", "LineOfCredit"),
+    "bankloc": ("Long Term Liability", "LineOfCredit"),
+    "businessloc": ("Long Term Liability", "LineOfCredit"),
 
-    # Equity
+    # Credit Card — only when the COA explicitly says "credit card"
+    "creditcard": ("Credit Card", "CreditCard"),
+
+    # Equity. Law firms operating as PCs / LLCs / corporations commonly
+    # carry Common Stock, Paid In Capital, Dividends, Distributions, and
+    # Member Capital on the chart of accounts. All of these are Equity
+    # in QuickBooks. We map to the closest QBO AccountSubType (OwnersEquity
+    # is the safe default for partnership-style accounts; corporate-style
+    # stock and dividends have dedicated subtypes).
     "equity": ("Equity", "OwnersEquity"),
     "ownerequity": ("Equity", "OwnersEquity"),
     "ownersequity": ("Equity", "OwnersEquity"),
     "retainedearnings": ("Equity", "RetainedEarnings"),
+    "commonstock": ("Equity", "CommonStock"),
+    "preferredstock": ("Equity", "PreferredStock"),
+    "paidincapital": ("Equity", "PaidInCapitalOrSurplus"),
+    "additionalpaidincapital": ("Equity", "PaidInCapitalOrSurplus"),
+    "capitalstock": ("Equity", "CommonStock"),
+    "dividends": ("Equity", "OwnersEquity"),
+    "dividend": ("Equity", "OwnersEquity"),
+    "distributions": ("Equity", "OwnersEquity"),
+    "distribution": ("Equity", "OwnersEquity"),
+    "membercapital": ("Equity", "OwnersEquity"),
+    "memberdraw": ("Equity", "OwnersEquity"),
+    "memberscapital": ("Equity", "OwnersEquity"),
+    "partnercapital": ("Equity", "OwnersEquity"),
+    "treasurystock": ("Equity", "TreasuryStock"),
 
     # Income
     "income": ("Income", "ServiceFeeIncome"),
@@ -221,7 +253,33 @@ _TYPE_TABLE: dict[str, tuple[str, str]] = {
     "advertising": ("Expense", "AdvertisingPromotional"),
     "utilities": ("Expense", "Utilities"),
     "insurance": ("Expense", "Insurance"),
+    "healthinsurance": ("Expense", "Insurance"),
+    "insuranceother": ("Expense", "Insurance"),
+    "insurancegeneral": ("Expense", "Insurance"),
+    "insurancehealth": ("Expense", "Insurance"),
+    "insurancelife": ("Expense", "Insurance"),
+    "insuranceliability": ("Expense", "Insurance"),
     "travel": ("Expense", "Travel"),
+    "businessdevelopment": ("Expense", "EntertainmentMeals"),
+    "marketing": ("Expense", "AdvertisingPromotional"),
+    "cle": ("Expense", "DuesSubscriptions"),
+    "continuedlegaled": ("Expense", "DuesSubscriptions"),
+    "continuedlegaleducation": ("Expense", "DuesSubscriptions"),
+    "continuingeducation": ("Expense", "DuesSubscriptions"),
+    "continuinglegaleducation": ("Expense", "DuesSubscriptions"),
+    "education": ("Expense", "DuesSubscriptions"),
+    "training": ("Expense", "DuesSubscriptions"),
+    "maintenance": ("Expense", "RepairMaintenance"),
+    "repairs": ("Expense", "RepairMaintenance"),
+    "maintenancerepair": ("Expense", "RepairMaintenance"),
+    "repairsmaintenance": ("Expense", "RepairMaintenance"),
+    "repairandmaintenance": ("Expense", "RepairMaintenance"),
+    "repairmaintenance": ("Expense", "RepairMaintenance"),
+    "telephone": ("Expense", "Utilities"),
+    "internet": ("Expense", "Utilities"),
+    "postage": ("Expense", "OfficeGeneralAdministrativeExpenses"),
+    "duesandsubscriptions": ("Expense", "DuesSubscriptions"),
+    "duessubscriptions": ("Expense", "DuesSubscriptions"),
 
     # Cost of goods sold (rare in legal but handle it)
     "cogs": ("Cost of Goods Sold", "EquipmentRental"),
@@ -253,6 +311,22 @@ _SAFE_NAME_PATTERNS: list[tuple[str, str, tuple[str, str]]] = [
     ("ownerinvestment", "contains", ("Equity", "OwnersEquity")),
     ("ownerequity", "contains", ("Equity", "OwnersEquity")),
     ("ownersequity", "contains", ("Equity", "OwnersEquity")),
+    # Corporate equity rows seen on law-firm COAs (PCs, PLLCs, S-corps).
+    # All map to Equity. We pick the closest QBO AccountSubType where
+    # one exists; partnership-style equity (dividends, distributions,
+    # member capital) falls back to OwnersEquity.
+    ("commonstock", "contains", ("Equity", "CommonStock")),
+    ("preferredstock", "contains", ("Equity", "PreferredStock")),
+    ("paidincapital", "contains", ("Equity", "PaidInCapitalOrSurplus")),
+    ("additionalpaidincapital", "contains", ("Equity", "PaidInCapitalOrSurplus")),
+    ("capitalstock", "contains", ("Equity", "CommonStock")),
+    ("treasurystock", "contains", ("Equity", "TreasuryStock")),
+    ("dividendspaid", "contains", ("Equity", "OwnersEquity")),
+    ("dividend", "contains", ("Equity", "OwnersEquity")),
+    ("distributionspaid", "contains", ("Equity", "OwnersEquity")),
+    ("memberscapital", "contains", ("Equity", "OwnersEquity")),
+    ("partnerscapital", "contains", ("Equity", "OwnersEquity")),
+    ("shareholderequity", "contains", ("Equity", "OwnersEquity")),
 
     # ---- Expense — specific compound terms ----
     ("bankfee", "contains", ("Expense", "BankCharges")),
@@ -326,6 +400,68 @@ _SAFE_NAME_PATTERNS: list[tuple[str, str, tuple[str, str]]] = [
     ("loanfrom", "contains", ("Long Term Liability", "NotesPayable")),
     ("partnerloan", "contains", ("Long Term Liability", "NotesPayable")),
     ("notespayable", "contains", ("Long Term Liability", "NotesPayable")),
+
+    # ---- Lines of credit. PCLaw account lists frequently spell these
+    # as "Bank LOC", "Business LOC", "M&T Bank LOC", "Chase LOC", "Wells
+    # Fargo LOC", "Line of Credit", with or without a trailing branch
+    # number. They are Long Term Liability with QBO sub-type "LineOfCredit".
+    # We match a few unambiguous compound forms; the bare suffix "loc"
+    # is too ambiguous (it can appear inside unrelated words) so we
+    # require either "lineofcredit", "bankloc", or a "loc" *with* a bank
+    # name token (mt, chase, wellsfargo, citi) right before it.
+    ("lineofcredit", "contains", ("Long Term Liability", "LineOfCredit")),
+    ("linesofcredit", "contains", ("Long Term Liability", "LineOfCredit")),
+    ("bankloc", "contains", ("Long Term Liability", "LineOfCredit")),
+    ("businessloc", "contains", ("Long Term Liability", "LineOfCredit")),
+    ("chaseloc", "contains", ("Long Term Liability", "LineOfCredit")),
+    ("mtbankloc", "contains", ("Long Term Liability", "LineOfCredit")),
+    ("mandtbankloc", "contains", ("Long Term Liability", "LineOfCredit")),
+    ("wellsfargoloc", "contains", ("Long Term Liability", "LineOfCredit")),
+    ("wellsfargobusinessloc", "contains", ("Long Term Liability", "LineOfCredit")),
+    ("citiloc", "contains", ("Long Term Liability", "LineOfCredit")),
+    ("citibankloc", "contains", ("Long Term Liability", "LineOfCredit")),
+    ("bankofamericaloc", "contains", ("Long Term Liability", "LineOfCredit")),
+
+    # ---- Expense — common law-firm expense names with no "expense" suffix.
+    # These names appear on legal COAs without any type hint, so we
+    # resolve them here to keep the account from getting stuck on Step 3.
+    ("healthinsurance", "contains", ("Expense", "Insurance")),
+    ("insurancehealth", "contains", ("Expense", "Insurance")),
+    ("insurancelife", "contains", ("Expense", "Insurance")),
+    ("insuranceliability", "contains", ("Expense", "Insurance")),
+    ("insuranceauto", "contains", ("Expense", "Insurance")),
+    ("insuranceother", "contains", ("Expense", "Insurance")),
+    # PCLaw lists often abbreviate "Insurance" as "Ins" — match the bare
+    # "ins" prefix when it's followed by a separator hint we recognise:
+    # "Ins - Other", "Ins-Health", "Ins Life". Normalised: insother,
+    # inshealth, inslife, insliability, ...
+    ("insother", "contains", ("Expense", "Insurance")),
+    ("inshealth", "contains", ("Expense", "Insurance")),
+    ("inslife", "contains", ("Expense", "Insurance")),
+    ("insliability", "contains", ("Expense", "Insurance")),
+    ("insmalprac", "contains", ("Expense", "Insurance")),
+    ("insauto", "contains", ("Expense", "Insurance")),
+    ("insgeneral", "contains", ("Expense", "Insurance")),
+    ("insurancegeneral", "contains", ("Expense", "Insurance")),
+    ("insmalpractice", "contains", ("Expense", "Insurance")),
+    ("malpracticeinsurance", "contains", ("Expense", "Insurance")),
+    ("workerscomp", "contains", ("Expense", "Insurance")),
+    ("workerscompensation", "contains", ("Expense", "Insurance")),
+    ("businessdevelopment", "contains", ("Expense", "EntertainmentMeals")),
+    ("continuedlegaled", "contains", ("Expense", "DuesSubscriptions")),
+    ("continuedlegaleducation", "contains", ("Expense", "DuesSubscriptions")),
+    ("continuinglegaleducation", "contains", ("Expense", "DuesSubscriptions")),
+    ("continuingeducation", "contains", ("Expense", "DuesSubscriptions")),
+    ("legaleducation", "contains", ("Expense", "DuesSubscriptions")),
+    ("maintenancerepair", "contains", ("Expense", "RepairMaintenance")),
+    ("maintenanceandrepair", "contains", ("Expense", "RepairMaintenance")),
+    ("repairandmaintenance", "contains", ("Expense", "RepairMaintenance")),
+    ("repairsandmaintenance", "contains", ("Expense", "RepairMaintenance")),
+    ("repairsmaintenance", "contains", ("Expense", "RepairMaintenance")),
+    ("repairmaintenance", "contains", ("Expense", "RepairMaintenance")),
+    ("telephoneexpense", "contains", ("Expense", "Utilities")),
+    ("internetexpense", "contains", ("Expense", "Utilities")),
+    ("postageandshipping", "contains", ("Expense", "OfficeGeneralAdministrativeExpenses")),
 
     # ---- Generic suffix patterns. These come last and use endswith so
     # "Income Tax Payable" is NOT mapped to Income — only true suffix

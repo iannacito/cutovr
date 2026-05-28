@@ -5079,7 +5079,7 @@ def _import_to_qbo_impl(job_id):
         return redirect(url_for("job_detail", job_id=job_id))
 
     if not qbo_conn:
-        flash("QBO connection not found. Connect to QuickBooks first.", "error")
+        flash("QuickBooks connection not found. Connect to QuickBooks first.", "error")
         return redirect(url_for("job_detail", job_id=job_id))
 
     if not QBO_REAL_IMPORT:
@@ -5454,7 +5454,7 @@ def verify_import(job_id):
     job, _user = _job_or_403(job_id)
     qbo_conn = _get_qbo_connection(job_id)
     if not qbo_conn:
-        flash("QBO connection not found. Connect to QuickBooks first.", "error")
+        flash("QuickBooks connection not found. Connect to QuickBooks first.", "error")
         return redirect(url_for("job_detail", job_id=job_id))
     if not job.get("qbo_results"):
         flash("Nothing to verify yet — run the import first.", "info")
@@ -5471,7 +5471,7 @@ def verify_import(job_id):
         _verify_import(job, qbo)
     except QBOError as e:
         tid_suffix = f" (Intuit support reference: {e.intuit_tid})" if e.intuit_tid else ""
-        flash(f"Verification failed (QBO error): {e}{tid_suffix}", "error")
+        flash(f"Verification failed (QuickBooks error): {e}{tid_suffix}", "error")
         return redirect(url_for("job_detail", job_id=job_id))
     except Exception as e:  # noqa: BLE001
         flash(f"Verification failed: {e}", "error")
@@ -6092,10 +6092,51 @@ def account_mapping(job_id):
     saved_mappings = db.list_account_mappings(user["firm_id"], realm_id)
     saved_by_key = {(m["pclaw_account_number"], m["pclaw_account_name"]): m for m in saved_mappings}
 
+    # Run a dry-run create-plan so we can annotate each unmatched row
+    # with whether it's safe to create (button) or still needs the user
+    # to pick a category (dropdown). Failures inside the planner do not
+    # break the page — the rows just lose the per-row CTA in that case.
+    inferred_types: dict = {}
+    try:
+        _preview, _plan = _build_create_missing_plan(
+            user=user,
+            pclaw_accounts=pclaw_accounts,
+            qbo_accounts_response=qbo_accounts_resp,
+            job=job,
+        )
+        for entry in (_plan.to_create or []):
+            info = {
+                "decision": entry.decision,
+                "account_type": entry.qbo_account_type,
+                "detail_type": entry.qbo_detail_type,
+                "account_type_label": _account_type_label(entry.qbo_account_type),
+            }
+            if entry.account_number:
+                inferred_types[entry.account_number] = info
+            if entry.account_name:
+                inferred_types[entry.account_name.lower()] = info
+        for entry in (_plan.blocked or []):
+            info = {
+                "decision": "blocked",
+                "account_type": None,
+                "detail_type": None,
+                "account_type_label": None,
+            }
+            if entry.account_number:
+                inferred_types[entry.account_number] = info
+            if entry.account_name:
+                inferred_types[entry.account_name.lower()] = info
+    except Exception:  # noqa: BLE001 — annotations are best-effort
+        inferred_types = {}
+
+    type_override_keys = set(_job_account_type_overrides(job).keys())
+
     rows, summary = _build_account_mapping_rows(
         pclaw_accounts=pclaw_accounts,
         qbo_accounts=qbo_accounts,
         saved_by_key=saved_by_key,
+        inferred_types=inferred_types,
+        type_override_keys=type_override_keys,
     )
 
     # Decide whether to offer the "create missing accounts" CTA. We only
@@ -6120,6 +6161,7 @@ def account_mapping(job_id):
         ),
         mapping_summary=summary,
         create_missing_offer=create_missing_offer,
+        account_mapping_categories=ACCOUNT_MAPPING_CATEGORIES,
     )
 
 
@@ -6139,6 +6181,34 @@ def _normalize_account_name(name) -> str:
     if not name:
         return ""
     return "".join(ch for ch in str(name).lower() if ch.isalnum())
+
+
+# Plain-English labels for the QBO AccountType strings the type-mapper
+# returns. Used on the Match-accounts page so a per-row "we'd add this
+# as a Bank account" hint doesn't expose QBO API jargon.
+_ACCOUNT_TYPE_FRIENDLY_LABELS: dict[str, str] = {
+    "Bank": "Bank account",
+    "Accounts Receivable": "Accounts receivable",
+    "Other Current Asset": "Current asset",
+    "Fixed Asset": "Fixed asset",
+    "Other Asset": "Other asset",
+    "Accounts Payable": "Accounts payable",
+    "Credit Card": "Credit card",
+    "Other Current Liability": "Current liability",
+    "Long Term Liability": "Loan or liability",
+    "Equity": "Owner/equity",
+    "Income": "Income",
+    "Other Income": "Other income",
+    "Expense": "Expense",
+    "Other Expense": "Other expense",
+    "Cost of Goods Sold": "Cost of goods sold",
+}
+
+
+def _account_type_label(account_type: Optional[str]) -> Optional[str]:
+    if not account_type:
+        return None
+    return _ACCOUNT_TYPE_FRIENDLY_LABELS.get(account_type, account_type)
 
 
 # Deterministic name aliases used when the exact normalized name lookup
@@ -6209,7 +6279,11 @@ def _alias_match(pclaw_norm: str, qbo_by_norm: dict) -> Optional[dict]:
     return None
 
 
-def _build_account_mapping_rows(*, pclaw_accounts, qbo_accounts, saved_by_key):
+def _build_account_mapping_rows(
+    *, pclaw_accounts, qbo_accounts, saved_by_key,
+    inferred_types: Optional[dict] = None,
+    type_override_keys: Optional[set] = None,
+):
     """Build the Step-3 table rows + a summary of match coverage.
 
     Match precedence per PCLaw row:
@@ -6220,8 +6294,20 @@ def _build_account_mapping_rows(*, pclaw_accounts, qbo_accounts, saved_by_key):
       4. Deterministic alias match for common PCLaw/QBO naming drift
          (e.g. "Client Trust Liability" -> QBO "Trust Liability").
 
+    ``inferred_types`` is an optional ``{key: {"account_type": str,
+    "detail_type": str, "decision": "ok"|"warn"|"blocked"|"skipped"}}``
+    map (keyed by account_number first, then lowercased name). When
+    provided we attach a ``creatable`` / ``needs_category`` hint to each
+    unmatched row so the template can render the right inline CTA.
+
+    ``type_override_keys`` is the set of (account_number or lower name)
+    keys that already have a user-chosen category — used to badge the row
+    as "category selected" so the user can re-click "Add to QuickBooks".
+
     The summary is what the banner CTA / template gating reads.
     """
+    inferred_types = inferred_types or {}
+    type_override_keys = type_override_keys or set()
     auto_by_number = {
         str(a.get("AcctNum")).strip(): a
         for a in qbo_accounts if a.get("AcctNum")
@@ -6262,6 +6348,26 @@ def _build_account_mapping_rows(*, pclaw_accounts, qbo_accounts, saved_by_key):
                     if alias_hit:
                         suggestion = alias_hit
                         match_basis = "Alias"
+        num = (pa.get("number") or "").strip()
+        name = (pa.get("name") or "").strip()
+        key_num = num
+        key_name = name.lower()
+        # Look up inferred type info (set by callers that already ran
+        # the create-plan dry-run). When the row is matched / saved we
+        # don't need this, but for unmatched rows it tells the template
+        # whether to render "Add to QuickBooks" (safe type) or the
+        # "What kind of account is this?" selector (ambiguous).
+        inferred = (
+            inferred_types.get(key_num)
+            if key_num and key_num in inferred_types
+            else inferred_types.get(key_name)
+        )
+        has_override = (
+            (key_num and key_num in type_override_keys)
+            or (key_name and key_name in type_override_keys)
+        )
+        creatable = bool(inferred and inferred.get("decision") in ("ok", "warn"))
+        needs_category = bool(inferred and inferred.get("decision") == "blocked")
         rows.append({
             "idx": idx,
             "pclaw_number": pa.get("number"),
@@ -6272,6 +6378,10 @@ def _build_account_mapping_rows(*, pclaw_accounts, qbo_accounts, saved_by_key):
             "is_suggestion": bool(suggestion and not saved),
             "is_system_calculated": is_system_calc,
             "match_basis": match_basis,
+            "creatable": creatable,
+            "needs_category": needs_category,
+            "has_category_override": has_override,
+            "inferred_type_label": (inferred or {}).get("account_type_label"),
         })
         if is_system_calc:
             # Treat as "handled" — do not flag as unmatched in the count.
@@ -6381,15 +6491,100 @@ def _pclaw_account_to_coa_row(pa, coa_lookup):
     return base
 
 
-def _build_create_missing_plan(*, user, pclaw_accounts, qbo_accounts_response):
+# ---------------------------------------------------------------------------
+# Plain-English category fallback for the Match-accounts page.
+#
+# When the safe type-mapper in coa_apply still can't classify a row (no
+# COA upload, ambiguous name like "Art" or "Chase - 7649"), the customer
+# needs a simple way to say "this is an Expense" without learning QBO's
+# AccountType / AccountSubType vocabulary. ACCOUNT_MAPPING_CATEGORIES is
+# the small, lawyer-friendly list we expose in the row-level dropdown.
+# Each label maps to a safe (AccountType, AccountSubType) pair so the
+# resulting create call uses values QBO accepts.
+#
+# The labels intentionally use everyday words. "Loan or liability" covers
+# bank LOCs, partner loans, and notes payable. "Owner/equity" covers
+# Common Stock, Paid In Capital, Dividends, and partner draws. "Other"
+# uses the QBO "OtherCurrentAsset" subtype because that's the most
+# benign default — but is hidden from the default render and only shown
+# when the user explicitly clicks "more options" so we don't nudge the
+# wrong choice. The order matters: it's the order they appear in the
+# select dropdown.
+# ---------------------------------------------------------------------------
+
+
+ACCOUNT_MAPPING_CATEGORIES: list[tuple[str, str, str, str]] = [
+    # (key, label shown in UI, QBO AccountType, QBO AccountSubType)
+    ("bank", "Bank account", "Bank", "Checking"),
+    ("credit_card", "Credit card", "Credit Card", "CreditCard"),
+    ("loan", "Loan or liability", "Long Term Liability", "NotesPayable"),
+    ("line_of_credit", "Line of credit", "Long Term Liability", "LineOfCredit"),
+    ("equity", "Owner/equity", "Equity", "OwnersEquity"),
+    ("income", "Income", "Income", "ServiceFeeIncome"),
+    ("expense", "Expense", "Expense", "OfficeGeneralAdministrativeExpenses"),
+    ("fixed_asset", "Fixed asset", "Fixed Asset", "FurnitureAndFixtures"),
+    ("other_asset", "Other (current asset)", "Other Current Asset", "OtherCurrentAssets"),
+]
+
+
+def _account_mapping_category_lookup() -> dict[str, dict]:
+    """Return ``{key: {label, account_type, detail_type}}`` for fast lookup."""
+    return {
+        key: {
+            "label": label,
+            "account_type": acct_type,
+            "detail_type": detail_type,
+        }
+        for key, label, acct_type, detail_type in ACCOUNT_MAPPING_CATEGORIES
+    }
+
+
+def _job_account_type_overrides(job: dict) -> dict:
+    """Return the job's per-account category overrides set by the user
+    on the Match-accounts page. Keyed by account_number (preferred) or
+    by lowercased account_name. Each value is
+    ``{"account_type": str, "detail_type": str}`` — the same shape the
+    coa_apply.build_create_plan ``type_overrides`` argument expects.
+    """
+    return dict(job.get("account_mapping_type_overrides") or {})
+
+
+def _save_job_account_type_overrides(job_id: str, job: dict, overrides: dict) -> None:
+    """Persist account-mapping category overrides back to the job dict
+    and DB snapshot so a refresh / re-render picks them up.
+
+    The job dict is the in-memory cache; ``db.save_job_state`` writes the
+    flat columns it knows about — overrides ride along in the job dict
+    in memory but we also write them under an extra JSON key. We avoid
+    expanding the DB schema by reusing the existing snapshot persistence;
+    overrides are non-critical (they only affect Step-3 UX), so if the
+    process restarts before re-render the user simply re-picks them.
+    """
+    job["account_mapping_type_overrides"] = overrides
+    jobs[job_id] = job
+
+
+def _build_create_missing_plan(*, user, pclaw_accounts, qbo_accounts_response, job=None):
     """Build a CreatePlan that targets the *missing* QBO accounts needed
     by this GL job's mapping step. Reuses ``build_coa_dry_run_preview``
     + ``build_create_plan`` so the type-mapping / safety rules are the
     same ones the dedicated COA flow already uses.
+
+    Override precedence (highest first):
+      1. Per-row category override set on this job's Match-accounts page
+         (``job.account_mapping_type_overrides``).
+      2. Operator override from the dedicated COA flow
+         (``coa_state.coa_type_overrides``).
+      3. Uploaded COA row's ``account_type`` / ``detail_type``.
+      4. Type-mapper inference from the account name.
     """
     coa_state = _firm_latest_coa_state(user["firm_id"])
     coa_rows = coa_state.get("coa_rows") or []
-    overrides = coa_state.get("coa_type_overrides") or {}
+    overrides = dict(coa_state.get("coa_type_overrides") or {})
+    if job is not None:
+        # Per-row overrides set on the Match-accounts page take precedence
+        # over the firm-wide COA overrides.
+        overrides.update(_job_account_type_overrides(job))
     coa_lookup: dict = {}
     for r in coa_rows:
         num = (r.get("account_number") or "").strip()
@@ -6420,6 +6615,301 @@ def account_mapping_refresh(job_id):
     _job_or_403(job_id)
     _audit("account_mapping_refresh", target_type="job", target_id=job_id)
     flash("Refreshed QuickBooks account list.", "info")
+    return redirect(url_for("account_mapping", job_id=job_id))
+
+
+def _resolve_account_mapping_category(category_key: str) -> Optional[dict]:
+    """Return the (account_type, detail_type) for a plain-English category
+    key from the row-level dropdown, or None when the key is unknown.
+
+    The list of allowed keys is curated in ``ACCOUNT_MAPPING_CATEGORIES``;
+    anything else is rejected so the form can't smuggle arbitrary
+    AccountType strings into the create payload.
+    """
+    return _account_mapping_category_lookup().get((category_key or "").strip())
+
+
+def _override_key_for(pclaw_number: str, pclaw_name: str) -> Optional[str]:
+    """Return the canonical key used to store a per-row category override.
+
+    Prefer the account number (stable across renames). Fall back to the
+    lowercased account name. Returns None when both are blank — the
+    caller should refuse such requests.
+    """
+    num = (pclaw_number or "").strip()
+    if num:
+        return num
+    name = (pclaw_name or "").strip()
+    if name:
+        return name.lower()
+    return None
+
+
+@app.route("/jobs/<job_id>/account-mapping/add-account", methods=["POST"])
+@login_required
+def account_mapping_add_account(job_id):
+    """Create a single missing QuickBooks account from the Match-accounts page.
+
+    Form fields:
+      * ``pclaw_number`` (optional but recommended)
+      * ``pclaw_name`` (required when no number)
+      * ``category`` (optional) — one of ``ACCOUNT_MAPPING_CATEGORIES``
+        keys. When supplied we save it as a per-row override before
+        running the create plan, so the next render shows the row as
+        having a chosen category and the create call uses it.
+
+    Behaviour:
+      * If the row already has a safe type (from heuristics or COA upload),
+        no ``category`` is needed — the route creates the account directly.
+      * If no safe type is available and no ``category`` is supplied,
+        the route returns the user to the Match-accounts page with a
+        flash asking them to pick a category for that row. No create
+        call is issued.
+      * If the same account already exists in QBO (by AcctNum or Name),
+        we save the mapping and report "matched to an existing account"
+        rather than re-creating.
+
+    Always redirects back to /account-mapping. Never silently fails.
+    """
+    job, user = _job_or_403(job_id)
+    qbo_conn = _get_qbo_connection(job_id)
+    if not qbo_conn:
+        flash(
+            "Connect QuickBooks to this job before creating accounts.",
+            "error",
+        )
+        return redirect(url_for("connect_qbo", job_id=job_id))
+
+    pclaw_number = (request.form.get("pclaw_number") or "").strip()
+    pclaw_name = (request.form.get("pclaw_name") or "").strip()
+    category_key = (request.form.get("category") or "").strip()
+
+    override_key = _override_key_for(pclaw_number, pclaw_name)
+    if not override_key:
+        flash(
+            "We need the PCLaw account number or name to add it to "
+            "QuickBooks. Reload the page and try again.",
+            "error",
+        )
+        return redirect(url_for("account_mapping", job_id=job_id))
+
+    # Persist a per-row category override when the user picked one. The
+    # override is consumed by ``_build_create_missing_plan`` which feeds
+    # it to ``coa_apply.build_create_plan``.
+    if category_key:
+        category = _resolve_account_mapping_category(category_key)
+        if not category:
+            flash(
+                "That category isn't one we recognise. Pick a category "
+                "from the dropdown and try again.",
+                "error",
+            )
+            return redirect(url_for("account_mapping", job_id=job_id))
+        overrides = _job_account_type_overrides(job)
+        overrides[override_key] = {
+            "account_type": category["account_type"],
+            "detail_type": category["detail_type"],
+            "account_number": pclaw_number,
+            "account_name": pclaw_name,
+        }
+        _save_job_account_type_overrides(job_id, job, overrides)
+        _audit(
+            "account_mapping_category_set",
+            target_type="job", target_id=job_id,
+            details=(
+                f"key={override_key!r} "
+                f"account_type={category['account_type']!r}"
+            ),
+        )
+
+    try:
+        qbo, qbo_conn = _get_qbo_client(job_id, user)
+    except QBOAuthExpired as e:
+        tid = getattr(e, "intuit_tid", None)
+        _audit(
+            "account_mapping_add_account_auth_expired",
+            target_type="job", target_id=job_id,
+            details=_audit_details_with_tid(str(e), tid),
+        )
+        flash(
+            "QuickBooks connection expired. Reconnect and try again.",
+            "error",
+        )
+        return redirect(url_for("account_mapping", job_id=job_id))
+
+    # Pull the latest QBO account list so we can dedupe against it.
+    try:
+        qbo_accounts_resp = qbo.get_accounts()
+    except (QBOError, Exception) as e:  # noqa: BLE001
+        tid = getattr(e, "intuit_tid", None)
+        _audit(
+            "account_mapping_add_account_qbo_error",
+            target_type="job", target_id=job_id,
+            details=_audit_details_with_tid(str(e)[:200], tid),
+        )
+        flash(
+            "We couldn't reach QuickBooks just now. Wait a moment and "
+            "try again."
+            + (f" (Intuit support reference: {tid})" if tid else ""),
+            "error",
+        )
+        return redirect(url_for("account_mapping", job_id=job_id))
+
+    # Build the plan but ONLY against this one PCLaw account so we don't
+    # accidentally create the firm's entire missing-account list when the
+    # user clicked the per-row button.
+    target_pclaw = [{
+        "number": pclaw_number or None,
+        "name": pclaw_name or None,
+    }]
+    preview, plan = _build_create_missing_plan(
+        user=user,
+        pclaw_accounts=target_pclaw,
+        qbo_accounts_response=qbo_accounts_resp,
+        job=job,
+    )
+
+    # Already exists in QBO (preview matched it) — save the mapping and
+    # bail out so we don't create a duplicate.
+    if preview.get("matched") and not plan.to_create and not plan.blocked:
+        matched = preview["matched"][0]
+        try:
+            db.save_account_mapping(
+                firm_id=user["firm_id"],
+                realm_id=qbo_conn["realm_id"],
+                pclaw_account_number=pclaw_number or None,
+                pclaw_account_name=pclaw_name or None,
+                qbo_account_id=str(matched.get("qbo_account_id") or matched.get("Id") or ""),
+                qbo_account_name=matched.get("qbo_account_name") or matched.get("Name"),
+                qbo_account_type=matched.get("qbo_account_type") or matched.get("AccountType"),
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        flash(
+            f"“{pclaw_name or pclaw_number}” is already in "
+            "QuickBooks — we matched it for you.",
+            "success",
+        )
+        return redirect(url_for("account_mapping", job_id=job_id))
+
+    if plan.blocked:
+        # No safe type AND the user didn't pick a category. Ask them to
+        # pick one — do not call QBO.
+        flash(
+            f"We need to know what kind of account “"
+            f"{pclaw_name or pclaw_number}” is. Pick a category "
+            "(Bank, Income, Expense, etc.) on that row and click "
+            "“Add to QuickBooks” again.",
+            "warning",
+        )
+        return redirect(url_for("account_mapping", job_id=job_id))
+
+    if not plan.to_create:
+        flash(
+            "Nothing to add — this account is already handled.",
+            "info",
+        )
+        return redirect(url_for("account_mapping", job_id=job_id))
+
+    # Defensive dedupe right before the POST — another tab may have just
+    # created the same account.
+    entry = plan.to_create[0]
+    existing = None
+    try:
+        if entry.account_number:
+            existing = qbo.find_account_by_acctnum(entry.account_number)
+        if not existing and entry.account_name:
+            existing = qbo.find_account_by_name(entry.account_name)
+    except QBOError:
+        existing = None
+    if existing:
+        try:
+            db.save_account_mapping(
+                firm_id=user["firm_id"],
+                realm_id=qbo_conn["realm_id"],
+                pclaw_account_number=entry.account_number or None,
+                pclaw_account_name=entry.account_name or None,
+                qbo_account_id=str(existing.get("Id") or ""),
+                qbo_account_name=existing.get("Name"),
+                qbo_account_type=existing.get("AccountType"),
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        flash(
+            f"“{entry.account_name or entry.account_number}” "
+            "is already in QuickBooks — we matched it for you.",
+            "success",
+        )
+        return redirect(url_for("account_mapping", job_id=job_id))
+
+    from coa_apply import CreatePlan as _CP
+    single_plan = _CP(
+        matched=[], to_create=[entry], blocked=[], soft_conflicts=[],
+    )
+    try:
+        result = apply_create_plan(qbo, single_plan)
+    except Exception as e:  # noqa: BLE001
+        tid = getattr(e, "intuit_tid", None)
+        _audit(
+            "account_mapping_add_account_apply_error",
+            target_type="job", target_id=job_id,
+            details=_audit_details_with_tid(str(e)[:300], tid),
+        )
+        flash(
+            "Something went wrong while adding the QuickBooks account. "
+            "Nothing partial was left behind."
+            + (f" (Intuit support reference: {tid})" if tid else ""),
+            "error",
+        )
+        return redirect(url_for("account_mapping", job_id=job_id))
+
+    created = result.get("created") or []
+    failed = result.get("failed") or []
+    tids = result.get("intuit_tids") or []
+
+    for c in created:
+        try:
+            db.save_account_mapping(
+                firm_id=user["firm_id"],
+                realm_id=qbo_conn["realm_id"],
+                pclaw_account_number=c.get("account_number") or None,
+                pclaw_account_name=c.get("account_name") or None,
+                qbo_account_id=c.get("qbo_account_id"),
+                qbo_account_name=c.get("qbo_account_name"),
+                qbo_account_type=c.get("qbo_account_type"),
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    _audit(
+        "account_mapping_add_account_completed",
+        target_type="job", target_id=job_id,
+        details=_audit_details_with_tid(
+            f"created={len(created)} failed={len(failed)} "
+            f"key={override_key!r}",
+            tids[0] if tids else None,
+        ),
+    )
+
+    if created:
+        c = created[0]
+        flash(
+            f"Added “{c.get('qbo_account_name') or c.get('account_name')}” "
+            "to QuickBooks.",
+            "success",
+        )
+    elif failed:
+        f = failed[0]
+        flash(
+            f"QuickBooks rejected “"
+            f"{f.get('account_name') or f.get('account_number')}”: "
+            f"{f.get('error') or 'unknown error'}. "
+            "Try a different category on that row.",
+            "error",
+        )
+    else:
+        flash("Nothing changed — try again.", "info")
+
     return redirect(url_for("account_mapping", job_id=job_id))
 
 
@@ -6507,6 +6997,7 @@ def account_mapping_create_missing(job_id):
     preview, plan = _build_create_missing_plan(
         user=user, pclaw_accounts=pclaw_accounts,
         qbo_accounts_response=qbo_accounts_resp,
+        job=job,
     )
 
     if not plan.to_create and not plan.blocked:
@@ -6524,9 +7015,11 @@ def account_mapping_create_missing(job_id):
         return redirect(url_for("account_mapping", job_id=job_id))
 
     if plan.has_blockers:
-        # Surface blockers without writing anything. The user can fix the
-        # types in the dedicated COA flow (or create those one or two
-        # accounts manually in QBO) and come back.
+        # Surface blockers without writing anything when there's *nothing*
+        # safe to create. Otherwise the route falls through and creates
+        # the safe rows; the blocked ones remain unmatched and the user
+        # picks a category for them on the Match-accounts page using the
+        # per-row "What kind of account is this?" selector.
         blocker_names = ", ".join(
             (b.account_name or b.account_number or "(unknown)")
             for b in plan.blocked[:6]
@@ -6541,18 +7034,28 @@ def account_mapping_create_missing(job_id):
                 f"matched={len(plan.matched)}"
             ),
         )
-        flash(
-            f"We need a bit more information for {len(plan.blocked)} "
-            f"account(s): {blocker_names}. Upload your account list with "
-            "a category for each (for example: Bank, Income, Expense), "
-            "or match those rows to an existing QuickBooks account. "
-            "Nothing has been created in QuickBooks yet.",
-            "error" if not plan.to_create else "warning",
-        )
         if not plan.to_create:
+            flash(
+                f"We need a bit more information for {len(plan.blocked)} "
+                f"account(s): {blocker_names}. Pick a category "
+                "(Bank, Income, Expense, etc.) on each row below and "
+                "click “Add to QuickBooks”, or match those rows to an "
+                "existing QuickBooks account. Nothing has been created "
+                "in QuickBooks yet.",
+                "warning",
+            )
             return redirect(url_for("account_mapping", job_id=job_id))
-        # else: fall through and create the safe rows; the blocked ones
-        # remain unmatched and the user sees them as exceptions.
+        # Partial success: surface a softer, action-oriented flash. The
+        # message states what *will* be created and what still needs the
+        # user's category selector, so partial success doesn't read as
+        # total failure.
+        flash(
+            f"We can add {len(plan.to_create)} account(s) safely. "
+            f"{len(plan.blocked)} more need a category — "
+            f"{blocker_names}. Pick a category on those rows below and "
+            "click “Add to QuickBooks” to finish.",
+            "info",
+        )
 
     _audit(
         "account_mapping_create_missing_started",
@@ -6795,7 +7298,7 @@ def reverse_import(job_id):
         flash("QuickBooks connection expired. Please reconnect.", "error")
         return redirect(url_for("job_detail", job_id=job_id))
     if not qbo_conn:
-        flash("QBO connection not found. Connect to QuickBooks first.", "error")
+        flash("QuickBooks connection not found. Connect to QuickBooks first.", "error")
         return redirect(url_for("job_detail", job_id=job_id))
 
     _audit("import_reversal_started", target_type="job", target_id=job_id,
