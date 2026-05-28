@@ -1,8 +1,29 @@
 {% extends "_base.html" %}
 {% block title %}Match accounts &mdash; {{ job.company }}{% endblock %}
 {% block content %}
+{# Translate raw QuickBooks AccountType / AccountSubType enums into the
+   plain-English labels lawyers actually see in QuickBooks. #}
+{% set ACCOUNT_TYPE_LABELS = {
+  'Bank': 'Bank',
+  'AccountsReceivable': 'Accounts receivable',
+  'OtherCurrentAsset': 'Current asset',
+  'FixedAsset': 'Fixed asset',
+  'OtherAsset': 'Other asset',
+  'AccountsPayable': 'Accounts payable',
+  'CreditCard': 'Credit card',
+  'OtherCurrentLiability': 'Current liability',
+  'LongTermLiability': 'Long-term liability',
+  'Equity': 'Equity',
+  'EquityDoesNotClose': 'Equity',
+  'Income': 'Income',
+  'OtherIncome': 'Other income',
+  'Expense': 'Expense',
+  'OtherExpense': 'Other expense',
+  'CostOfGoodsSold': 'Cost of goods sold',
+  'NonPosting': 'Non-posting',
+} %}
 <section class="detail-page">
-  <a href="{{ url_for('job_detail', job_id=job.id) }}" class="back-link">&larr; Back to job</a>
+  <a href="{{ url_for('job_detail', job_id=job.id) }}" class="back-link">&larr; Back to migration</a>
 
   <header>
     <p class="eyebrow">Step 3 of 6 &middot; Match accounts</p>
@@ -28,7 +49,7 @@
         </p>
         <div class="actions-row" style="margin-top:var(--space-4);">
           <a href="{{ load_error.reconnect_url }}" class="btn btn-primary btn-lg" data-testid="reconnect-cta">Reconnect QuickBooks</a>
-          <a href="{{ load_error.job_url }}" class="btn btn-link">Back to job</a>
+          <a href="{{ load_error.job_url }}" class="btn btn-link">Back to migration</a>
         </div>
       {% elif load_error.category == 'permission' %}
         <h2 style="margin-top:0;">QuickBooks couldn&rsquo;t share this company&rsquo;s account list</h2>
@@ -52,7 +73,7 @@
         </p>
         <div class="actions-row" style="margin-top:var(--space-4);">
           <a href="{{ load_error.retry_url }}" class="btn btn-primary btn-lg" data-testid="retry-cta">Try again</a>
-          <a href="{{ load_error.job_url }}" class="btn btn-link">Back to job</a>
+          <a href="{{ load_error.job_url }}" class="btn btn-link">Back to migration</a>
         </div>
       {% elif load_error.category == 'missing_source' %}
         {% if load_error.demo_enabled and load_error.demo_start_url %}
@@ -66,7 +87,7 @@
           <div class="actions-row" style="margin-top:var(--space-4);">
             <a href="{{ load_error.demo_start_url }}" class="btn btn-primary btn-lg" data-testid="demo-restart-cta">Start a fresh demo run</a>
             <a href="{{ load_error.reupload_url or load_error.job_url }}" class="btn" data-testid="reupload-cta">Re-upload PCLaw export</a>
-            <a href="{{ load_error.job_url }}" class="btn btn-link">Back to job</a>
+            <a href="{{ load_error.job_url }}" class="btn btn-link">Back to migration</a>
           </div>
           <p class="muted" style="margin-top:var(--space-3);font-size:.9rem;">
             Tip: from the demo workspace you can re-download all bundled
@@ -82,7 +103,7 @@
           </p>
           <div class="actions-row" style="margin-top:var(--space-4);">
             <a href="{{ load_error.reupload_url or load_error.job_url }}" class="btn btn-primary btn-lg" data-testid="reupload-cta">Re-upload PCLaw export</a>
-            <a href="{{ load_error.job_url }}" class="btn btn-link">Back to job</a>
+            <a href="{{ load_error.job_url }}" class="btn btn-link">Back to migration</a>
           </div>
         {% endif %}
       {% elif load_error.category == 'service_unavailable' or load_error.category == 'network' %}
@@ -94,7 +115,7 @@
         </p>
         <div class="actions-row" style="margin-top:var(--space-4);">
           <a href="{{ load_error.retry_url }}" class="btn btn-primary btn-lg" data-testid="retry-cta">Try again</a>
-          <a href="{{ load_error.job_url }}" class="btn btn-link">Back to job</a>
+          <a href="{{ load_error.job_url }}" class="btn btn-link">Back to migration</a>
         </div>
       {% else %}
         <h2 style="margin-top:0;">We couldn&rsquo;t load your QuickBooks accounts</h2>
@@ -106,7 +127,7 @@
         <div class="actions-row" style="margin-top:var(--space-4);">
           <a href="{{ load_error.retry_url }}" class="btn btn-primary btn-lg" data-testid="retry-cta">Try again</a>
           <a href="{{ load_error.reconnect_url }}" class="btn" data-testid="reconnect-cta">Reconnect QuickBooks</a>
-          <a href="{{ load_error.job_url }}" class="btn btn-link">Back to job</a>
+          <a href="{{ load_error.job_url }}" class="btn btn-link">Back to migration</a>
         </div>
       {% endif %}
 
@@ -213,18 +234,6 @@
     <p style="max-width:62ch;margin:0 0 var(--space-4);">
       You&rsquo;re now ready to move on to Step 4.
     </p>
-    <div class="actions-row workflow-cta-row" data-testid="step3-complete-actions">
-      <a class="btn"
-         href="{{ url_for('dashboard') }}#intake"
-         data-testid="step3-back-cta">
-        &larr; Back to Step 2: Upload reports
-      </a>
-      <a class="btn btn-primary btn-lg"
-         href="{{ url_for('import_job_entry') }}"
-         data-testid="step3-next-cta">
-        Proceed to Step 4: Review import &rarr;
-      </a>
-    </div>
   </section>
   {% endif %}
   <p class="muted" data-testid="mapping-summary"
@@ -286,7 +295,7 @@
                     {% for a in qbo_accounts %}
                       <option value="{{ a.Id }}"
                         {% if r.current_qbo_id == a.Id %}selected{% endif %}>
-                        {{ a.Name }}{% if a.AcctNum %} ({{ a.AcctNum }}){% endif %} &mdash; {{ a.AccountType }}
+                        {{ a.Name }}{% if a.AcctNum %} ({{ a.AcctNum }}){% endif %} &mdash; {{ ACCOUNT_TYPE_LABELS.get(a.AccountType, a.AccountType) }}
                       </option>
                     {% endfor %}
                   </select>

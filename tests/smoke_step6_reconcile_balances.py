@@ -232,18 +232,27 @@ def r3_invalid_email_validation():
     sent_calls = []
     with mock.patch.object(appmod.email_sender, "send_email",
                            side_effect=lambda **kw: sent_calls.append(kw) or True):
+        # POST must redirect (PRG) so a refresh cannot replay the banner.
         r = client.post(
             "/reconcile-balances/send-report",
             data={"email": "not-an-email"},
             follow_redirects=False,
         )
+        assert r.status_code == 302, r.status_code
+        assert "/reconcile-balances" in r.headers["Location"]
+        # Follow the redirect to confirm the banner shows on the GET.
+        r = client.get("/reconcile-balances")
     assert r.status_code == 200, r.status_code
     body = r.get_data(as_text=True)
-    assert 'data-testid="step6-report-status"' in body
-    assert 'data-status="error"' in body
+    # Flash class "error" appears in base template banner.
+    assert 'flash error' in body
     assert "valid email address" in body
     # Crucially: we did not attempt to send.
     assert sent_calls == [], sent_calls
+    # Refresh the page — the flash must NOT replay (consumed by Flask).
+    r = client.get("/reconcile-balances")
+    body2 = r.get_data(as_text=True)
+    assert "valid email address" not in body2, "Flash replayed on refresh!"
     print("R3 OK: invalid email surfaces a friendly validation error, no SMTP call")
 
 
@@ -262,23 +271,23 @@ def r4_submit_when_smtp_unconfigured():
                            return_value=False), \
          mock.patch.object(appmod.email_sender, "send_email",
                            side_effect=lambda **kw: sent_calls.append(kw) or True):
+        # PRG: POST redirects, banner is shown via flash on the GET.
         r = client.post(
             "/reconcile-balances/send-report",
             data={"email": "lawyer@firm.example"},
             follow_redirects=False,
         )
+        assert r.status_code == 302, r.status_code
+        r = client.get("/reconcile-balances")
     assert r.status_code == 200, r.status_code
     body = r.get_data(as_text=True)
-    assert 'data-testid="step6-report-status"' in body
-    # We use the "info" banner for the not-configured case so the user
-    # sees it's neutral (not an error and not a false success).
-    assert 'data-status="info"' in body, body[:2000]
-    # The message must be honest: it must say delivery is not
-    # configured. It must NOT claim the email was sent or saved.
+    # We use the "info" flash class for the not-configured case so the
+    # user sees it's neutral (not an error and not a false success).
+    assert 'flash info' in body, body[:2000]
     assert "not configured" in body.lower()
-    assert "sent" not in body.lower().split("report preview")[0] or \
-        "didn't send" in body.lower(), \
+    assert "didn't send" in body.lower() or "didn&#39;t send" in body.lower(), (
         "Must not claim the email was sent when SMTP isn't configured"
+    )
     # The report itself must be visible on the page even when SMTP is
     # off — that's the whole point of this fix.
     assert 'data-testid="step6-report-preview"' in body
@@ -288,6 +297,11 @@ def r4_submit_when_smtp_unconfigured():
     assert "SMTP_" not in body, "Must not leak SMTP env var names"
     # send_email must NOT be called when SMTP is unconfigured.
     assert sent_calls == [], sent_calls
+    # Flash must NOT replay on a second GET.
+    body2 = client.get("/reconcile-balances").get_data(as_text=True)
+    assert "not configured" not in body2.lower() or "flash info" not in body2, (
+        "Flash banner replayed on refresh!"
+    )
     print("R4 OK: clear 'not configured' info banner + report shown; no SMTP attempted")
 
 
@@ -311,9 +325,11 @@ def r5_submit_when_smtp_configured_succeeds():
             data={"email": "lawyer@firm.example"},
             follow_redirects=False,
         )
+        assert r.status_code == 302, r.status_code
+        r = client.get("/reconcile-balances")
     assert r.status_code == 200, r.status_code
     body = r.get_data(as_text=True)
-    assert 'data-status="success"' in body
+    assert 'flash success' in body
     assert "lawyer@firm.example" in body
     # send_email got called with the recipient + a plain-text body.
     assert sent.get("to") == "lawyer@firm.example", sent
@@ -461,10 +477,11 @@ def r8_submit_when_smtp_configured_but_send_fails():
             data={"email": "lawyer@firm.example"},
             follow_redirects=False,
         )
+        assert r.status_code == 302, r.status_code
+        r = client.get("/reconcile-balances")
     assert r.status_code == 200, r.status_code
     body = r.get_data(as_text=True)
-    assert 'data-testid="step6-report-status"' in body
-    assert 'data-status="error"' in body, body[:2000]
+    assert 'flash error' in body, body[:2000]
     # Customer-friendly wording: no stack traces, no SMTP jargon.
     # Jinja HTML-escapes the apostrophe to &#39;, so match both forms.
     lower = body.lower()

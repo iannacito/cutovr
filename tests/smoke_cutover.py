@@ -180,7 +180,7 @@ def _run_flask_tests():
             "Opening balance",
             "Country",
             "Accounting basis",
-            "QBO company name",
+            "QuickBooks company name",
             "Save cutover settings",
         ):
             assert needle in body, f"missing {needle!r}"

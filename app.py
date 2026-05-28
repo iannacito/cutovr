@@ -1866,8 +1866,6 @@ def reconcile_balances():
         workflow_progress=customer_workflow.progress_percent(stages),
         workflow_completed=customer_workflow.completed_count(stages),
         workflow_terms=customer_workflow.FRIENDLY_TERMS,
-        report_status=request.args.get("report_status") or None,
-        report_message=request.args.get("report_message") or None,
         report_email=None,
     )
 
@@ -1894,43 +1892,28 @@ def reconcile_balances_send_report():
     email = (request.form.get("email") or "").strip()
 
     cutover, items, stages, summary = _build_reconcile_view(firm_id)
-    current = customer_workflow.current_stage(stages)
     reachable, reason = _step6_is_reachable(stages, summary)
     report_text = (
         final_report.build_report_text(summary) if reachable else ""
     )
 
-    def _render(status, message, *, email_value=""):
-        return render_template(
-            "reconcile-balances.html",
-            summary=summary,
-            report_text=report_text,
-            blocked=not reachable,
-            blocked_reason=reason,
-            workflow_stages=[s.to_dict() for s in stages],
-            workflow_current=current.to_dict() if current else None,
-            workflow_progress=customer_workflow.progress_percent(stages),
-            workflow_completed=customer_workflow.completed_count(stages),
-            workflow_terms=customer_workflow.FRIENDLY_TERMS,
-            report_status=status,
-            report_message=message,
-            report_email=email_value,
-        )
+    def _flash_and_redirect(status, message):
+        # Use Flask flash + PRG so banners do not replay on refresh / back.
+        flash(message, status)
+        return redirect(url_for("reconcile_balances"))
 
     if not reachable:
-        return _render(
+        return _flash_and_redirect(
             "error",
             "Finish Step 5 (Send to QuickBooks) before requesting a "
             "final report.",
-            email_value=email,
         )
 
     if not final_report.is_valid_email(email):
-        return _render(
+        return _flash_and_redirect(
             "error",
             "Please enter a valid email address (for example, "
             "you@firm.example) so we know where to send the report.",
-            email_value=email,
         )
 
     subject = (
@@ -1945,15 +1928,8 @@ def reconcile_balances_send_report():
                 to=email, subject=subject, body_text=report_text,
             )
         except Exception:  # noqa: BLE001
-            # email_sender.send_email already swallows internal errors
-            # and returns False; this except is belt-and-suspenders so
-            # the demo flow never bubbles a raw stack to the user.
             delivered = False
 
-    # Audit log: never log the report body or SMTP credentials. We only
-    # record that a request was made, by whom, and whether SMTP was
-    # available. The recipient address is recorded because operators
-    # need it to follow up when SMTP is offline.
     try:
         _audit(
             "final_report_email_requested",
@@ -1965,34 +1941,25 @@ def reconcile_balances_send_report():
             ),
         )
     except Exception:  # noqa: BLE001
-        # Audit failures must not break the user flow.
         pass
 
     if delivered:
-        return _render(
+        return _flash_and_redirect(
             "success",
             f"Final report sent to {email}. Check your inbox.",
         )
     if smtp_configured:
-        # SMTP configured but delivery failed — never show raw error
-        # detail. The report is still shown on the page so the user
-        # can copy it manually or retry. We do not claim it was sent.
-        return _render(
+        return _flash_and_redirect(
             "error",
             "We couldn't send the report just now — the mail service "
-            "didn't accept the message. The full report is shown below "
-            "so you can copy it, and you're welcome to try again.",
-            email_value=email,
+            "didn't accept the message. You can copy the full report "
+            "from the page and try again.",
         )
-    # SMTP not configured (e.g. local demo). Be honest: don't claim
-    # anything was sent or saved. The report is shown on the page so
-    # the demo flow still completes cleanly.
-    return _render(
+    return _flash_and_redirect(
         "info",
         "Email delivery is not configured yet, so we didn't send a "
         "message. The full report is shown below — copy it from the "
         "page for now.",
-        email_value=email,
     )
 
 
@@ -4414,12 +4381,22 @@ def ending_tb_reconciliation_view(job_id):
             f"missing={report['summary']['missing_count']}"
         ),
     )
+    # Provide the workflow stepper context so this Step 6 sub-page keeps
+    # the migration's visual context instead of looking like an
+    # accountant-only worksheet bolted onto the side.
+    cutover_obj, items, stages, summary = _build_reconcile_view(user["firm_id"])
+    current = customer_workflow.current_stage(stages)
     return render_template(
         "ending-tb-reconciliation.html",
         job=job,
         report=report,
         opening_available=bool(opening_rows),
         gl_available=bool(gl_rows),
+        workflow_stages=[s.to_dict() for s in stages],
+        workflow_current=current.to_dict() if current else None,
+        workflow_progress=customer_workflow.progress_percent(stages),
+        workflow_completed=customer_workflow.completed_count(stages),
+        workflow_terms=customer_workflow.FRIENDLY_TERMS,
     )
 
 

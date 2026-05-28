@@ -4,7 +4,7 @@
 <section class="detail-page" data-testid="preview-import-page">
   {% include "_workflow_stepper.html" %}
 
-  <a href="{{ url_for('job_detail', job_id=job.id) }}" class="back-link">&larr; Back to job</a>
+  <a href="{{ url_for('job_detail', job_id=job.id) }}" class="back-link">&larr; Back to migration</a>
 
   <section class="card detail-hero">
     <div class="flex-between">
@@ -19,7 +19,7 @@
       <div class="stack-sm" style="text-align:right;">
         {% if qbo_connection.realm_id %}
           <span class="badge success large">QuickBooks connected</span>
-          <span class="muted">{{ qbo_connection.company_name or qbo_connection.realm_id }}</span>
+          <span class="muted">{{ qbo_connection.company_name or 'QuickBooks company connected' }}</span>
         {% else %}
           <span class="badge large">QuickBooks not connected</span>
         {% endif %}
@@ -38,55 +38,34 @@
           accounts against the chart of accounts in QBO. Connecting does not
           post anything.
         </p>
-        <a class="btn btn-primary" href="{{ url_for('job_detail', job_id=job.id) }}">Back to job &amp; connect QuickBooks</a>
+        <a class="btn btn-primary" href="{{ url_for('job_detail', job_id=job.id) }}">Back to migration &amp; connect QuickBooks</a>
       {% endif %}
     </section>
   {% else %}
 
   <section class="card">
     <p class="eyebrow">At a glance</p>
-    <h2>Here&rsquo;s what we&rsquo;ll send.</h2>
+    <h2>Review what we&rsquo;ll send.</h2>
     <dl class="summary-grid">
-      <div><dt>JournalEntry records</dt><dd>{{ preview.journal_entry_count }}</dd></div>
-      <div><dt>Total source transactions</dt><dd>{{ preview.transaction_count_total }}</dd></div>
-      <div><dt>Lines</dt><dd>{{ preview.line_count }}</dd></div>
-      <div><dt>Total debits</dt><dd>${{ preview.total_debits }}</dd></div>
-      <div><dt>Total credits</dt><dd>${{ preview.total_credits }}</dd></div>
+      <div><dt>Transactions ready</dt><dd>{{ preview.journal_entry_count }}</dd></div>
+      <div><dt>Accounts involved</dt><dd>{{ preview.unique_account_count }}</dd></div>
+      <div><dt>Total amount</dt><dd>${{ preview.total_debits }}</dd></div>
       <div>
-        <dt>Balanced</dt>
-        <dd>
-          {% if preview.balanced %}
-            <span class="badge success">Yes</span>
-          {% else %}
-            <span class="badge error">No</span>
-          {% endif %}
-        </dd>
-      </div>
-      <div><dt>Unique accounts</dt><dd>{{ preview.unique_account_count }}</dd></div>
-      <div>
-        <dt>Mapping mode</dt>
-        <dd><span class="badge">By account {{ preview.mapping_mode }}</span></dd>
-      </div>
-      <div>
-        <dt>Mapped accounts</dt>
-        <dd><span class="badge success">{{ preview.mapped_account_count }}</span></dd>
-      </div>
-      <div>
-        <dt>Unmapped accounts</dt>
+        <dt>Everything matched?</dt>
         <dd>
           {% if preview.unmapped_account_count == 0 %}
-            <span class="badge success">0</span>
+            <span class="badge success">Yes</span>
           {% else %}
-            <span class="badge error">{{ preview.unmapped_account_count }}</span>
-            &mdash; <a href="{{ url_for('account_mapping', job_id=job.id) }}">Map accounts</a>
+            <span class="badge error">{{ preview.unmapped_account_count }} need a match</span>
+            &mdash; <a href="{{ url_for('account_mapping', job_id=job.id) }}">Match accounts</a>
           {% endif %}
         </dd>
       </div>
       <div>
-        <dt>Would post on confirm?</dt>
+        <dt>Ready to send?</dt>
         <dd>
           {% if preview.would_post %}
-            <span class="badge success">Yes &mdash; safe to import</span>
+            <span class="badge success">Yes &mdash; safe to send</span>
           {% else %}
             <span class="badge error">No &mdash; resolve the items below first</span>
           {% endif %}
@@ -94,13 +73,32 @@
       </div>
     </dl>
 
+    <details class="quiet" style="margin-top:var(--space-4);">
+      <summary>Technical details (for support)</summary>
+      <dl class="summary-grid" style="margin-top:var(--space-3);">
+        <div><dt>Source transactions</dt><dd>{{ preview.transaction_count_total }}</dd></div>
+        <div><dt>Line items</dt><dd>{{ preview.line_count }}</dd></div>
+        <div><dt>Money in (debits)</dt><dd>${{ preview.total_debits }}</dd></div>
+        <div><dt>Money out (credits)</dt><dd>${{ preview.total_credits }}</dd></div>
+        <div>
+          <dt>Debits and credits balance</dt>
+          <dd>
+            {% if preview.balanced %}
+              <span class="badge success">Yes</span>
+            {% else %}
+              <span class="badge error">No</span>
+            {% endif %}
+          </dd>
+        </div>
+        <div><dt>Accounts matched</dt><dd>{{ preview.mapped_account_count }}</dd></div>
+        <div><dt>Mapping mode</dt><dd>By account {{ preview.mapping_mode }}</dd></div>
+      </dl>
+    </details>
+
     <div class="actions-row" style="margin-top:var(--space-4);">
-      <a class="btn" href="{{ url_for('validation_report_csv', job_id=job.id) }}">
+      <a class="btn" href="{{ url_for('account_mapping', job_id=job.id) }}">Match accounts</a>
+      <a class="btn btn-link" href="{{ url_for('validation_report_csv', job_id=job.id) }}">
         Download validation report (CSV)
-      </a>
-      <a class="btn" href="{{ url_for('account_mapping', job_id=job.id) }}">Map accounts</a>
-      <a class="btn btn-primary" href="{{ url_for('job_detail', job_id=job.id) }}#qbo">
-        Back to job
       </a>
     </div>
   </section>
@@ -135,11 +133,10 @@
           <tr>
             <th>PCLaw #</th>
             <th>PCLaw account</th>
-            <th>Mapped?</th>
-            <th>QBO #</th>
-            <th>QBO account</th>
-            <th>QBO id</th>
-            <th>Lines</th>
+            <th>Matched?</th>
+            <th>QuickBooks #</th>
+            <th>QuickBooks account</th>
+            <th>Entries</th>
           </tr>
         </thead>
         <tbody>
@@ -170,7 +167,6 @@
               {% endif %}
             </td>
             <td>{{ a.qbo_account_name or '—' }}</td>
-            <td><code>{{ a.qbo_account_id or '—' }}</code></td>
             <td>{{ a.line_count }}</td>
           </tr>
           {% endfor %}
@@ -218,7 +214,7 @@
     </p>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Transaction</th><th>Lines</th><th>Reasons</th></tr></thead>
+        <thead><tr><th>Transaction reference</th><th>Entries</th><th>Reasons</th></tr></thead>
         <tbody>
           {% for b in preview.blocked_transactions %}
           <tr>
@@ -235,26 +231,26 @@
 
   {% if preview.sample_lines %}
   <section class="card">
-    <p class="eyebrow">Sample lines</p>
-    <h2>First {{ preview.sample_lines|length }} JournalEntry line(s)</h2>
-    <p class="muted">A small sample so you can sanity-check what would be posted.</p>
+    <p class="eyebrow">Sample entries</p>
+    <h2>First {{ preview.sample_lines|length }} entries we&rsquo;ll send</h2>
+    <p class="muted">A small sample so you can sanity-check what would be sent.</p>
     <div class="table-wrap">
       <table>
         <thead>
           <tr>
-            <th>Transaction</th><th>Date</th><th>Account</th>
-            <th>Type</th><th>Amount</th><th>Description</th>
+            <th>Date</th><th>Account</th>
+            <th>Amount</th><th>Description</th>
+            <th>Transaction reference</th>
           </tr>
         </thead>
         <tbody>
           {% for l in preview.sample_lines %}
           <tr>
-            <td><code>{{ l.transaction_id }}</code></td>
             <td>{{ l.date }}</td>
-            <td>{{ l.account }}{% if l.qbo_acct_num %} <small class="muted">&middot; QBO #{{ l.qbo_acct_num }}</small>{% endif %}</td>
-            <td>{{ l.posting_type }}</td>
-            <td>${{ l.amount }}</td>
+            <td>{{ l.account }}{% if l.qbo_acct_num %} <small class="muted">&middot; #{{ l.qbo_acct_num }}</small>{% endif %}</td>
+            <td>${{ l.amount }}{% if l.posting_type %} <small class="muted">&middot; {{ l.posting_type }}</small>{% endif %}</td>
             <td class="muted">{{ l.description }}</td>
+            <td><code class="muted" style="font-size:.85em;">{{ l.transaction_id }}</code></td>
           </tr>
           {% endfor %}
         </tbody>

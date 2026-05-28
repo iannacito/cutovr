@@ -92,20 +92,30 @@ def w2_connect_qbo_flash_does_not_show_realm_id():
     print("OK  W2  Connect-success flash hides the realm id")
 
 
-def w3_step3_complete_card_back_left_next_right():
-    """In account-mapping.html, the step-complete card must have the
-    Back link in DOM order before the Proceed CTA. The two have
-    distinct data-testids so we can assert ordering reliably."""
+def w3_step3_complete_card_has_no_duplicate_cta():
+    """In account-mapping.html, the in-page step-complete success card
+    no longer carries its own Proceed CTA — only the footer nav row
+    renders 'Proceed to Step 4', and only one such CTA exists in DOM
+    order. The footer keeps Back on the left and Proceed on the right.
+    """
     body = (ROOT / "templates" / "account-mapping.html").read_text()
-    back_idx = body.find('data-testid="step3-back-cta"')
-    next_idx = body.find('data-testid="step3-next-cta"')
+    # The in-page card's duplicate CTAs were removed per the
+    # walkthrough fixes; the footer nav still keeps a single back/next.
+    assert 'data-testid="step3-next-cta"' not in body, (
+        "Step 3 in-page success card still carries a duplicate "
+        "'Proceed to Step 4' CTA. Only the footer should have it."
+    )
+    assert 'data-testid="step3-back-cta"' not in body, (
+        "Step 3 in-page success card still carries a duplicate back CTA."
+    )
+    # Footer should still have its single proceed CTA.
+    back_idx = body.find('data-testid="step3-back-to-step2"')
+    next_idx = body.find('data-testid="step3-proceed-to-step4"')
     assert back_idx > 0 and next_idx > 0, (back_idx, next_idx)
     assert back_idx < next_idx, (
-        "Step 3 complete card: back CTA must appear before proceed CTA "
-        "so the rendered layout puts Back on the left, Proceed on the "
-        "right."
+        "Footer Back must appear before Proceed in DOM order."
     )
-    print("OK  W3  Step 3 complete card: back-left, next-right")
+    print("OK  W3  Step 3 complete card has no duplicate Proceed CTA")
 
 
 def w4_step5_already_imported_back_left_next_right():
@@ -229,7 +239,7 @@ def w7_reconciliation_line_labels_are_plain_english():
 def main():
     w1_step5_success_flash_does_not_name_step6()
     w2_connect_qbo_flash_does_not_show_realm_id()
-    w3_step3_complete_card_back_left_next_right()
+    w3_step3_complete_card_has_no_duplicate_cta()
     w4_step5_already_imported_back_left_next_right()
     w5_step6_at_a_glance_hides_realm_id()
     w6_completed_migration_skips_optional_uploaded_reports()
