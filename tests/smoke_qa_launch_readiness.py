@@ -235,9 +235,37 @@ def t13_signup_post_signup_expectations():
     body = r.get_data(as_text=True)
     assert "signup-expectations" in body, \
         "signup should show what happens after signing up"
-    assert "guided workflow" in body or "no email verification" in body \
-        or "ready to send" in body
+    assert "guided workflow" in body or "no email verification" in body
     print("T13 OK: signup has post-signup expectations card")
+
+
+def t14_no_pay_when_ready_to_send_claim():
+    """Customers pay first (Stripe checkout), so no public page may imply
+    deferred payment with copy like 'you only pay when the migration is
+    ready to send'. Guards /pricing, /about, /signup, /pricing/quote-request.
+    """
+    c = appmod.app.test_client()
+    forbidden_phrases = (
+        "only pay once",
+        "only pay when",
+        "pay once when",
+        "pay when your migration is ready",
+        "pay when the migration is ready",
+    )
+    offenders = []
+    for path in ("/pricing", "/about", "/signup", "/pricing/quote-request"):
+        r = c.get(path)
+        if r.status_code != 200:
+            continue
+        body = r.get_data(as_text=True).lower()
+        for phrase in forbidden_phrases:
+            if phrase in body:
+                offenders.append((path, phrase))
+    assert not offenders, (
+        "Found deferred-payment copy on customer-facing page(s); customers "
+        f"pay first via Stripe checkout: {offenders}"
+    )
+    print("T14 OK: no public page implies deferred 'pay when ready to send' payment timing")
 
 
 if __name__ == "__main__":
@@ -255,6 +283,7 @@ if __name__ == "__main__":
         t11_onboarding_export_guide_and_iolta_faq()
         t12_workflow_stepper_reassurance()
         t13_signup_post_signup_expectations()
+        t14_no_pay_when_ready_to_send_claim()
         print("\nALL QA LAUNCH-READINESS SMOKE TESTS PASSED")
     finally:
         for path in (APP_DB, HIST_DB):
