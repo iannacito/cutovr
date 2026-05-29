@@ -5584,6 +5584,12 @@ def preview_import(job_id):
            details=(f"je={preview['journal_entry_count']} unmapped={preview['unmapped_account_count']}"
                     if preview else preview_error or "no preview"))
 
+    # Decide which blocker (if any) the user must resolve. The stepper
+    # CTA and the in-page primary action key off this so the user never
+    # sees a "Create missing QuickBooks accounts" button when the actual
+    # blocker is transaction-level (or vice versa).
+    review_blocker = _review_blocker_kind(preview, preview_error)
+
     return render_template(
         "preview-import.html",
         job=job,
@@ -5591,7 +5597,13 @@ def preview_import(job_id):
         preview=preview,
         preview_error=preview_error,
         qbo_real_import=QBO_REAL_IMPORT,
-        **_workflow_stepper_context(user["firm_id"]),
+        review_blocker=review_blocker,
+        **_workflow_stepper_context(
+            user["firm_id"],
+            force_current_stage=customer_workflow.STAGE_REVIEW,
+            review_blocker=review_blocker,
+            review_job_id=job["id"],
+        ),
     )
 
 
@@ -6419,6 +6431,57 @@ def _build_account_mapping_rows(
     return rows, summary
 
 
+def _count_remaining_unmatched(*, user, job, job_id, qbo_accounts_resp):
+    """Best-effort count of PCLaw accounts still unmatched after a save.
+
+    Used by the per-row "Add this account to QuickBooks" handler so the
+    success flash can show the user a concrete "X left to review" tally
+    — without it, an unchanged-looking count after a successful click
+    leaves the user wondering whether anything actually happened.
+
+    Returns the integer count, or None if we cannot recompute it for any
+    reason (best-effort; failures here must not block the redirect).
+    """
+    try:
+        qbo_conn = _get_qbo_connection(job_id)
+        if not qbo_conn:
+            return None
+        pclaw_accounts = _load_pclaw_accounts_for_mapping(job, job_id, user)
+        if not pclaw_accounts:
+            return None
+        qbo_accounts = (qbo_accounts_resp or {}).get(
+            "QueryResponse", {}
+        ).get("Account", [])
+        saved_mappings = db.list_account_mappings(
+            user["firm_id"], qbo_conn["realm_id"]
+        )
+        saved_by_key = {
+            (m["pclaw_account_number"], m["pclaw_account_name"]): m
+            for m in saved_mappings
+        }
+        _rows, summary = _build_account_mapping_rows(
+            pclaw_accounts=pclaw_accounts,
+            qbo_accounts=qbo_accounts,
+            saved_by_key=saved_by_key,
+            inferred_types={},
+            type_override_keys=set(),
+        )
+        return int(summary.get("unmatched", 0))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _remaining_unmatched_blurb(remaining):
+    """Plain-English suffix for the per-row add-account success flash."""
+    if remaining is None:
+        return ""
+    if remaining == 0:
+        return " 0 left to review — Step 3 is complete."
+    if remaining == 1:
+        return " 1 account still needs a quick look."
+    return f" {remaining} accounts still need a quick look."
+
+
 def _summarize_create_missing_offer(*, user, pclaw_accounts, summary, rows=None):
     """Return a small dict the template uses to render the create-missing
     banner CTA, or None when the offer is not available right now.
@@ -6789,9 +6852,14 @@ def account_mapping_add_account(job_id):
             )
         except Exception:  # noqa: BLE001
             pass
+        remaining = _count_remaining_unmatched(
+            user=user, job=job, job_id=job_id,
+            qbo_accounts_resp=qbo_accounts_resp,
+        )
+        remaining_msg = _remaining_unmatched_blurb(remaining)
         flash(
             f"“{pclaw_name or pclaw_number}” is already in "
-            "QuickBooks — we matched it for you.",
+            "QuickBooks — we matched it for you." + remaining_msg,
             "success",
         )
         return redirect(url_for("account_mapping", job_id=job_id))
@@ -6839,9 +6907,15 @@ def account_mapping_add_account(job_id):
             )
         except Exception:  # noqa: BLE001
             pass
+        remaining = _count_remaining_unmatched(
+            user=user, job=job, job_id=job_id,
+            qbo_accounts_resp=qbo_accounts_resp,
+        )
+        remaining_msg = _remaining_unmatched_blurb(remaining)
         flash(
             f"“{entry.account_name or entry.account_number}” "
-            "is already in QuickBooks — we matched it for you.",
+            "is already in QuickBooks — we matched it for you."
+            + remaining_msg,
             "success",
         )
         return redirect(url_for("account_mapping", job_id=job_id))
@@ -6897,9 +6971,15 @@ def account_mapping_add_account(job_id):
 
     if created:
         c = created[0]
+        remaining = _count_remaining_unmatched(
+            user=user, job=job, job_id=job_id,
+            qbo_accounts_resp=qbo_accounts_resp,
+        )
+        remaining_msg = _remaining_unmatched_blurb(remaining)
         flash(
-            f"Added “{c.get('qbo_account_name') or c.get('account_name')}” "
-            "to QuickBooks.",
+            f"Added 1 account (“"
+            f"{c.get('qbo_account_name') or c.get('account_name')}”) "
+            "to QuickBooks." + remaining_msg,
             "success",
         )
     elif failed:
@@ -7535,7 +7615,48 @@ def _inject_operator_flag():
     }
 
 
-def _workflow_stepper_context(firm_id, force_current_stage=None):
+def _review_blocker_kind(preview, preview_error):
+    """Classify the Step 4 review state into a single blocker kind.
+
+    Returns one of:
+      * ``"ready"``           — nothing to fix; the user can proceed to Step 5.
+      * ``"unmatched"``       — one or more PCLaw accounts have no QBO
+                                match. The next action is Match accounts.
+      * ``"blocked_txns"``    — at least one transaction would be
+                                rejected (unbalanced or single-sided).
+                                The next action is download validation
+                                report / upload corrected file.
+      * ``"preview_error"``   — the preview itself couldn't be built
+                                (missing source, QBO down, etc.).
+      * ``"unbalanced"``      — debits and credits don't balance overall
+                                but no per-txn blockers were detected.
+
+    The classification is used to pick the right Step-4 primary action
+    AND the stepper CTA. Without it, the stepper kept showing "Create
+    missing QuickBooks accounts" even when account matching was
+    complete and the only blocker was transaction-level.
+    """
+    if preview_error:
+        return "preview_error"
+    if not preview:
+        return "preview_error"
+    if preview.get("unmapped_account_count", 0) > 0:
+        return "unmatched"
+    if preview.get("blocked_transactions"):
+        return "blocked_txns"
+    if not preview.get("balanced", True):
+        return "unbalanced"
+    if preview.get("would_post"):
+        return "ready"
+    return "blocked_txns"
+
+
+def _workflow_stepper_context(
+    firm_id,
+    force_current_stage=None,
+    review_blocker=None,
+    review_job_id=None,
+):
     """Compute the 6-stage customer-facing workflow stepper for a firm.
 
     Returns a dict that callers spread into render_template() so the
@@ -7561,6 +7682,8 @@ def _workflow_stepper_context(firm_id, force_current_stage=None):
         match_blocked=match_blocked,
         match_blocked_job_id=blocked_job_id,
         force_current_stage=force_current_stage,
+        review_blocker=review_blocker,
+        review_job_id=review_job_id,
     )
     current = customer_workflow.current_stage(stages)
     return {
