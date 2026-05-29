@@ -31,10 +31,12 @@
     function setOpen(open) {
       if (open) {
         panel.hidden = false;
+        root.setAttribute("data-state", "open");
         toggle.setAttribute("aria-expanded", "true");
         try { input.focus(); } catch (_) { /* ignore focus errors */ }
       } else {
         panel.hidden = true;
+        root.setAttribute("data-state", "closed");
         toggle.setAttribute("aria-expanded", "false");
       }
     }
@@ -44,8 +46,21 @@
     });
 
     if (closeBtn) {
-      closeBtn.addEventListener("click", function () { setOpen(false); });
+      closeBtn.addEventListener("click", function () {
+        setOpen(false);
+        // Return focus to the launcher so the next Tab / Enter
+        // reopens reliably for keyboard users.
+        try { toggle.focus(); } catch (_) { /* ignore focus errors */ }
+      });
     }
+
+    // ESC minimizes when the panel is open.
+    document.addEventListener("keydown", function (event) {
+      if (event.key !== "Escape" && event.keyCode !== 27) return;
+      if (panel.hidden) return;
+      setOpen(false);
+      try { toggle.focus(); } catch (_) { /* ignore focus errors */ }
+    });
 
     function appendEntry(role, text) {
       var item = document.createElement("li");

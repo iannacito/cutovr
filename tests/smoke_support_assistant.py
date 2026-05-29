@@ -146,6 +146,48 @@ def t8_support_page_shows_inline_assistant_prompts():
     print("T8 OK: support page surfaces inline assistant prompts")
 
 
+def t9_widget_has_minimize_control():
+    """The widget must ship with an accessible minimize control and start
+    in the 'closed' state. JS toggles data-state between 'open' and
+    'closed' so CSS can hide the launcher pill while the panel is open
+    and keep the minimize control unambiguous."""
+    c = appmod.app.test_client()
+    body = c.get("/").get_data(as_text=True)
+    assert 'data-testid="support-assistant-close"' in body, \
+        "minimize/close button missing"
+    # Accessible name + visible label so lawyers (not accountants) can
+    # find it without hunting for a tiny X.
+    assert 'aria-label="Minimize support assistant"' in body, \
+        "minimize button should have a clear aria-label"
+    assert "Minimize" in body, "visible 'Minimize' label missing"
+    # Initial state is closed (panel hidden, launcher pill visible).
+    assert 'data-state="closed"' in body, \
+        "widget should start in the closed/minimized state"
+    # The minimize control is a real <button>, keyboard focusable.
+    assert 'class="support-assistant__close"' in body
+    print("T9 OK: widget renders an accessible Minimize control, starts closed")
+
+
+def t10_close_button_is_a_button_element():
+    """Regression guard: the minimize control must be a real <button>
+    (not a div/span) so it's keyboard focusable and announced as a
+    button by screen readers."""
+    c = appmod.app.test_client()
+    body = c.get("/").get_data(as_text=True)
+    # Look for `<button ... class="support-assistant__close"` — order of
+    # attributes can vary, so check both fragments are present in the
+    # same opening tag.
+    idx = body.find('class="support-assistant__close"')
+    assert idx != -1, "close button class missing"
+    # Walk back to the nearest '<' to confirm the tag is <button.
+    tag_start = body.rfind("<", 0, idx)
+    assert tag_start != -1
+    opening = body[tag_start : tag_start + 8]
+    assert opening.startswith("<button"), \
+        f"minimize control must be a <button> element, got: {opening!r}"
+    print("T10 OK: minimize control is a real <button>")
+
+
 if __name__ == "__main__":
     t1_widget_rendered_on_public_pages()
     t2_widget_has_suggested_topics()
@@ -155,4 +197,6 @@ if __name__ == "__main__":
     t6_assistant_does_not_promise_private_access()
     t7_assistant_endpoint_safe_with_empty_body()
     t8_support_page_shows_inline_assistant_prompts()
+    t9_widget_has_minimize_control()
+    t10_close_button_is_a_button_element()
     print("\nAll support assistant smoke tests OK.")
