@@ -32,7 +32,7 @@
 
   <h2>Working with us</h2>
   <p>
-    For pricing questions, see <a href="{{ url_for('pricing') }}">Pricing</a>. For a Complete-tier quote, use the <a href="{{ url_for('quote_request') }}">quote request form</a>. For everything else, email <a href="mailto:{{ support_email }}">{{ support_email }}</a>.
+    For pricing questions, see <a href="{{ url_for('pricing') }}">Pricing</a>. For a Complete-tier quote, use the <a href="{{ url_for('quote_request') }}">quote request form</a>. For everything else, {% if support_email_is_real %}email <a href="mailto:{{ support_email }}">{{ support_email }}</a>{% else %}use the <a href="{{ url_for('support') }}">Support page</a>{% endif %}.
   </p>
 </section>
 {% endblock %}

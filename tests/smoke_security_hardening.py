@@ -92,13 +92,14 @@ def main():
     # job_<timestamp>_<entropy>; we want both parts.
     assert job_id_1.startswith("job_"), job_id_1
     assert job_id_2.startswith("job_"), job_id_2
-    parts1 = job_id_1.split("_")
-    parts2 = job_id_2.split("_")
+    parts1 = job_id_1.split("_", 2)
+    parts2 = job_id_2.split("_", 2)
     assert len(parts1) >= 3, f"job_id missing entropy suffix: {job_id_1}"
     assert len(parts2) >= 3, f"job_id missing entropy suffix: {job_id_2}"
-    # Suffix must have >=16 chars of url-safe base64 (12 bytes -> 16 chars)
-    assert len(parts1[-1]) >= 16, parts1[-1]
-    assert len(parts2[-1]) >= 16, parts2[-1]
+    # Suffix must have >=16 chars of url-safe base64 (12 bytes -> 16 chars).
+    # Use split("_", 2) above because token_urlsafe(12) can itself contain "_".
+    assert len(parts1[2]) >= 16, parts1[2]
+    assert len(parts2[2]) >= 16, parts2[2]
     # The two jobs must differ even if uploaded inside the same second.
     assert job_id_1 != job_id_2, "job IDs must be unique"
     # Job is reachable via the new ID (round-trip): the detail page should

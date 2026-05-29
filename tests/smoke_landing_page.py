@@ -113,8 +113,8 @@ def t4_authenticated_user_redirected_to_dashboard():
         data={
             "firm_name": "Landing Smoke Firm",
             "email": "landing-smoke@example.com",
-            "password": "passw0rd!",
-            "confirm_password": "passw0rd!",
+            "password": "passw0rd!1234",
+            "confirm_password": "passw0rd!1234",
         },
     )
     r = c.get("/", follow_redirects=False)
