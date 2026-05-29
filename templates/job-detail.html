@@ -94,7 +94,7 @@
         <p class="eyebrow">{{ report_label or 'Transaction history' }} &middot; Job {{ job.id }}</p>
         <h1>{{ job.company }}</h1>
         <p class="meta-row" style="margin-top:var(--space-3);">
-          <span><strong>Status</strong> {{ job.status }}</span>
+          <span><strong>Status</strong> {{ job.status|customer_status }}</span>
           <span>
             {% if job.qbo_connected %}
               <span class="badge success">QuickBooks connected</span>

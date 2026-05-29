@@ -227,33 +227,172 @@
   </section>
   {% endif %}
 
+  {% if preview.beginning_balance_rows %}
+  <section class="card error-panel" data-testid="beginning-balance-card">
+    <p class="eyebrow" style="color:var(--error);">Beginning balances belong on Starting Balances</p>
+    <h2>{{ preview.beginning_balance_rows|length }} row{% if preview.beginning_balance_rows|length != 1 %}s{% endif %}
+      look like beginning balances.</h2>
+    <p class="muted" style="max-width:62ch;" data-testid="beginning-balance-summary">
+      These rows have no transaction date (or a "Balance Forward" /
+      "Beginning Balance" label). They are how PCLaw represents the
+      account's starting position. Sending them through the general
+      ledger would double-post your opening trial balance.
+    </p>
+    <p class="muted" style="max-width:62ch;">
+      <strong>What to do:</strong> remove these rows from the general-ledger
+      CSV, then upload your opening trial balance (the trial balance as
+      of the day before cutover) from Step&nbsp;2. The Starting Balances
+      flow seeds QuickBooks with those balances directly.
+    </p>
+    <div class="table-wrap" style="margin-top:var(--space-3);">
+      <table>
+        <thead>
+          <tr>
+            <th>Row #</th>
+            <th>Account</th>
+            <th>Debit</th>
+            <th>Credit</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in preview.beginning_balance_rows[:25] %}
+          <tr>
+            <td><code>{{ r.row_number }}</code></td>
+            <td>{{ r.account }}</td>
+            <td>{{ r.debit }}</td>
+            <td>{{ r.credit }}</td>
+          </tr>
+          {% endfor %}
+          {% if preview.beginning_balance_rows|length > 25 %}
+          <tr>
+            <td colspan="4" class="muted">
+              &hellip;and {{ preview.beginning_balance_rows|length - 25 }} more &mdash;
+              download the validation report for the full list.
+            </td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+    <div class="actions-row" style="margin-top:var(--space-3);">
+      <a class="btn btn-primary"
+         href="{{ url_for('dashboard') }}#intake"
+         data-testid="beginning-balance-open-starting">
+        Open Starting Balances
+      </a>
+      <a class="btn btn-link"
+         href="{{ url_for('validation_report_csv', job_id=job.id) }}">
+        Download validation report (CSV)
+      </a>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if preview.problem_rows %}
+  <section class="card error-panel" data-testid="problem-rows-card">
+    <p class="eyebrow" style="color:var(--error);">Some rows need a fix</p>
+    <h2>{{ preview.problem_rows|length }} row{% if preview.problem_rows|length != 1 %}s{% endif %}
+      in your CSV need attention.</h2>
+    <p class="muted" style="max-width:62ch;" data-testid="problem-rows-plain-summary">
+      The rows below either have a missing or unreadable date, are
+      missing an account, or have both a debit and a credit on the
+      same line. Fix them in the original CSV (in Excel or Google
+      Sheets), then upload the corrected file.
+    </p>
+    <div class="table-wrap" style="margin-top:var(--space-3);"
+         data-testid="problem-rows-table">
+      <table>
+        <thead>
+          <tr>
+            <th>Row #</th>
+            <th>Date</th>
+            <th>Account</th>
+            <th>Debit</th>
+            <th>Credit</th>
+            <th>What&rsquo;s wrong</th>
+            <th>How to fix</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in preview.problem_rows[:25] %}
+          <tr>
+            <td><code>{{ r.row_number }}</code></td>
+            <td>{{ r.raw_date or '(blank)' }}</td>
+            <td>{{ r.account }}</td>
+            <td>{{ r.debit }}</td>
+            <td>{{ r.credit }}</td>
+            <td>{{ r.reason }}</td>
+            <td class="muted">{{ r.plain_fix }}</td>
+          </tr>
+          {% endfor %}
+          {% if preview.problem_rows|length > 25 %}
+          <tr>
+            <td colspan="7" class="muted">
+              &hellip;and {{ preview.problem_rows|length - 25 }} more &mdash;
+              download the validation report for the full list.
+            </td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+    <div class="actions-row" data-testid="problem-rows-actions"
+         style="margin-top:var(--space-3);">
+      <a class="btn btn-primary"
+         href="{{ url_for('validation_report_csv', job_id=job.id) }}"
+         data-testid="problem-rows-download-cta">
+        Download validation report (CSV)
+      </a>
+      <a class="btn"
+         href="{{ url_for('dashboard') }}#intake"
+         data-testid="problem-rows-reupload-cta">
+        Upload corrected file
+      </a>
+    </div>
+  </section>
+  {% endif %}
+
   {% if preview.blocked_transactions %}
   <section class="card error-panel" data-testid="blocked-transactions-card">
-    <p class="eyebrow" style="color:var(--error);">Some rows need a fix first</p>
-    <h2>Some rows need to be fixed before QuickBooks will accept them.</h2>
+    <p class="eyebrow" style="color:var(--error);">Some transactions need a fix first</p>
+    <h2>{{ preview.blocked_transactions|length }} transaction{% if preview.blocked_transactions|length != 1 %}s{% endif %}
+      would be rejected by QuickBooks.</h2>
     <p class="muted" style="max-width:62ch;" data-testid="blocked-transactions-plain-summary">
-      We found <strong>{{ preview.blocked_transactions|length }}</strong>
-      transaction{% if preview.blocked_transactions|length != 1 %}s{% endif %}
-      that QuickBooks would reject as-is &mdash; usually because the
-      debits and credits don&rsquo;t match, or only one side of the entry
-      is on the row. To fix:
+      The transactions below need to be fixed before QuickBooks will accept them.
+      They either don&rsquo;t balance, or have only one side of the
+      entry filled in. Fix them in the CSV, then upload the corrected
+      file. <strong>About opening balances:</strong> beginning-balance
+      rows belong on the Starting Balances upload, not in the general
+      ledger.
     </p>
-    <ol class="muted" style="max-width:62ch;font-size:.95rem;">
-      <li>Download the validation report below.</li>
-      <li>Open it in Excel or Google Sheets and correct the listed rows
-        in your PCLaw CSV.</li>
-      <li>Upload the corrected file from
-        <a href="{{ url_for('dashboard') }}#intake">Step 2: Upload reports</a>
-        and come back here.</li>
-    </ol>
-    <p class="muted" style="font-size:.85rem;max-width:62ch;">
-      <strong>Heads up about opening balances:</strong> single-sided rows
-      (e.g.&nbsp;a beginning-balance line with only a debit or only a
-      credit) are listed here too. Opening balances belong on the
-      Starting Balances upload in Step&nbsp;2, not in the general-ledger
-      file &mdash; remove those rows from this CSV and they will post
-      from the opening trial balance instead.
-    </p>
+    <div class="table-wrap" style="margin-top:var(--space-3);">
+      <table>
+        <thead>
+          <tr>
+            <th>Transaction reference</th>
+            <th>Entries</th>
+            <th>What&rsquo;s wrong</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for b in preview.blocked_transactions[:25] %}
+          <tr>
+            <td><code>{{ b.transaction_id }}</code></td>
+            <td>{{ b.line_count }}</td>
+            <td>{{ b.reasons|join('; ') }}</td>
+          </tr>
+          {% endfor %}
+          {% if preview.blocked_transactions|length > 25 %}
+          <tr>
+            <td colspan="3" class="muted">
+              &hellip;and {{ preview.blocked_transactions|length - 25 }} more &mdash;
+              download the validation report for the full list.
+            </td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
     <div class="actions-row" data-testid="blocked-transactions-actions"
          style="margin-top:var(--space-3);">
       <a class="btn btn-primary"
@@ -267,24 +406,16 @@
         Upload corrected file
       </a>
     </div>
-
-    <details class="quiet" style="margin-top:var(--space-4);"
+    <details class="quiet" style="margin-top:var(--space-3);"
              data-testid="blocked-transactions-technical">
       <summary>Technical details (for support)</summary>
-      <div class="table-wrap" style="margin-top:var(--space-3);">
-        <table>
-          <thead><tr><th>Transaction reference</th><th>Entries</th><th>Reasons</th></tr></thead>
-          <tbody>
-            {% for b in preview.blocked_transactions %}
-            <tr>
-              <td><code>{{ b.transaction_id }}</code></td>
-              <td>{{ b.line_count }}</td>
-              <td>{{ b.reasons|join('; ') }}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
+      <p class="muted" style="max-width:62ch;font-size:.9rem;">
+        Each transaction reference above maps to a transaction_id in
+        the source CSV. Validation rejects a transaction when its
+        debit total does not equal its credit total, when only one
+        side of the entry is filled in, or when a row has both a
+        debit and a credit set.
+      </p>
     </details>
   </section>
   {% endif %}
@@ -356,11 +487,32 @@
             Match accounts &rarr;
           </a>
         </div>
-      {% elif review_blocker == 'blocked_txns' or review_blocker == 'unbalanced' %}
+      {% elif review_blocker == 'beginning_balance' %}
+        <h2>Move beginning-balance rows to Starting Balances.</h2>
+        <p class="muted" style="max-width:62ch;">
+          Some rows in your general ledger look like beginning balances
+          (no date, or labelled "Balance Forward"). Those belong on
+          your opening trial balance, not in the GL.
+        </p>
+        <div class="actions-row" style="margin-top:var(--space-3);">
+          <a class="btn btn-primary btn-lg"
+             href="{{ url_for('dashboard') }}#intake"
+             data-testid="step4-next-cta-opening">
+            Open Starting Balances &rarr;
+          </a>
+          <a class="btn btn-link"
+             href="{{ url_for('validation_report_csv', job_id=job.id) }}">
+            Download validation report (CSV)
+          </a>
+        </div>
+      {% elif review_blocker == 'row_quality' or review_blocker == 'blocked_txns' or review_blocker == 'unbalanced' %}
         <h2>Some rows in your CSV need to be fixed first.</h2>
         <p class="muted" style="max-width:62ch;">
           {% if review_blocker == 'unbalanced' %}
             Your debits and credits don&rsquo;t balance overall.
+          {% elif review_blocker == 'row_quality' %}
+            A few rows are missing a date, missing an account, or have
+            both a debit and a credit on the same line.
           {% else %}
             A few transactions are unbalanced or single-sided.
           {% endif %}

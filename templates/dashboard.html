@@ -227,7 +227,7 @@
             {% for job in current_jobs %}
             <tr>
               <td><a href="{{ url_for('job_detail', job_id=job.id) }}">{{ job.company }}</a></td>
-              <td><span class="badge {% if 'Imported' in (job.status or '') %}success{% elif 'failed' in (job.status or '')|lower or 'blocked' in (job.status or '')|lower %}error{% endif %}">{{ job.status }}</span></td>
+              <td><span class="badge {% if 'Imported' in (job.status or '') %}success{% elif 'failed' in (job.status or '')|lower or 'blocked' in (job.status or '')|lower %}error{% endif %}">{{ job.status|customer_status }}</span></td>
               <td><code>{{ job.source_file }}</code></td>
               <td>{{ job.created_at[:10] }}</td>
             </tr>
@@ -250,7 +250,7 @@
                 {% for job in archived_jobs %}
                 <tr>
                   <td><a href="{{ url_for('job_detail', job_id=job.id) }}">{{ job.company }}</a></td>
-                  <td><span class="badge {% if 'Imported' in (job.status or '') %}success{% elif 'failed' in (job.status or '')|lower or 'blocked' in (job.status or '')|lower %}error{% endif %}">{{ job.status }}</span></td>
+                  <td><span class="badge {% if 'Imported' in (job.status or '') %}success{% elif 'failed' in (job.status or '')|lower or 'blocked' in (job.status or '')|lower %}error{% endif %}">{{ job.status|customer_status }}</span></td>
                   <td><code>{{ job.source_file }}</code></td>
                   <td>{{ job.created_at[:10] }}</td>
                 </tr>

@@ -26,6 +26,7 @@ from io import StringIO
 from typing import Iterable, Optional
 
 from csv_safety import sanitize_csv_cell
+from gl_row_quality import classify_gl_rows, is_blank_row
 from pclaw_pipeline import (
     GL_REQUIRED_COLUMNS,
     build_account_mapping_from_names,
@@ -94,6 +95,11 @@ def build_dry_run_preview(
         for a in qbo_accounts_response.get("QueryResponse", {}).get("Account", [])
         if a.get("Id")
     }
+
+    # Drop truly blank rows before grouping. They contribute nothing and,
+    # left in place, get bucketed as their own zero-sum "transaction".
+    rows = [r for r in (rows or []) if not is_blank_row(r)]
+    quality = classify_gl_rows(rows)
 
     grouped = group_rows_by_transaction(rows) if rows else OrderedDict()
     unmapped_accounts = sorted(find_unmapped_accounts(rows, mapping, mapping_mode)) if rows else []
@@ -184,6 +190,8 @@ def build_dry_run_preview(
         "would_post": (
             unmapped_count == 0
             and not blocked_transactions
+            and not quality.problem_rows
+            and not quality.beginning_balance_rows
             and je_count > 0
             and debits == credits
         ),
@@ -191,6 +199,7 @@ def build_dry_run_preview(
         "journal_entry_count": je_count,
         "transaction_count_total": len(grouped),
         "line_count": len(rows or []),
+        "blank_rows_skipped": quality.blank_rows,
         "total_debits": _dollar(debits),
         "total_credits": _dollar(credits),
         "balanced": debits == credits and (debits + credits) > 0,
@@ -202,6 +211,9 @@ def build_dry_run_preview(
         "customers": sorted(customers_needed.values(), key=lambda x: x["name"].lower()),
         "vendors": sorted(vendors_needed.values(), key=lambda x: x["name"].lower()),
         "blocked_transactions": blocked_transactions,
+        "problem_rows": [r.to_dict() for r in quality.problem_rows],
+        "beginning_balance_rows": [r.to_dict() for r in quality.beginning_balance_rows],
+        "row_quality_counts": quality.counts_by_kind(),
         "sample_lines": sample_lines,
         "missing_required_columns": [
             c for c in GL_REQUIRED_COLUMNS
@@ -332,6 +344,93 @@ def render_validation_csv(job: dict, preflight: dict, preview: Optional[dict] = 
         write("--- Import status ---", "")
         write("Last import id", job.get("last_import_id"))
         write("Status", job.get("status"))
+
+    # Rows that need a fix in the customer's CSV. This is the single
+    # most-asked-for block — Cesar's QA on 2026-05-29 showed the report
+    # was reporting counts but never naming the specific rows the user
+    # had to edit. Each row carries its 1-based source line, a
+    # plain-English reason, and a concrete fix suggestion.
+    problem_rows = (preflight.get("problem_rows") or []) + (
+        preview.get("problem_rows") if preview else []
+    )
+    # Deduplicate by (row_number, kind) — the preflight and the preview
+    # can both surface the same row, e.g. a no-date row that is also
+    # single-sided. Keep the preflight entry first so source line numbers
+    # match the user's CSV.
+    seen_rows: set[tuple] = set()
+    deduped_problem_rows: list[dict] = []
+    for r in problem_rows:
+        key = (r.get("row_number"), r.get("kind"))
+        if key in seen_rows:
+            continue
+        seen_rows.add(key)
+        deduped_problem_rows.append(r)
+
+    if deduped_problem_rows:
+        writer.writerow([])
+        writer.writerow([
+            sanitize_csv_cell("--- Rows that need a fix ---"),
+            sanitize_csv_cell(""),
+        ])
+        writer.writerow([
+            sanitize_csv_cell("Row number (CSV)"),
+            sanitize_csv_cell("Transaction reference"),
+            sanitize_csv_cell("Date (raw)"),
+            sanitize_csv_cell("Account"),
+            sanitize_csv_cell("Debit"),
+            sanitize_csv_cell("Credit"),
+            sanitize_csv_cell("Issue"),
+            sanitize_csv_cell("Reason"),
+            sanitize_csv_cell("How to fix"),
+        ])
+        for r in deduped_problem_rows:
+            writer.writerow([
+                sanitize_csv_cell(r.get("row_number")),
+                sanitize_csv_cell(r.get("transaction_id") or ""),
+                sanitize_csv_cell(r.get("raw_date") or ""),
+                sanitize_csv_cell(r.get("account") or ""),
+                sanitize_csv_cell(r.get("debit") or ""),
+                sanitize_csv_cell(r.get("credit") or ""),
+                sanitize_csv_cell(r.get("kind") or ""),
+                sanitize_csv_cell(r.get("reason") or ""),
+                sanitize_csv_cell(r.get("plain_fix") or ""),
+            ])
+
+    # Beginning-balance rows broken out separately so the user knows
+    # to move them to the Starting Balances upload instead of trying
+    # to "fix" them in the general ledger.
+    bb_rows = (preflight.get("beginning_balance_rows") or []) + (
+        preview.get("beginning_balance_rows") if preview else []
+    )
+    seen_bb: set[tuple] = set()
+    deduped_bb_rows: list[dict] = []
+    for r in bb_rows:
+        key = (r.get("row_number"), r.get("account"))
+        if key in seen_bb:
+            continue
+        seen_bb.add(key)
+        deduped_bb_rows.append(r)
+    if deduped_bb_rows:
+        writer.writerow([])
+        writer.writerow([
+            sanitize_csv_cell("--- Beginning-balance rows (move to Starting Balances) ---"),
+            sanitize_csv_cell(""),
+        ])
+        writer.writerow([
+            sanitize_csv_cell("Row number (CSV)"),
+            sanitize_csv_cell("Account"),
+            sanitize_csv_cell("Debit"),
+            sanitize_csv_cell("Credit"),
+            sanitize_csv_cell("Why this is here"),
+        ])
+        for r in deduped_bb_rows:
+            writer.writerow([
+                sanitize_csv_cell(r.get("row_number")),
+                sanitize_csv_cell(r.get("account") or ""),
+                sanitize_csv_cell(r.get("debit") or ""),
+                sanitize_csv_cell(r.get("credit") or ""),
+                sanitize_csv_cell(r.get("reason") or ""),
+            ])
 
     # Per-account detail block (one row per unique account).
     if preview and preview.get("accounts"):
