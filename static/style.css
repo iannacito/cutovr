@@ -1556,6 +1556,11 @@ details.quiet > *:not(summary) { margin-top: var(--space-3); }
   box-shadow: 0 16px 36px rgba(0,0,0,.18);
   overflow: hidden;
 }
+/* Author rule above sets display:flex, which beats the UA stylesheet's
+   [hidden]{display:none}. Without this explicit override, clicking
+   Minimize toggled the hidden attribute and data-state but the panel
+   stayed visible — the bug PR #76 didn't catch. */
+.support-assistant__panel[hidden] { display: none; }
 .support-assistant__header {
   display: flex;
   align-items: center;

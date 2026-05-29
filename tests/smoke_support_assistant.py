@@ -188,6 +188,120 @@ def t10_close_button_is_a_button_element():
     print("T10 OK: minimize control is a real <button>")
 
 
+def t11_panel_hidden_attribute_actually_hides_panel():
+    """Real bug from production: PR #76 toggled `panel.hidden` and
+    `data-state`, but the panel's own CSS rule set `display: flex` —
+    which beats the UA stylesheet's `[hidden]{display:none}`. So
+    clicking Minimize updated attributes but the panel stayed visible
+    on screen. The user-facing symptom: "clicking minimize does
+    nothing."
+
+    Without an explicit author rule like
+    `.support-assistant__panel[hidden] { display: none; }`, the
+    `hidden` attribute is purely cosmetic on this element. This test
+    pins down that rule so it cannot regress."""
+    css_path = ROOT / "static" / "style.css"
+    css = css_path.read_text()
+    # The override must exist for ANY panel-class selector combined
+    # with [hidden]. We accept the canonical form below; if the
+    # selector is refactored, update this guard accordingly.
+    assert ".support-assistant__panel[hidden]" in css, (
+        "missing CSS override; clicking Minimize will set [hidden] but "
+        "the panel's display:flex rule will keep it visible. Add: "
+        ".support-assistant__panel[hidden] { display: none; }"
+    )
+    # And that rule must actually set display:none, not just exist.
+    idx = css.find(".support-assistant__panel[hidden]")
+    chunk = css[idx : idx + 200]
+    assert "display: none" in chunk or "display:none" in chunk, (
+        f"[hidden] override must set display:none — got: {chunk!r}"
+    )
+    print("T11 OK: CSS [hidden] override is present so Minimize actually hides")
+
+
+def t12_minimize_js_drives_visibility_via_hidden_attribute():
+    """The JS contract assumed by the CSS override above: setOpen(false)
+    must set `panel.hidden = true` (not just data-state). If a future
+    refactor switches to data-state-only, the CSS override would no
+    longer fire and the bug returns silently. Pin the contract."""
+    js_path = ROOT / "static" / "support-assistant.js"
+    js = js_path.read_text()
+    assert "panel.hidden = true" in js, (
+        "support-assistant.js must set panel.hidden=true when closing — "
+        "the CSS [hidden] override depends on this attribute"
+    )
+    assert "panel.hidden = false" in js, (
+        "support-assistant.js must set panel.hidden=false when opening"
+    )
+    # Close button click handler must call setOpen(false) or equivalent.
+    assert ".support-assistant__close" in js, \
+        "JS must locate the close button by class"
+    print("T12 OK: JS sets panel.hidden to drive the [hidden] CSS override")
+
+
+def t13_minimize_round_trip_via_jsdom_if_available():
+    """End-to-end functional check: parse the page HTML, inject the
+    real static CSS, run the real static JS, simulate the click on
+    Minimize, the click on the launcher, and an ESC press, and assert
+    the panel's computed display flips correctly on each step.
+
+    Caveat: jsdom's CSS engine honors [hidden]{display:none} more
+    aggressively than real Chromium/Firefox, so this test alone would
+    not catch the specific PR #76 regression where author CSS
+    `display: flex` beat the UA [hidden] rule. T11 (the rule-based
+    CSS guard) is the load-bearing check for that. T13 is the
+    structural functional check that the click + state + ESC wiring
+    all line up end-to-end.
+
+    Skips cleanly if Node + jsdom aren't available — the rule-based
+    guards above (T11, T12) still pin the failure mode."""
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        print("T13 SKIP: node not available; relying on T11/T12 rule guards")
+        return
+
+    runner = ROOT / "tests" / "jsdom_support_assistant.js"
+    if not runner.exists():
+        print(f"T13 SKIP: runner {runner} missing")
+        return
+
+    # Locate a jsdom install. We don't ship one — try a couple of
+    # common locations the dev/CI environment might have.
+    candidates = [
+        ROOT / "node_modules",
+        Path("/tmp/node_modules"),
+        Path.home() / "node_modules",
+    ]
+    jsdom_root = None
+    for c in candidates:
+        if (c / "jsdom").exists():
+            jsdom_root = c
+            break
+    if jsdom_root is None:
+        print("T13 SKIP: jsdom not installed (npm i jsdom in /tmp or repo root)")
+        return
+
+    env = os.environ.copy()
+    env["NODE_PATH"] = str(jsdom_root)
+    env["SUPPORT_ASSISTANT_REPO_ROOT"] = str(ROOT)
+    result = subprocess.run(
+        [node, str(runner)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        raise AssertionError(
+            "jsdom minimize round-trip failed:\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+    print("T13 OK: jsdom round-trip — Minimize hides panel, launcher reopens, ESC closes")
+
+
 if __name__ == "__main__":
     t1_widget_rendered_on_public_pages()
     t2_widget_has_suggested_topics()
@@ -199,4 +313,7 @@ if __name__ == "__main__":
     t8_support_page_shows_inline_assistant_prompts()
     t9_widget_has_minimize_control()
     t10_close_button_is_a_button_element()
+    t11_panel_hidden_attribute_actually_hides_panel()
+    t12_minimize_js_drives_visibility_via_hidden_attribute()
+    t13_minimize_round_trip_via_jsdom_if_available()
     print("\nAll support assistant smoke tests OK.")
