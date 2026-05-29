@@ -102,6 +102,7 @@
   <div id="support-assistant"
        class="support-assistant"
        data-testid="support-assistant"
+       data-state="closed"
        data-endpoint="{{ url_for('support_assistant_api') }}"
        data-csrf="{{ csrf_token() }}"
        data-support-email="{{ support_email }}">
@@ -109,7 +110,8 @@
             class="support-assistant__toggle"
             data-testid="support-assistant-toggle"
             aria-expanded="false"
-            aria-controls="support-assistant-panel">
+            aria-controls="support-assistant-panel"
+            aria-label="Open support assistant">
       <span aria-hidden="true">?</span>
       <span>Need help?</span>
     </button>
@@ -123,7 +125,11 @@
         <button type="button"
                 class="support-assistant__close"
                 data-testid="support-assistant-close"
-                aria-label="Close">&times;</button>
+                aria-label="Minimize support assistant"
+                title="Minimize">
+          <span aria-hidden="true">&minus;</span>
+          <span class="support-assistant__close-label">Minimize</span>
+        </button>
       </header>
       <div class="support-assistant__body" data-testid="support-assistant-body">
         <p class="support-assistant__intro">
