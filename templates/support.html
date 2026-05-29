@@ -32,7 +32,12 @@
 
   <section class="card" style="margin-top:var(--space-6);">
     <h2>Reporting an issue</h2>
+    {% if support_email_is_real %}
     <p>Email <a href="mailto:{{ support_email }}">{{ support_email }}</a>. Please include:</p>
+    {% else %}
+    <p>Send us a short note with the details below. We&rsquo;ll publish a monitored support address shortly.</p>
+    <p>Please include:</p>
+    {% endif %}
     <ul class="secure-list">
       <li>The migration name or reference shown at the top of the page.</li>
       <li>The exact action you took (button or page).</li>
@@ -45,12 +50,20 @@
 
   <section class="card" style="margin-top:var(--space-6);">
     <h2>Reporting a security issue</h2>
+    {% if security_email and 'your-domain.example' not in security_email %}
     <p>If you think you've found a security problem (login bypass, leaked data, etc.), please email <a href="mailto:{{ security_email }}">{{ security_email }}</a> instead of posting publicly. Include the same details as above plus a short reproduction. We will acknowledge within 2&nbsp;business days.</p>
+    {% else %}
+    <p>If you think you've found a security problem (login bypass, leaked data, etc.), please contact us privately rather than posting publicly. Include a short reproduction. We will acknowledge within 2&nbsp;business days.</p>
+    {% endif %}
   </section>
 
   <section class="card" style="margin-top:var(--space-6);">
     <h2>Status &amp; uptime</h2>
+    {% if support_email_is_real %}
     <p>If the application appears down, our hosting provider (Render) restarts it automatically. If problems persist for more than a few minutes, email <a href="mailto:{{ support_email }}">{{ support_email }}</a> and we'll investigate.</p>
+    {% else %}
+    <p>If the application appears down, our hosting provider (Render) restarts it automatically. If problems persist for more than a few minutes, let us know and we&rsquo;ll investigate.</p>
+    {% endif %}
   </section>
 
   <section class="card" style="margin-top:var(--space-6);">

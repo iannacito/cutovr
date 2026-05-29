@@ -105,7 +105,7 @@
        data-state="closed"
        data-endpoint="{{ url_for('support_assistant_api') }}"
        data-csrf="{{ csrf_token() }}"
-       data-support-email="{{ support_email }}">
+       data-support-email="{{ support_email if support_email_is_real else '' }}">
     <button type="button"
             class="support-assistant__toggle"
             data-testid="support-assistant-toggle"
@@ -135,8 +135,8 @@
         <p class="support-assistant__intro">
           A small built-in assistant for common questions. I can't see
           your QuickBooks or PCLaw data — for anything specific to your
-          account, email
-          <a href="mailto:{{ support_email }}">{{ support_email }}</a>.
+          account, {% if support_email_is_real %}email
+          <a href="mailto:{{ support_email }}">{{ support_email }}</a>{% else %}use the Support page from the top navigation{% endif %}.
         </p>
         <div class="support-assistant__topics" data-testid="support-assistant-topics">
           {% for topic in support_assistant_topics %}

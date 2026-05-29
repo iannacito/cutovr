@@ -164,11 +164,15 @@ def t1b_branding_defaults():
     appmod = _fresh_app()
     c = appmod.app.test_client()
     sup = c.get("/support").get_data(as_text=True)
-    assert "support@your-domain.example" in sup, "default SUPPORT_EMAIL should appear"
-    assert "security@your-domain.example" in sup, "default SECURITY_EMAIL should appear"
+    # Placeholder addresses must NEVER be rendered to customers — we
+    # suppress the mailto block when SUPPORT_EMAIL/SECURITY_EMAIL are
+    # still the deploy-default placeholders. Operators see the warning
+    # via /healthz/detailed instead (see t2_healthz_reports_placeholder).
+    assert "your-domain.example" not in sup, "placeholder must not leak into /support"
     base = c.get("/login").get_data(as_text=True)
+    assert "your-domain.example" not in base, "placeholder must not leak into footer/widget"
     assert "PC Law Migrate" in base, "default COMPANY_NAME should be PC Law Migrate"
-    print("T1b OK: default branding shows PC Law Migrate and placeholder support/security emails")
+    print("T1b OK: default branding suppresses placeholder support/security emails")
 
 
 def t2_healthz_reports_placeholder():

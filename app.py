@@ -1,4 +1,5 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, abort
+from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -633,6 +634,13 @@ def inject_user():
     firm = db.get_firm(user["firm_id"]) if user else None
     ctx = {"user": user, "firm": firm, "now_year": datetime.utcnow().year}
     ctx.update(branding.context())
+    # True when SUPPORT_EMAIL has been set to a real monitored address.
+    # Templates use this to suppress mailto: links pointing at the
+    # deploy-default placeholder so customers/beta testers never see
+    # "support@your-domain.example".
+    ctx["support_email_is_real"] = not branding.is_placeholder_email(
+        branding.SUPPORT_EMAIL
+    )
     # Templates use these to render a "Sandbox Testing Mode" banner near
     # any QuickBooks connect/import affordance, so beta testers don't try
     # to authorize a real QBO company against sandbox-only credentials.
@@ -5489,6 +5497,12 @@ def import_to_qbo(job_id):
     """
     try:
         return _import_to_qbo_impl(job_id)
+    except HTTPException:
+        # Auth / not-found responses (401/403/404) raised via abort() must
+        # propagate unchanged. Swallowing them here would convert a
+        # cross-firm 404 into a 200 recovery card, which both leaks job
+        # existence and is the wrong status for callers.
+        raise
     except Exception as e:  # noqa: BLE001 — last-resort net before 500
         _audit(
             "import_unhandled_error",

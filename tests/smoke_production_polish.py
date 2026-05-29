@@ -78,7 +78,7 @@ FAKE_ACCOUNTS = {
 }
 
 
-def _signup(c, firm, email, password="passw0rd!"):
+def _signup(c, firm, email, password="passw0rd!1234"):
     return c.post(
         "/signup",
         data={"firm_name": firm, "email": email,
@@ -208,7 +208,7 @@ def t6_account_mapping_resilience():
         # First click of "Match accounts" lands on the page.
         r = c.get(f"/jobs/{job_id}/account-mapping")
         assert r.status_code == 200
-        assert b"Account mapping" in r.data
+        assert b"Match accounts" in r.data or b"Match your PCLaw" in r.data
 
         # Save a real mapping (POST -> 302 -> GET).
         r = c.post(
@@ -241,7 +241,7 @@ def t6_account_mapping_resilience():
         # (this is the exact path the colleague reported).
         r = c.get(f"/jobs/{job_id}/account-mapping")
         assert r.status_code == 200
-        assert b"Account mapping" in r.data
+        assert b"Match accounts" in r.data or b"Match your PCLaw" in r.data
 
         # Stale form re-submit: empty mapping rows + a single garbage
         # entry with no pclaw identifiers. Should NOT 500; should NOT
@@ -275,7 +275,7 @@ def t6_account_mapping_resilience():
             assert r.status_code == 200, r.status_code
             assert b"original upload for this job is no longer available" not in r.data, \
                 r.data[:400]
-            assert b"Account mapping" in r.data or b"Match accounts" in r.data, \
+            assert b"Match accounts" in r.data or b"Match your PCLaw" in r.data or b"Match accounts" in r.data, \
                 r.data[:400]
         finally:
             backup.rename(enc_path)
@@ -300,7 +300,7 @@ def t6_account_mapping_resilience():
         # And finally, the audit log must contain the
         # account_mapping_saved row (success path) without leaking
         # secrets.
-        firm = appmod.db.authenticate("res@r.test", "passw0rd!")["firm_id"]
+        firm = appmod.db.authenticate("res@r.test", "passw0rd!1234")["firm_id"]
         actions = [a["action"] for a in appmod.db.recent_audit_for_firm(firm, 50)]
         assert "account_mapping_saved" in actions
         assert "account_mapping_missing_file" in actions
