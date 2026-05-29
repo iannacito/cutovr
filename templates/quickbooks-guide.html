@@ -1,6 +1,6 @@
 {% extends "_base.html" %}
 {% block title %}QuickBooks Online guide &mdash; {{ app_name }}{% endblock %}
-{% block meta_description %}A plain-English guide for lawyers new to QuickBooks Online: what PCLaw Migrate posts, what it does not touch, and where to look in QBO after the import.{% endblock %}
+{% block meta_description %}A plain-English guide for lawyers new to QuickBooks Online: what PCLaw Migrate posts, what it does not touch, and where to look in QuickBooks after the import.{% endblock %}
 {% block content %}
 <section class="page page--prose">
   <header class="hero">
@@ -17,12 +17,12 @@
   <section class="card" style="margin-top:var(--space-6);">
     <p class="eyebrow">In one paragraph</p>
     <p>
-      QuickBooks Online (QBO) is the cloud accounting system your firm is
+      QuickBooks Online is the cloud accounting system your firm is
       moving to. Think of it as the system of record for accounts,
       transactions, customers, vendors, and reports &mdash; the things
       PCLaw used to hold. PCLaw Migrate copies your historical accounting
-      data from PCLaw into QBO so your bookkeeper or accountant can carry
-      on from there. Nothing is posted to QBO without your explicit
+      data from PCLaw into QuickBooks so your bookkeeper or accountant can carry
+      on from there. Nothing is posted to QuickBooks without your explicit
       confirmation.
     </p>
   </section>
@@ -35,23 +35,23 @@
           <strong>Chart of accounts.</strong> Your PCLaw account list,
           shown with both account number and name. New accounts are only
           created when you type <code>CREATE ACCOUNTS</code>; accounts
-          that already exist in QBO are matched, not duplicated.
+          that already exist in QuickBooks are matched, not duplicated.
         </li>
         <li>
           <strong>Opening balances.</strong> When you run the trial
           balance step, we post a single balancing journal entry as of
-          the day before your cutover date so QBO starts where PCLaw
+          the day before your cutover date so QuickBooks starts where PCLaw
           ended.
         </li>
         <li>
           <strong>Transaction history (journal entries).</strong> Each
           PCLaw transaction posts as a QuickBooks <em>JournalEntry</em>.
-          Lines carry the account number plus name so the QBO ledger
+          Lines carry the account number plus name so the QuickBooks ledger
           stays readable.
         </li>
         <li>
           <strong>Customers and vendors.</strong> A/R lines need a
-          customer; A/P lines need a vendor. We create them in QBO if
+          customer; A/P lines need a vendor. We create them in QuickBooks if
           they don&rsquo;t exist yet, or reuse the matching record if
           they do.
         </li>
@@ -105,7 +105,7 @@
       <h3>Journal entries (your imported transactions)</h3>
       <p>
         Use the <strong>magnifying-glass search</strong> at the top of
-        QBO and type a transaction number, or open the
+        QuickBooks and type a transaction number, or open the
         <strong>Reports</strong> area and run <em>Journal</em> or
         <em>Transaction Detail by Account</em>. Each PCLaw transaction
         appears as a single JournalEntry with its original
@@ -143,22 +143,22 @@
     <div class="card">
       <ol class="secure-list">
         <li>
-          <strong>Open the Chart of accounts in QBO</strong> and confirm
+          <strong>Open the Chart of accounts in QuickBooks</strong> and confirm
           the new accounts look right (number, name, type). Compare
           against your PCLaw account list.
         </li>
         <li>
           <strong>Spot-check a handful of journal entries</strong>
           &mdash; pick a few transaction IDs from the import receipt and
-          search for them in QBO.
+          search for them in QuickBooks.
         </li>
         <li>
-          <strong>Compare balances.</strong> Run a Trial Balance in QBO
+          <strong>Compare balances.</strong> Run a Trial Balance in QuickBooks
           as of your cutover date and compare against the PCLaw closing
           TB you uploaded.
         </li>
         <li>
-          <strong>Invite your bookkeeper or accountant</strong> to QBO so
+          <strong>Invite your bookkeeper or accountant</strong> to QuickBooks so
           they can review and continue from there. Trust and bank-feed
           reconciliation are theirs to finish.
         </li>

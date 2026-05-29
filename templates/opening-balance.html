@@ -77,7 +77,7 @@
               <th>Account #</th>
               <th>Account name</th>
               <th>COA type</th>
-              <th>QBO type</th>
+              <th>QuickBooks type</th>
               <th>Status</th>
               <th>Reason</th>
             </tr>
@@ -175,8 +175,8 @@
         <tr>
           <th>Account #</th>
           <th>Account name</th>
-          <th>QBO account</th>
-          <th>QBO type</th>
+          <th>QuickBooks account</th>
+          <th>QuickBooks type</th>
           <th>Debit</th>
           <th>Credit</th>
           <th>Status</th>
@@ -196,7 +196,7 @@
             <td>
               {% if line.qbo_account_name %}
                 {% if line.qbo_acct_num %}<code>{{ line.qbo_acct_num }}</code> &middot; {% endif %}{{ line.qbo_account_name }}
-                <small class="muted">(QBO id #{{ line.qbo_account_id }})</small>
+                <small class="muted">(QuickBooks id #{{ line.qbo_account_id }})</small>
               {% else %}
                 <span class="badge error">unresolved</span>
               {% endif %}

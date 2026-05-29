@@ -474,7 +474,7 @@
         <summary>QuickBooks entry IDs ({{ job.qbo_results|length }})</summary>
         <div class="table-wrap" style="margin-top:var(--space-3);">
           <table>
-            <thead><tr><th>PCLaw transaction</th><th>QBO Id</th><th>DocNumber</th><th>Date</th></tr></thead>
+            <thead><tr><th>PCLaw transaction</th><th>QuickBooks Id</th><th>DocNumber</th><th>Date</th></tr></thead>
             <tbody>
               {% for r in job.qbo_results %}
                 <tr>
@@ -512,9 +512,9 @@
         {% if v.error %}<p class="flash error">{{ v.error }}</p>{% endif %}
         {% if v.qbo_je_count is defined %}
           <dl class="summary-grid">
-            <div><dt>QBO entries found</dt><dd>{{ v.qbo_je_count }} {% if v.je_count_match %}&check;{% else %}&ne;{% endif %}</dd></div>
-            <div><dt>QBO debits</dt><dd>${{ v.qbo_debit_total }} {% if v.debits_match %}&check;{% else %}&ne; ${{ v.source_debit_total }}{% endif %}</dd></div>
-            <div><dt>QBO credits</dt><dd>${{ v.qbo_credit_total }} {% if v.credits_match %}&check;{% else %}&ne; ${{ v.source_credit_total }}{% endif %}</dd></div>
+            <div><dt>QuickBooks entries found</dt><dd>{{ v.qbo_je_count }} {% if v.je_count_match %}&check;{% else %}&ne;{% endif %}</dd></div>
+            <div><dt>QuickBooks debits</dt><dd>${{ v.qbo_debit_total }} {% if v.debits_match %}&check;{% else %}&ne; ${{ v.source_debit_total }}{% endif %}</dd></div>
+            <div><dt>QuickBooks credits</dt><dd>${{ v.qbo_credit_total }} {% if v.credits_match %}&check;{% else %}&ne; ${{ v.source_credit_total }}{% endif %}</dd></div>
             <div><dt>Verified at</dt><dd>{{ v.verified_at[:10] }}</dd></div>
           </dl>
         {% endif %}

@@ -57,7 +57,7 @@
         {% if qbo_realm_id %}
           <small class="muted">&mdash; realm <code>{{ qbo_realm_id }}</code></small>
         {% endif %}
-        <small class="muted">&mdash; QBO environment <code>{{ qbo_environment }}</code></small>
+        <small class="muted">&mdash; QuickBooks environment <code>{{ qbo_environment }}</code></small>
       </p>
       <p class="muted" style="margin-top:var(--space-3);">
         Always demo against the same dedicated QuickBooks demo company.
@@ -84,7 +84,7 @@
       <p class="muted">
         Sample transaction CSVs you download below will embed this run id
         in transaction ids, memos, customer names, and vendor names so the
-        same demo can be re-run against the same QBO company without
+        same demo can be re-run against the same QuickBooks company without
         triggering duplicate-import blocks.
       </p>
     {% else %}
@@ -100,7 +100,7 @@
       <strong>What this does:</strong> archives all prior jobs for this firm in
       the app and mints a new demo run id. <strong>This does not delete
       anything from QuickBooks Online.</strong> Any data created by prior
-      demo runs will still be in the connected QBO company until you clean
+      demo runs will still be in the connected QuickBooks company until you clean
       it up there.
     </p>
   </article>
@@ -122,7 +122,7 @@
     <h2>Demo sample reports</h2>
     <p class="muted" style="margin-bottom:var(--space-4);">
       These files are generated on demand for the current demo run id.
-      Account numbers stay stable across runs (so the same QBO Chart of
+      Account numbers stay stable across runs (so the same QuickBooks Chart of
       Accounts is reused rather than duplicated), but transaction-level
       data carries the demo run id so duplicate-import protection still
       lets the import through.

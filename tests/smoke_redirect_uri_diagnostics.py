@@ -49,6 +49,9 @@ def _reset_app_env(env):
     return importlib.import_module("app")
 
 
+_HEALTHZ_TOKEN = "redirect-uri-diag-token"
+
+
 def _good_local_env():
     return {
         "APP_ENV": "local",
@@ -64,18 +67,30 @@ def _good_local_env():
         "SECURITY_EMAIL": "security@pclawmigrate.com",
         "PRIVACY_CONTACT_EMAIL": "privacy@pclawmigrate.com",
         "PUBLIC_APP_URL": "https://www.pclawmigrate.com",
+        # Token unlocks /healthz/detailed (operator-only diagnostic).
+        "HEALTHZ_TOKEN": _HEALTHZ_TOKEN,
     }
 
 
+def _detailed_url():
+    return f"/healthz/detailed?token={_HEALTHZ_TOKEN}"
+
+
 def t1_healthz_exposes_configured_redirect_uri():
+    # Detail diagnostic (operator-only) still exposes the redirect URI
+    # for the OAuth-mismatch self-diagnosis flow. Public /healthz must
+    # not — see smoke_health.py T1.
     appmod = _reset_app_env(_good_local_env())
     client = appmod.app.test_client()
-    r = client.get("/healthz")
+    r = client.get(_detailed_url())
     assert r.status_code == 200, r.status_code
     body = r.get_json()
     assert "configured_qbo_redirect_uri" in body, body
     assert body["configured_qbo_redirect_uri"] == "https://www.pclawmigrate.com/oauth/callback", body
-    # Sanity: actual secrets still must not leak
+    # Public probe must not leak the redirect URI.
+    pub = client.get("/healthz")
+    assert pub.get_json() == {"status": "ok"}, pub.get_data(as_text=True)
+    # Sanity: actual secrets still must not leak from either endpoint.
     raw = r.get_data(as_text=True)
     assert "test-secret-DO-NOT-LEAK" not in raw
     assert _GOOD_FERNET not in raw
@@ -85,7 +100,7 @@ def t1_healthz_exposes_configured_redirect_uri():
 def t2_healthz_readiness_block_has_new_keys():
     appmod = _reset_app_env(_good_local_env())
     client = appmod.app.test_client()
-    body = client.get("/healthz").get_json()
+    body = client.get(_detailed_url()).get_json()
     block = body["readiness"]
     assert "qbo_redirect_uri_path_ok" in block, block
     assert "qbo_redirect_uri_host_matches_public_url" in block, block
@@ -96,14 +111,14 @@ def t2_healthz_readiness_block_has_new_keys():
 
 def t3_unset_redirect_uri_falls_back_and_fails_required_checks():
     # When QBO_REDIRECT_URI is unset, app.py falls back to a localhost
-    # default — which the healthz layer surfaces (so the operator can see
-    # exactly what the OAuth handler is using), while the required checks
-    # correctly mark it as not production-ready.
+    # default — which the detailed healthz layer surfaces (so operators
+    # can see exactly what the OAuth handler is using), while the
+    # required checks correctly mark it as not production-ready.
     env = _good_local_env()
     env.pop("QBO_REDIRECT_URI", None)
     appmod = _reset_app_env(env)
     client = appmod.app.test_client()
-    body = client.get("/healthz").get_json()
+    body = client.get(_detailed_url()).get_json()
     configured = body["configured_qbo_redirect_uri"]
     # Either explicitly null (preferred) or the localhost fallback — both
     # convey the same message ("not configured for production"), so accept

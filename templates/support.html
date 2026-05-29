@@ -9,10 +9,10 @@
   <section class="card" style="margin-top:var(--space-6);">
     <h2>Quick answers</h2>
     <ul class="secure-list">
-      <li><strong>QuickBooks rejected the import.</strong> Open the job, scroll to <em>QuickBooks Online</em>, and click <em>Map accounts</em>. Make sure every PCLaw account is matched to a real QBO account, then click <em>Import</em> again.</li>
-      <li><strong>I imported into the wrong company.</strong> Open the job, scroll to <em>Reverse this import</em>, type <code>REVERSE</code>, and click the button. QuickBooks will get offsetting JournalEntry records (DocNumber starting <code>REV-</code>); the originals stay visible for audit.</li>
-      <li><strong>&ldquo;Duplicate import blocked.&rdquo;</strong> The same file (or the same <code>transaction_id</code>s) was already imported into this QuickBooks company. Either export a fresh ledger from PCLaw covering only the new period, or delete the prior import in QBO if you really want to re-post.</li>
-      <li><strong>Reversal entries don't say &ldquo;reversal&rdquo; in QBO.</strong> Reversals posted by {{ app_name }} have <code>DocNumber</code> starting with <code>REV-</code> and every line description prefixed <strong>REVERSAL</strong>. The QuickBooks Journal report shows them as separate entries alongside the originals; QuickBooks does not visually mark the originals as voided.</li>
+      <li><strong>QuickBooks rejected the import.</strong> Open your migration, go to <em>Match accounts</em>, and make sure every PCLaw account is matched to a QuickBooks account. Then try sending again.</li>
+      <li><strong>I imported into the wrong company.</strong> Open the migration, scroll to <em>Reverse this import</em>, type <code>REVERSE</code>, and click the button. QuickBooks will receive offsetting entries; the originals stay visible for audit.</li>
+      <li><strong>&ldquo;Duplicate import blocked.&rdquo;</strong> The same file was already sent to this QuickBooks company. Either export a fresh ledger from PCLaw covering only the new period, or remove the prior entries in QuickBooks before re-sending.</li>
+      <li><strong>Reversal entries don't say &ldquo;reversal&rdquo; in QuickBooks.</strong> Reversals posted by {{ app_name }} have a document number starting <code>REV-</code> and every line description prefixed <strong>REVERSAL</strong>. The QuickBooks Journal report shows them as separate entries alongside the originals; QuickBooks does not visually mark the originals as voided.</li>
     </ul>
   </section>
 
@@ -20,33 +20,34 @@
     <h2>Reporting an issue</h2>
     <p>Email <a href="mailto:{{ support_email }}">{{ support_email }}</a>. Please include:</p>
     <ul class="secure-list">
-      <li>The job ID (<code>job_YYYYMMDDHHMMSS</code>, visible at the top of the job page).</li>
-      <li>The exact action you took (button or URL).</li>
-      <li>The flash / error message text, verbatim.</li>
-      <li>The approximate time (UTC) you saw the issue.</li>
-      <li>Whether you were in <em>demo mode</em> or had <code>QBO_REAL_IMPORT</code> enabled.</li>
+      <li>The migration name or reference shown at the top of the page.</li>
+      <li>The exact action you took (button or page).</li>
+      <li>The error message text you saw, verbatim.</li>
+      <li>The approximate time you saw the issue.</li>
+      <li>Whether you were testing with sample data or running a real migration.</li>
     </ul>
-    <p class="note">Do not paste raw OAuth tokens, secret keys, or full PCLaw ledger content into a support email. The job ID is enough for us to look up the encrypted record on the server.</p>
+    <p class="note">Do not paste passwords, OAuth tokens, or full PCLaw ledger content into a support email. Your migration reference is enough for us to look it up.</p>
   </section>
 
   <section class="card" style="margin-top:var(--space-6);">
     <h2>Reporting a security issue</h2>
-    <p>If you think you've found a vulnerability (auth bypass, CSRF gap, leaked secret, IDOR, etc.), please email <a href="mailto:{{ security_email }}">{{ security_email }}</a> instead of opening a public issue. Include the same details as above plus a short reproduction. We will acknowledge within 2&nbsp;business days.</p>
+    <p>If you think you've found a security problem (login bypass, leaked data, etc.), please email <a href="mailto:{{ security_email }}">{{ security_email }}</a> instead of posting publicly. Include the same details as above plus a short reproduction. We will acknowledge within 2&nbsp;business days.</p>
   </section>
 
   <section class="card" style="margin-top:var(--space-6);">
     <h2>Status &amp; uptime</h2>
-    <p>The application exposes a <code>/healthz</code> probe used by hosting (Render). It returns presence (not values) of the critical configuration so you can confirm a deploy is healthy without leaking secrets.</p>
+    <p>If the application appears down, our hosting provider (Render) restarts it automatically. If problems persist for more than a few minutes, email <a href="mailto:{{ support_email }}">{{ support_email }}</a> and we'll investigate.</p>
   </section>
 
   <section class="card" style="margin-top:var(--space-6);">
     <h2>Disconnecting QuickBooks</h2>
     <p>
-      Open <a href="{{ url_for('public_disconnect') }}">/disconnect</a> for the
-      official disconnect page. From there a logged-in firm admin can revoke
-      tokens at Intuit and remove the encrypted token rows from this app.
-      You can also reach the same page from QuickBooks Online &rarr;
-      <em>Apps</em> &rarr; <em>Connected apps</em> &rarr; <em>Disconnect</em>.
+      To disconnect QuickBooks from {{ app_name }}, open the
+      <a href="{{ url_for('public_disconnect') }}">Disconnect QuickBooks page</a>.
+      From there a logged-in firm admin can revoke access and remove the
+      stored connection. You can also reach the same page from
+      QuickBooks Online &rarr; <em>Apps</em> &rarr; <em>Connected apps</em>
+      &rarr; <em>Disconnect</em>.
     </p>
   </section>
 </section>

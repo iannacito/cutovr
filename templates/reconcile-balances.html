@@ -42,7 +42,8 @@
     {% endif %}
 
     <section class="card" style="padding:var(--space-6);margin-bottom:var(--space-6);">
-      <p class="eyebrow">At a glance</p>
+      <p class="eyebrow">Your migration summary</p>
+      <h2 style="margin-top:0;">What was sent to QuickBooks</h2>
       <dl class="summary-grid" data-testid="step6-at-a-glance">
         <div><dt>Firm</dt><dd>{{ summary.firm_name }}</dd></div>
         <div><dt>Switchover date</dt>
@@ -59,15 +60,20 @@
           <dd>{{ summary.transactions_imported }}</dd></div>
       </dl>
       {% if summary.qbo_realm_id or summary.journal_entries_count %}
-        <details class="quiet" style="margin-top:var(--space-4);">
+        <details class="quiet" data-testid="step6-technical-details"
+                 style="margin-top:var(--space-4);">
           <summary>Technical details (for support)</summary>
+          <p class="muted" style="margin-top:var(--space-2);">
+            You don&rsquo;t need these to use QuickBooks. Share them with us if
+            you ever email support about this migration.
+          </p>
           <dl class="summary-grid" style="margin-top:var(--space-3);">
             {% if summary.journal_entries_count %}
-              <div><dt>Journal entries posted</dt>
+              <div><dt>QuickBooks entries created</dt>
                 <dd>{{ summary.journal_entries_count }}</dd></div>
             {% endif %}
             {% if summary.qbo_realm_id %}
-              <div><dt>QuickBooks realm ID</dt>
+              <div><dt>QuickBooks company ID</dt>
                 <dd><code>{{ summary.qbo_realm_id }}</code></dd></div>
             {% endif %}
           </dl>
@@ -142,11 +148,12 @@
 
     <section class="card" data-testid="step6-final-report"
              style="padding:var(--space-6);margin-bottom:var(--space-6);">
-      <p class="eyebrow">Optional &middot; Email a copy</p>
-      <h2 style="margin-top:0;">Email yourself the final report</h2>
+      <p class="eyebrow">Download your summary</p>
+      <h2 style="margin-top:0;">Email yourself a copy</h2>
       <p style="max-width:64ch;">
-        A plain recap of what was uploaded, what posted to QuickBooks,
-        and the balance check.
+        A plain recap of what was uploaded, what was sent to QuickBooks,
+        and the balance check &mdash; for your records or to share with
+        your bookkeeper.
       </p>
 
       <form action="{{ url_for('reconcile_balances_send_report') }}"

@@ -5,7 +5,7 @@
   <div class="hero">
     <p class="eyebrow">{{ firm.name }} &middot; Operator view</p>
     <h1>Go-live <em>readiness</em>.</h1>
-    <p>Checks that this deploy is configured for real customer use. Same data as <code>/healthz</code> with remediation hints. Secret <em>values</em> are never shown &mdash; only whether each one is set.</p>
+    <p>Checks that this deploy is configured for real customer use, with remediation hints. Secret <em>values</em> are never shown &mdash; only whether each one is set.</p>
   </div>
 
   {% if overall_ready %}
@@ -36,7 +36,12 @@
     {% else %}
       <p style="margin:0;">QuickBooks callback URL configured: <span class="badge error">not set</span></p>
     {% endif %}
-    <p class="muted" style="margin-top:var(--space-3);">This must exactly match the redirect URI in Intuit Developer (your app &rarr; Keys &amp; OAuth &rarr; Redirect URIs). If they differ &mdash; even a trailing slash &mdash; OAuth will fail with &ldquo;The redirect_uri query parameter value is invalid.&rdquo;</p>
+    <p style="margin:var(--space-3) 0 0;">
+      QuickBooks environment:
+      <code>{{ configured_qbo_environment or 'unknown' }}</code>
+      <span class="muted">&middot; real-import flag: <code>{{ configured_qbo_real_import }}</code></span>
+    </p>
+    <p class="muted" style="margin-top:var(--space-3);">The callback URL must exactly match the redirect URI in Intuit Developer (your app &rarr; Keys &amp; OAuth &rarr; Redirect URIs). If they differ &mdash; even a trailing slash &mdash; OAuth will fail with &ldquo;The redirect_uri query parameter value is invalid.&rdquo; Use this panel as your manual production smoke test: confirm the environment is <code>production</code> and the callback URL matches before authorising your first live company.</p>
   </section>
 
   <section class="card" style="margin-top:var(--space-6);">

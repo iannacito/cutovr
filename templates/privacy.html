@@ -4,7 +4,7 @@
 <section class="page page--prose">
   <p class="eyebrow">Legal</p>
   <h1 class="display">Privacy <em>Policy</em></h1>
-  <p class="muted">Last updated: {{ now_year }}-01-01. This is a starter policy intended for review by the operating firm's counsel before public launch.</p>
+  <p class="muted">Last updated: {{ now_year }}-01-01. If you have questions about this policy, please contact <a href="{{ url_for('support') }}">support</a>.</p>
 
   <h2>What this product is</h2>
   <p>{{ app_name }} (the &ldquo;Service&rdquo;) is a workflow tool that helps law-firm operators move a PCLaw general ledger into QuickBooks Online. The Service accepts an exported PCLaw CSV file, encrypts it on receipt, parses it into journal entries, and posts those entries to the firm's connected QuickBooks Online company via Intuit's official OAuth&nbsp;2.0 API.</p>

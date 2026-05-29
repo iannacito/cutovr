@@ -22,7 +22,7 @@
     <p class="eyebrow">Summary</p>
     <dl class="summary-grid">
       <div><dt>Accounts in your file</dt><dd>{{ preview.coa_row_count }}</dd></div>
-      <div><dt>QBO accounts queried</dt><dd>{{ preview.qbo_account_count }}</dd></div>
+      <div><dt>QuickBooks accounts queried</dt><dd>{{ preview.qbo_account_count }}</dd></div>
       <div>
         <dt>Matched</dt>
         <dd><span class="badge success">{{ preview.matched_count }}</span></dd>
@@ -49,7 +49,7 @@
       </div>
     </dl>
     <p class="note" style="margin-top:var(--space-4);">
-      <strong>No QBO writes are performed from this page.</strong> The
+      <strong>No QuickBooks writes are performed from this page.</strong> The
       counts above come from a read-only QuickBooks query. Use the button
       below to move on to the typed-confirmation page where you can apply
       the &ldquo;would be created&rdquo; rows to QuickBooks.
@@ -84,9 +84,9 @@
           <tr>
             <th>PCLaw #</th>
             <th>PCLaw name</th>
-            <th>QBO id</th>
-            <th>QBO name</th>
-            <th>QBO type</th>
+            <th>QuickBooks id</th>
+            <th>QuickBooks name</th>
+            <th>QuickBooks type</th>
             <th>Match</th>
           </tr>
         </thead>
@@ -201,14 +201,14 @@
     <p class="eyebrow" style="color:var(--error);">Soft conflicts</p>
     <h2>{{ preview.conflict_count }} accounts with mismatched numbers</h2>
     <p>
-      These accounts match QBO on name but the PCLaw account number does
-      not match the QBO AcctNum. Verify which number is correct before
+      These accounts match QuickBooks on name but the PCLaw account number does
+      not match the QuickBooks AcctNum. Verify which number is correct before
       relying on number-based mappings elsewhere in the migration.
     </p>
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>PCLaw #</th><th>PCLaw name</th><th>QBO #</th><th>QBO name</th><th>Issue</th></tr>
+          <tr><th>PCLaw #</th><th>PCLaw name</th><th>QuickBooks #</th><th>QuickBooks name</th><th>Issue</th></tr>
         </thead>
         <tbody>
         {% for a in preview.conflicts %}
