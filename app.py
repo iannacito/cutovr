@@ -1710,7 +1710,7 @@ def import_job_entry():
     if not _get_qbo_connection(primary["id"]):
         flash(
             "Connect QuickBooks first — Step 5 sends the prepared "
-            "entries from PCLaw Migrate to QuickBooks, so we need a "
+            "entries from PC Law Migrate to QuickBooks, so we need a "
             "connected QuickBooks Online company before we can post.",
             "info",
         )
@@ -1811,7 +1811,7 @@ def send_to_qbo_entry():
     if not qbo_conn:
         flash(
             "Connect QuickBooks first — Step 5 sends the prepared "
-            "entries from PCLaw Migrate to QuickBooks, so we need a "
+            "entries from PC Law Migrate to QuickBooks, so we need a "
             "connected QuickBooks Online company before we can post.",
             "info",
         )
