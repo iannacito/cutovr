@@ -26,6 +26,7 @@ from io import StringIO
 from typing import Iterable, Optional
 
 from csv_safety import sanitize_csv_cell
+from gl_grouping import plan_posting_groups
 from gl_row_quality import classify_gl_rows, is_blank_row
 from pclaw_pipeline import (
     GL_REQUIRED_COLUMNS,
@@ -112,16 +113,33 @@ def build_dry_run_preview(
     blocked_transactions: list[dict] = []
     sample_lines: list[dict] = []
 
+    # Plan how this file would post. ``rescued_transaction_ids`` are the
+    # PCLaw references whose individual rows don't balance but whose
+    # source-journal-grouped totals do (Cesar's GB payroll batch is the
+    # canonical example). Those are safe to post as one merged JE per
+    # group, so we surface them as a grouped batch instead of blocking
+    # them individually.
+    posting_plan = plan_posting_groups(grouped) if grouped else {
+        "balanced_transactions": OrderedDict(),
+        "merged_groups": [],
+        "still_blocked": [],
+        "cross_token_offsets": [],
+        "would_post_via_grouping": False,
+        "rescued_transaction_ids": [],
+    }
+    rescued_set = set(posting_plan.get("rescued_transaction_ids") or [])
+
     for txn_id, txn_rows in grouped.items():
         txn_debits = sum(money(r["debit"]) for r in txn_rows)
         txn_credits = sum(money(r["credit"]) for r in txn_rows)
         blockers: list[str] = []
-        if txn_debits != txn_credits:
-            blockers.append(
-                f"unbalanced (debits={_dollar(txn_debits)}, credits={_dollar(txn_credits)})"
-            )
-        if len([r for r in txn_rows if money(r["debit"]) or money(r["credit"])]) < 2:
-            blockers.append("fewer than 2 posting lines")
+        if txn_id not in rescued_set:
+            if txn_debits != txn_credits:
+                blockers.append(
+                    f"unbalanced (debits={_dollar(txn_debits)}, credits={_dollar(txn_credits)})"
+                )
+            if len([r for r in txn_rows if money(r["debit"]) or money(r["credit"])]) < 2:
+                blockers.append("fewer than 2 posting lines")
 
         for r in txn_rows:
             debit = money(r["debit"])
@@ -183,7 +201,24 @@ def build_dry_run_preview(
     mapped_count = sum(1 for v in unique_accounts.values() if v["mapped"])
     unmapped_count = sum(1 for v in unique_accounts.values() if not v["mapped"])
 
-    je_count = len(grouped) - len(blocked_transactions)
+    merged_groups_public = [
+        {
+            "group_id": g["group_id"],
+            "token": g["token"],
+            "transaction_ids": list(g["transaction_ids"]),
+            "line_count": len(g["rows"]),
+            "debits": g["debits"],
+            "credits": g["credits"],
+        }
+        for g in (posting_plan.get("merged_groups") or [])
+    ]
+
+    # Journal entries we'll create: one per balanced txn that wasn't
+    # rescued, plus one per merged source-journal group.
+    je_count = (
+        len(grouped) - len(blocked_transactions) - len(rescued_set)
+        + len(merged_groups_public)
+    )
     je_count = max(je_count, 0)
 
     return {
@@ -211,6 +246,10 @@ def build_dry_run_preview(
         "customers": sorted(customers_needed.values(), key=lambda x: x["name"].lower()),
         "vendors": sorted(vendors_needed.values(), key=lambda x: x["name"].lower()),
         "blocked_transactions": blocked_transactions,
+        "merged_groups": merged_groups_public,
+        "cross_token_offsets": posting_plan.get("cross_token_offsets") or [],
+        "rescued_transaction_ids": sorted(rescued_set),
+        "would_post_via_grouping": bool(merged_groups_public),
         "problem_rows": [r.to_dict() for r in quality.problem_rows],
         "beginning_balance_rows": [r.to_dict() for r in quality.beginning_balance_rows],
         "row_quality_counts": quality.counts_by_kind(),
@@ -328,6 +367,24 @@ def render_validation_csv(job: dict, preflight: dict, preview: Optional[dict] = 
         write("Customers needed", len(preview.get("customers") or []))
         write("Vendors needed", len(preview.get("vendors") or []))
         write("Would post", "Yes" if preview.get("would_post") else "No")
+
+        merged_groups = preview.get("merged_groups") or []
+        if merged_groups:
+            write("--- Grouped batches (related PCLaw rows that balance together) ---", "")
+            for g in merged_groups:
+                write(
+                    f"Group {g.get('token')} ({', '.join(g.get('transaction_ids') or [])})",
+                    f"{g.get('line_count')} lines; debits {g.get('debits')}; credits {g.get('credits')}",
+                )
+
+        offsets = preview.get("cross_token_offsets") or []
+        if offsets:
+            write("--- Source-journal offsets (file totals still balance) ---", "")
+            for off in offsets:
+                write(
+                    f"{off.get('left_token')} <-> {off.get('right_token')}",
+                    f"offset {off.get('amount')}",
+                )
 
     if job.get("last_validation_error"):
         ve = job["last_validation_error"]

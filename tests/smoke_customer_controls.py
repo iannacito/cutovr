@@ -418,12 +418,38 @@ def t7_firm_imports_view_is_scoped():
             p.stop()
 
 
+def t4b_purge_succeeds_when_encrypted_file_is_none():
+    """Regression: Cesar QA 2026-05-29 — delete failed with TypeError
+    when ``job["encrypted_file"]`` was present but None (e.g. for jobs
+    where the upload artifact had been cleared by a prior workflow
+    reset). Confirm the delete now succeeds and removes the job.
+    """
+    appmod = _fresh_app()
+    c, job_id = _do_signed_in_import(appmod, "t4b_none_file")
+    # Simulate the state Cesar hit: key present, value None.
+    appmod.jobs[job_id]["encrypted_file"] = None
+    appmod.jobs[job_id]["encrypted_output"] = None
+
+    r = c.post(f"/jobs/{job_id}/delete",
+               data={"confirm_delete": "DELETE"},
+               follow_redirects=True)
+    body = r.get_data(as_text=True)
+    assert "Deletion error" not in body, body[:400]
+    assert "unsupported operand" not in body, body[:400]
+    assert "PosixPath" not in body, body[:400]
+    assert "Local job data deleted" in body, body[:400]
+    assert appmod.jobs.get(job_id) is None, "job dict entry must be cleared"
+    assert appmod.db.get_job(job_id) is None, "DB row must be cleared"
+    print("T4b OK: purge succeeds when encrypted_file is None (regression)")
+
+
 if __name__ == "__main__":
     t1_branding_overrides_render()
     t1b_branding_defaults()
     t2_healthz_reports_placeholder()
     t3_qbo_error_parser_unit()
     t4_purge_preserves_history()
+    t4b_purge_succeeds_when_encrypted_file_is_none()
     t5_purge_ui_copy_explains_difference()
     t6_import_error_display()
     t7_firm_imports_view_is_scoped()

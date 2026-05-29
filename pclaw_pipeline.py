@@ -232,10 +232,36 @@ def build_journal_entry_payload(
     }
 
 
-def build_journal_entries_from_gl(rows, account_mapping, mapping_mode="number", account_type_index=None):
+def plan_balanced_payloads(rows, account_mapping, mapping_mode="number", account_type_index=None):
+    """Return ``(payloads, posted_ids)`` honouring source-journal grouping.
+
+    See :mod:`gl_grouping` for the safety policy. When individual PCLaw
+    references don't balance but a set of them sharing the same
+    source-journal token (GB, GL, GJ, CER, …) does, the unbalanced
+    references are merged into a single JE labelled ``GROUP-<token>``.
+    Balanced individual references are still posted as their own JE so
+    the firm can trace each PCLaw reference back to one QBO entry.
+    """
+    from gl_grouping import plan_posting_groups  # local import to avoid cycle
+
     grouped = group_rows_by_transaction(rows)
+    plan = plan_posting_groups(grouped)
+
+    if plan["still_blocked"]:
+        # Last-line safety net: the validator should have refused to
+        # let the user click Send to QuickBooks with anything in this
+        # bucket. Re-checking here means we never accidentally post an
+        # unbalanced batch even if the validation gate is bypassed.
+        first = plan["still_blocked"][0]
+        reasons = "; ".join(first.get("reasons") or ["unbalanced"])
+        raise ValueError(
+            f"Transaction {first['transaction_id']} cannot be posted: {reasons}. "
+            "Fix the CSV (or share a source-journal memo across the related rows) and retry."
+        )
+
     payloads = []
-    for transaction_id, transaction_rows in grouped.items():
+    posted_ids = []
+    for transaction_id, transaction_rows in plan["balanced_transactions"].items():
         payloads.append(
             build_journal_entry_payload(
                 transaction_id=transaction_id,
@@ -245,6 +271,35 @@ def build_journal_entries_from_gl(rows, account_mapping, mapping_mode="number", 
                 account_type_index=account_type_index,
             )
         )
+        posted_ids.append(transaction_id)
+    for group in plan["merged_groups"]:
+        payloads.append(
+            build_journal_entry_payload(
+                transaction_id=group["group_id"],
+                rows=group["rows"],
+                account_mapping=account_mapping,
+                mapping_mode=mapping_mode,
+                account_type_index=account_type_index,
+            )
+        )
+        posted_ids.append(group["group_id"])
+
+    return payloads, posted_ids
+
+
+def build_journal_entries_from_gl(rows, account_mapping, mapping_mode="number", account_type_index=None):
+    """List-of-payloads view of :func:`plan_balanced_payloads`.
+
+    Kept for backwards compatibility with callers that just want the
+    payload list. New callers should prefer ``plan_balanced_payloads``
+    so they can match the QBO response back to PCLaw / GROUP ids.
+    """
+    payloads, _ = plan_balanced_payloads(
+        rows,
+        account_mapping,
+        mapping_mode=mapping_mode,
+        account_type_index=account_type_index,
+    )
     return payloads
 
 
