@@ -1479,7 +1479,11 @@ def cutover_setup():
             accounting_basis=(existing or {}).get("accounting_basis"),
             clio_involved=bool((existing or {}).get("clio_involved")),
         ),
-        **_workflow_stepper_context(firm_id),
+        # Pin the stepper to Step 1 so revisiting /cutover after the
+        # firm has already saved its setup doesn't render a stale
+        # "Back to Step 1: Setup" CTA that points right back at this
+        # same page.
+        **_workflow_stepper_context(firm_id, force_current_stage=customer_workflow.STAGE_SETUP),
     )
 
 
@@ -7531,7 +7535,7 @@ def _inject_operator_flag():
     }
 
 
-def _workflow_stepper_context(firm_id):
+def _workflow_stepper_context(firm_id, force_current_stage=None):
     """Compute the 6-stage customer-facing workflow stepper for a firm.
 
     Returns a dict that callers spread into render_template() so the
@@ -7540,6 +7544,10 @@ def _workflow_stepper_context(firm_id):
     checklist computation on the handful of pages that actually render
     the stepper (dashboard, migration checklist, cutover setup, job
     detail) — not on auth / static pages.
+
+    ``force_current_stage`` lets a per-step page (e.g. /cutover for
+    Step 1) anchor the stepper to its own stage so the back/next CTAs
+    can never point at the page the user is currently on.
     """
     _cutover, items, _next = _build_firm_checklist(firm_id)
     firm_jobs = demo_mode.filter_active_jobs(
@@ -7552,6 +7560,7 @@ def _workflow_stepper_context(firm_id):
         has_jobs=bool(firm_jobs),
         match_blocked=match_blocked,
         match_blocked_job_id=blocked_job_id,
+        force_current_stage=force_current_stage,
     )
     current = customer_workflow.current_stage(stages)
     return {
