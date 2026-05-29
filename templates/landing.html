@@ -17,9 +17,14 @@
     <p class="landing-hero__value">
       Less manual work. Fewer spreadsheets. A faster path to QuickBooks.
     </p>
+    <p class="landing-hero__price-anchor"
+       data-testid="landing-price-anchor"
+       style="font-size:1rem;font-weight:600;margin-top:var(--space-3);">
+      From $799 &mdash; no subscription.
+    </p>
     <p class="landing-hero__qualifier muted"
        data-testid="landing-hour-qualifier"
-       style="font-size:.85rem;margin-top:var(--space-3);max-width:60ch;">
+       style="font-size:.85rem;margin-top:var(--space-2);max-width:60ch;">
       For supported PCLaw CSV exports; timing depends on file size and
       how much history you bring over.
     </p>
@@ -155,17 +160,19 @@
     <h2 class="h-serif landing-section__title">A faster, simpler path off PCLaw.</h2>
     <p class="muted landing-section__lede">
       A traditional consultant-led migration takes weeks and costs
-      thousands. {{ app_name }} is built so a firm administrator can do
-      this in an afternoon &mdash; with the controls and reversibility
-      a finance-grade tool should have.
+      thousands &mdash; {{ app_name }} is built to do it for a fraction of the cost,
+      and is designed so a firm administrator can finish in an afternoon
+      with the controls and reversibility a finance-grade tool should have.
     </p>
 
-    <div class="landing-compare">
+    <div class="landing-compare" data-testid="landing-consultant-compare">
       <article class="landing-compare__col landing-compare__col--old">
-        <p class="kicker">The old way</p>
+        <p class="kicker">Traditional consultant</p>
+        <p class="landing-compare__headline" style="font-weight:600;font-size:1.05rem;">
+          ~$3,000&ndash;$4,000 &middot; 1&ndash;3 weeks
+        </p>
         <ul>
-          <li>Weeks of meetings, file exchanges, and review cycles with a consultant.</li>
-          <li>Thousands of dollars in professional services.</li>
+          <li>Weeks of meetings, file exchanges, and review cycles.</li>
           <li>Hand-built spreadsheets and one-off scripts.</li>
           <li>Ledger files emailed around. Calendars dictate the pace.</li>
           <li>Reversing a bad post means more billable hours.</li>
@@ -173,13 +180,19 @@
       </article>
       <article class="landing-compare__col landing-compare__col--new">
         <p class="kicker">{{ app_name }}</p>
+        <p class="landing-compare__headline" style="font-weight:600;font-size:1.05rem;">
+          From $799 &middot; often under an hour
+        </p>
         <ul>
           <li>Designed to finish in under an hour, for supported files.</li>
-          <li>A fraction of the cost of a consultant.</li>
           <li>The same guided workflow every time.</li>
           <li>You drive: upload, match, send, reconcile &mdash; on your own schedule.</li>
           <li>One-click reversal if something looks wrong.</li>
         </ul>
+        <p class="muted" style="font-size:.8rem;margin-top:var(--space-2);">
+          Timing depends on file size and history; consultant costs are
+          typical industry estimates and vary by firm.
+        </p>
       </article>
     </div>
   </div>
@@ -204,6 +217,31 @@
         <p>Disconnect QuickBooks from inside the app or from Intuit. We honor the disconnect contract and revoke tokens promptly.</p>
       </article>
     </div>
+  </div>
+</section>
+
+<!-- Trust signals (honest, no fabricated quotes) -------------------- -->
+<section class="landing-section landing-section--signals" id="signals" data-testid="landing-trust-signals">
+  <div class="landing-section__inner">
+    <p class="eyebrow">Who this is for</p>
+    <h2 class="h-serif landing-section__title">Built with the people who'll actually use it.</h2>
+    <div class="grid-three landing-trust">
+      <article class="card">
+        <h3>Built for law firms moving off PCLaw</h3>
+        <p>Designed around the reports a firm actually has &mdash; General Ledger, Chart of Accounts, Trial Balance, trust listings &mdash; not generic accounting imports.</p>
+      </article>
+      <article class="card">
+        <h3>Designed with accounting reviewers</h3>
+        <p>Every step previews before it posts. Reconciliation is built in. No silent journal entries land in QuickBooks.</p>
+      </article>
+      <article class="card">
+        <h3>Reversible &amp; auditable</h3>
+        <p>Every import can be reversed in one click. A full audit log records every action a firm admin takes inside the app.</p>
+      </article>
+    </div>
+    <p class="muted" style="text-align:center;font-size:.85rem;margin-top:var(--space-4);">
+      We don't publish testimonials we haven't earned. As real firms complete migrations, we'll share their experience here with their consent.
+    </p>
   </div>
 </section>
 
@@ -253,8 +291,8 @@
       Move PCLaw to QuickBooks <em>cleanly</em>.
     </h2>
     <p class="landing-cta__lede">
-      Create a workspace, upload a sample file, and try the full flow
-      against a QuickBooks sandbox before you touch your real books.
+      Create a workspace, upload your PCLaw exports, and review every
+      step before anything is sent to QuickBooks.
     </p>
     <div class="landing-cta__buttons">
       <a class="btn btn-primary btn-lg" href="{{ url_for('signup') }}">Sign up &amp; start migration</a>

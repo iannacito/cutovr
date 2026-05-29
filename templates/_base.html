@@ -17,6 +17,15 @@
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
+  {% if demo_banner_visible %}
+    <div class="demo-banner" data-testid="demo-banner"
+         role="status" aria-live="polite"
+         style="background:#fff8d6;border-bottom:1px solid #e6d77a;color:#5d4a00;text-align:center;padding:.45rem 1rem;font-size:.9rem;">
+      <strong>Demo / staging environment.</strong>
+      Do not use this site for a real PCLaw to QuickBooks migration &mdash;
+      go to <a href="https://www.pclawmigrate.com" style="color:inherit;text-decoration:underline;">www.pclawmigrate.com</a> instead.
+    </div>
+  {% endif %}
   <header class="site-header">
     <div class="site-header__inner">
       <a href="{{ url_for('index') }}" class="brand-mark">
@@ -47,6 +56,7 @@
         {% else %}
           <a href="{{ url_for('pricing') }}">Pricing</a>
           <a href="{{ url_for('onboarding') }}">Onboarding</a>
+          <a href="{{ url_for('security_page') }}">Security</a>
           <a href="{{ url_for('support') }}">Support</a>
           <a href="{{ url_for('login') }}">Sign in</a>
           <a href="{{ url_for('signup') }}" class="btn btn-primary" style="padding:.55rem 1rem;">Get started</a>
@@ -78,6 +88,8 @@
       <div>&copy; {{ now_year }} {{ company_name }} &mdash; PCLaw to QuickBooks Online</div>
       <div class="site-footer__links">
         <a href="{{ url_for('pricing') }}">Pricing</a>
+        <a href="{{ url_for('about_page') }}">About</a>
+        <a href="{{ url_for('security_page') }}">Security</a>
         <a href="{{ url_for('privacy') }}">Privacy</a>
         <a href="{{ url_for('terms') }}">Terms</a>
         <a href="{{ url_for('support') }}">Support</a>

@@ -166,3 +166,36 @@ def send_email(
         # the email send".
         log.exception("SMTP send failed for host=%s port=%s", host, port)
         return False
+
+
+def send_quote_request(form, *, reference: str) -> bool:
+    """Forward a Complete-tier quote-request form to the support inbox.
+
+    Returns True if SMTP is configured AND the message was accepted by
+    the relay; False otherwise (configuration missing or transport
+    error). Caller is responsible for confirming receipt to the user
+    without lying about delivery status.
+    """
+    support_addr = os.environ.get("SUPPORT_EMAIL") or _resolve(_FROM_VARS)
+    if not support_addr:
+        return False
+    if not is_smtp_configured():
+        return False
+
+    subject = f"[PCLaw Migrate] Quote request {reference}"
+    lines = [
+        f"Reference: {reference}",
+        f"Firm name: {form.get('firm_name', '')}",
+        f"Work email: {form.get('email', '')}",
+        f"Years of history: {form.get('years_history', '')}",
+        f"Approximate volume: {form.get('volume', '')}",
+        "",
+        "Notes / timeline:",
+        form.get("notes", "") or "(none)",
+    ]
+    body_text = "\n".join(lines)
+    return send_email(
+        to=support_addr,
+        subject=subject,
+        body_text=body_text,
+    )

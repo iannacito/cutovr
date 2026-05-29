@@ -33,8 +33,11 @@ from __future__ import annotations
 
 import csv
 from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
+from io import StringIO
 from pathlib import Path
 from typing import Iterable, Optional
+
+from csv_decode import open_csv_text
 
 
 REPORT_GENERAL_LEDGER = "general_ledger"
@@ -358,7 +361,8 @@ def _open_csv(path) -> tuple[list[dict], list[str]]:
       * Fully-blank rows scattered throughout — skipped.
     """
     p = Path(path)
-    with p.open("r", newline="", encoding="utf-8-sig") as f:
+    text, _enc = open_csv_text(p)
+    with StringIO(text) as f:
         # Buffer up to ~20 lines while we search for the real header row.
         raw_lines: list[str] = []
         for _ in range(20):

@@ -12,7 +12,10 @@ Each payload is validated to balance (debits == credits) before being built.
 import csv
 from collections import defaultdict, OrderedDict
 from decimal import Decimal, ROUND_HALF_UP
+from io import StringIO
 from pathlib import Path
+
+from csv_decode import open_csv_text
 
 
 GL_REQUIRED_COLUMNS = ["transaction_id", "date", "account_number", "account_name", "debit", "credit"]
@@ -27,7 +30,8 @@ def money(value):
 
 def load_general_ledger_csv(path):
     path = Path(path)
-    with path.open("r", newline="", encoding="utf-8-sig") as f:
+    text, _enc = open_csv_text(path)
+    with StringIO(text) as f:
         reader = csv.DictReader(f)
         missing = [c for c in GL_REQUIRED_COLUMNS if c not in (reader.fieldnames or [])]
         if missing:

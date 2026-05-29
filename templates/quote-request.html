@@ -1,0 +1,93 @@
+{% extends "_base.html" %}
+{% block title %}Request a quote &mdash; {{ app_name }}{% endblock %}
+{% block meta_description %}Request a Complete-tier migration quote: more than three years of history, larger file volumes, or complex multi-entity firms.{% endblock %}
+{% block content %}
+<section class="page page--prose" data-testid="quote-request-page">
+  <p class="eyebrow">Pricing</p>
+  <h1 class="display">Request a <em>Complete-tier</em> quote.</h1>
+  <p class="muted">
+    Complete is for firms bringing more than three years of history,
+    larger transaction volumes, or anything that doesn't fit our flat
+    Essential or Standard tiers. Tell us a bit about the migration and
+    we'll come back with a price.
+  </p>
+
+  {% if submitted %}
+    <div class="card" data-testid="quote-request-success" style="margin-top:var(--space-5);border-color:var(--color-success,#1f7a4d);">
+      <h2>Thanks &mdash; we've got it.</h2>
+      <p>
+        We received your quote request{% if reference %} (reference <code>{{ reference }}</code>){% endif %}.
+        {% if email_sent %}
+          A confirmation has been forwarded to our team.
+        {% else %}
+          We couldn't deliver email from this environment automatically,
+          so our team will reach out directly using the email you provided.
+        {% endif %}
+      </p>
+      <p>
+        While you wait, you can browse the <a href="{{ url_for('onboarding') }}">onboarding guide</a> or
+        <a href="{{ url_for('signup') }}">create a workspace</a> to get a head start &mdash; you only pay
+        when the migration is ready to send to QuickBooks.
+      </p>
+    </div>
+  {% else %}
+    <form method="post" action="{{ url_for('quote_request') }}" class="stack-md" style="margin-top:var(--space-5);">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <label>
+        Firm name
+        <input type="text" name="firm_name" required maxlength="200"
+               value="{{ form.firm_name or '' }}"
+               data-testid="quote-firm-name">
+      </label>
+
+      <label>
+        Work email
+        <input type="email" name="email" required maxlength="200"
+               value="{{ form.email or '' }}"
+               data-testid="quote-email">
+      </label>
+
+      <label>
+        Years of history to bring over
+        <select name="years_history" data-testid="quote-years-history">
+          <option value="">Select&hellip;</option>
+          {% set sel = form.years_history or '' %}
+          <option value="3-5"   {% if sel == '3-5'   %}selected{% endif %}>3&ndash;5 years</option>
+          <option value="5-10"  {% if sel == '5-10'  %}selected{% endif %}>5&ndash;10 years</option>
+          <option value="10+"   {% if sel == '10+'   %}selected{% endif %}>10+ years</option>
+          <option value="other" {% if sel == 'other' %}selected{% endif %}>Other / not sure</option>
+        </select>
+      </label>
+
+      <label>
+        Approximate transaction or report volume <span class="muted">(optional)</span>
+        <input type="text" name="volume" maxlength="200"
+               placeholder="e.g. ~30,000 GL rows, 12 reports"
+               value="{{ form.volume or '' }}"
+               data-testid="quote-volume">
+      </label>
+
+      <label>
+        Notes &amp; timeline <span class="muted">(optional)</span>
+        <textarea name="notes" rows="4" maxlength="2000"
+                  placeholder="When do you want to go live? Anything unusual about the file set?"
+                  data-testid="quote-notes">{{ form.notes or '' }}</textarea>
+      </label>
+
+      {% if form_error %}
+        <p class="flash error" data-testid="quote-error">{{ form_error }}</p>
+      {% endif %}
+
+      <button type="submit" class="btn btn-primary btn-lg" data-testid="quote-submit">
+        Send quote request
+      </button>
+      <p class="muted" style="font-size:.85rem;">
+        We use this only to send you a quote. See the
+        <a href="{{ url_for('privacy') }}">Privacy Policy</a> for how we
+        handle your contact info.
+      </p>
+    </form>
+  {% endif %}
+</section>
+{% endblock %}

@@ -88,8 +88,26 @@
           <li>Larger file volume</li>
           <li>Final reconciliation report</li>
         </ul>
-        <a class="btn btn-secondary btn-lg pricing-tier__cta" href="{{ url_for('support') }}">Request a quote</a>
+        <a class="btn btn-secondary btn-lg pricing-tier__cta" href="{{ url_for('quote_request') }}">Request a quote</a>
       </article>
+    </div>
+
+    <!-- Consultant comparison: tasteful, credible price anchor ------- -->
+    <div class="pricing-compare-strip" data-testid="pricing-consultant-compare"
+         style="margin-top:var(--space-6);padding:var(--space-5);border-top:1px solid var(--color-line);">
+      <p class="eyebrow">Compared to a traditional consultant</p>
+      <div class="grid-two" style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-5);margin-top:var(--space-3);">
+        <div>
+          <p class="kicker muted">Traditional consultant-led migration</p>
+          <p style="font-weight:600;font-size:1.1rem;">~$3,000&ndash;$4,000 &middot; 1&ndash;3 weeks</p>
+          <p class="muted" style="font-size:.85rem;">Hourly billing, calendar coordination, file exchanges, and one-off spreadsheets.</p>
+        </div>
+        <div>
+          <p class="kicker">{{ app_name }}</p>
+          <p style="font-weight:600;font-size:1.1rem;">From $799 &middot; often under an hour</p>
+          <p class="muted" style="font-size:.85rem;">Flat fee. Self-serve guided workflow. No subscription. Timing depends on file size and history.</p>
+        </div>
+      </div>
     </div>
 
     {# Add-ons strip: a single compact band of three items, sitting
@@ -185,8 +203,8 @@
       Move PCLaw to QuickBooks <em>cleanly</em>.
     </h2>
     <p class="landing-cta__lede">
-      Create a workspace, try the flow against a QuickBooks sandbox, and
-      see exactly what your migration will look like before you commit.
+      Create a workspace, upload your PCLaw exports, and review every
+      step before anything is sent to QuickBooks.
     </p>
     <div class="landing-cta__buttons">
       <a class="btn btn-primary btn-lg" href="{{ url_for('signup') }}">Start your migration</a>

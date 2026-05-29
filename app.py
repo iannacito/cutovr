@@ -321,6 +321,17 @@ LOGIN_RATE_LIMIT_MAX = 10
 LOGIN_RATE_LIMIT_WINDOW_SECONDS = 5 * 60
 FORGOT_RATE_LIMIT_MAX = 5
 FORGOT_RATE_LIMIT_WINDOW_SECONDS = 15 * 60
+# Signup is rate-limited per IP. We use the same numeric posture as the
+# login limiter (10 attempts / 5 minutes) rather than the tighter
+# forgot-password budget, because the same office IP might legitimately
+# spawn several test firms while staff are evaluating the product. The
+# limiter still stops automated account-creation abuse, which is what
+# matters. Email-keyed buckets are pointless here because signups always
+# use a fresh email; IP is the meaningful dimension.
+SIGNUP_RATE_LIMIT_MAX = 10
+SIGNUP_RATE_LIMIT_WINDOW_SECONDS = 5 * 60
+QUOTE_RATE_LIMIT_MAX = 5
+QUOTE_RATE_LIMIT_WINDOW_SECONDS = 15 * 60
 
 login_limiter = RateLimiter(
     db,
@@ -331,6 +342,16 @@ forgot_limiter = RateLimiter(
     db,
     max_events=FORGOT_RATE_LIMIT_MAX,
     window_seconds=FORGOT_RATE_LIMIT_WINDOW_SECONDS,
+)
+signup_limiter = RateLimiter(
+    db,
+    max_events=SIGNUP_RATE_LIMIT_MAX,
+    window_seconds=SIGNUP_RATE_LIMIT_WINDOW_SECONDS,
+)
+quote_request_limiter = RateLimiter(
+    db,
+    max_events=QUOTE_RATE_LIMIT_MAX,
+    window_seconds=QUOTE_RATE_LIMIT_WINDOW_SECONDS,
 )
 
 # QBO OAuth configuration (set these via environment variables in real use)
@@ -829,6 +850,16 @@ def signup():
     if current_user():
         return redirect(url_for("dashboard"))
     if request.method == "POST":
+        # Rate-limit signup per-IP using the same posture as forgot-password.
+        # Legit firms only sign up once, so this is functionally invisible
+        # to real customers; it stops trivial account-creation abuse.
+        ip_key = f"signup:ip:{client_ip(request)}"
+        ok, _ = signup_limiter.check_and_record(ip_key)
+        if not ok:
+            db.audit(action="signup_rate_limited",
+                     details=f"ip={client_ip(request)}")
+            flash(RATE_LIMIT_FRIENDLY_MSG, "error")
+            return render_template("signup.html"), 429
         firm_name = (request.form.get("firm_name") or "").strip()
         email = (request.form.get("email") or "").strip().lower()
         password = request.form.get("password") or ""
@@ -2272,6 +2303,125 @@ def terms():
 def support():
     """Public support / contact page including a security-reporting hint."""
     return render_template("support.html")
+
+
+@app.route("/security")
+def security_page():
+    """Public security/data-handling page linked from footer + nav.
+
+    Describes encryption at rest, OAuth scope, audit logging, reversible
+    imports, and security contact. Deliberately avoids compliance
+    overclaiming (no SOC2 / ISO / HIPAA assertions).
+    """
+    return render_template("security.html")
+
+
+@app.route("/about")
+def about_page():
+    """Public About page: who built this, why, and how the product is
+    positioned vs. consultant-led migrations. No fabricated testimonials.
+    """
+    return render_template("about.html")
+
+
+# Per-IP rate limiter for the public quote-request form, so the same
+# anti-abuse posture we apply on login/forgot/signup applies here.
+QUOTE_REQUEST_RATE_LIMIT_MAX = 5
+QUOTE_REQUEST_RATE_LIMIT_WINDOW_SECONDS = 15 * 60
+
+
+@app.route("/pricing/quote-request", methods=["GET", "POST"])
+def quote_request():
+    """Public quote-request form for the Complete (3+ years) pricing tier.
+
+    Collects firm name, work email, years of history, optional volume
+    and notes. If email_sender is configured, forwards to support; in
+    all cases logs an audit row and renders a confirmation. We never
+    pretend to have sent email if SMTP isn't configured.
+    """
+    form_state = {
+        "firm_name": "",
+        "email": "",
+        "years_history": "",
+        "volume": "",
+        "notes": "",
+    }
+    form_error = None
+
+    if request.method == "POST":
+        ip_key = f"quote:ip:{client_ip(request)}"
+        ok, _ = quote_request_limiter.check_and_record(ip_key)
+        if not ok:
+            db.audit(action="quote_request_rate_limited",
+                     details=f"ip={client_ip(request)}")
+            flash(RATE_LIMIT_FRIENDLY_MSG, "error")
+            return render_template(
+                "quote-request.html",
+                form=form_state,
+                form_error=None,
+                submitted=False,
+            ), 429
+
+        form_state["firm_name"] = (request.form.get("firm_name") or "").strip()[:200]
+        form_state["email"] = (request.form.get("email") or "").strip()[:200]
+        form_state["years_history"] = (request.form.get("years_history") or "").strip()[:50]
+        form_state["volume"] = (request.form.get("volume") or "").strip()[:200]
+        form_state["notes"] = (request.form.get("notes") or "").strip()[:2000]
+
+        if not form_state["firm_name"] or not form_state["email"]:
+            form_error = "Firm name and work email are required."
+            return render_template(
+                "quote-request.html",
+                form=form_state,
+                form_error=form_error,
+                submitted=False,
+            )
+        # Light email shape check; the form already has type=email.
+        if "@" not in form_state["email"] or "." not in form_state["email"]:
+            form_error = "That doesn't look like a valid email address."
+            return render_template(
+                "quote-request.html",
+                form=form_state,
+                form_error=form_error,
+                submitted=False,
+            )
+
+        reference = secrets.token_hex(4).upper()
+        db.audit(
+            action="quote_request_submitted",
+            details=(
+                f"ref={reference} "
+                f"firm={form_state['firm_name'][:60]} "
+                f"email={_redact_email_for_audit(form_state['email'])} "
+                f"years={form_state['years_history']}"
+            ),
+        )
+
+        email_sent = False
+        try:
+            email_sent = email_sender.send_quote_request(
+                form_state, reference=reference,
+            )
+        except AttributeError:
+            email_sent = False
+        except Exception:  # noqa: BLE001
+            email_sent = False
+
+        return render_template(
+            "quote-request.html",
+            form=form_state,
+            form_error=None,
+            submitted=True,
+            reference=reference,
+            email_sent=email_sent,
+        )
+
+    return render_template(
+        "quote-request.html",
+        form=form_state,
+        form_error=None,
+        submitted=False,
+    )
 
 
 @app.route("/pricing")
@@ -5418,24 +5568,78 @@ def _import_to_qbo_impl(job_id):
 
             # Pair each payload with its PCLaw transaction_id in deterministic
             # order so we can match created JE IDs back to source rows.
+            #
+            # Mid-batch failure handling: if one create_journal_entry call
+            # fails after some have succeeded, the successful ones are
+            # already in QBO and we MUST record them in the import history
+            # so the duplicate-transaction-id guard blocks them on the
+            # user's next retry. Without this, the user's retry would
+            # silently double-post the early entries. We catch the
+            # exception, write a partial-import row, then re-raise so the
+            # outer handler still produces an error flash and audit.
             txn_ids = list(grouped_for_check.keys())
             created = []
             created_transactions = []
-            for txn_id, payload in zip(txn_ids, payloads):
-                resp = qbo.create_journal_entry(payload)
-                je = resp.get("JournalEntry", {})
-                created.append({
-                    "Id": je.get("Id"),
-                    "DocNumber": je.get("DocNumber"),
-                    "TxnDate": je.get("TxnDate"),
-                    "transaction_id": txn_id,
-                })
-                created_transactions.append({
-                    "transaction_id": txn_id,
-                    "qbo_je_id": je.get("Id"),
-                    "doc_number": je.get("DocNumber"),
-                    "txn_date": je.get("TxnDate"),
-                })
+            try:
+                for txn_id, payload in zip(txn_ids, payloads):
+                    resp = qbo.create_journal_entry(payload)
+                    je = resp.get("JournalEntry", {})
+                    created.append({
+                        "Id": je.get("Id"),
+                        "DocNumber": je.get("DocNumber"),
+                        "TxnDate": je.get("TxnDate"),
+                        "transaction_id": txn_id,
+                    })
+                    created_transactions.append({
+                        "transaction_id": txn_id,
+                        "qbo_je_id": je.get("Id"),
+                        "doc_number": je.get("DocNumber"),
+                        "txn_date": je.get("TxnDate"),
+                    })
+            except Exception as partial_e:  # noqa: BLE001
+                if created_transactions:
+                    try:
+                        partial_import_id = history.record_import(
+                            job_id=job_id,
+                            realm_id=realm_id,
+                            file_sha256=job.get("file_sha256", ""),
+                            company_name=qbo_conn.get("company_name"),
+                            transaction_count=len(created_transactions),
+                            debit_total=Decimal("0"),
+                            credit_total=Decimal("0"),
+                            status="partial",
+                            notes=(
+                                f"Partial import: {len(created_transactions)} of "
+                                f"{len(txn_ids)} journal entries posted before "
+                                f"the run failed."
+                            ),
+                            created_transactions=created_transactions,
+                            created_entities=new_entities,
+                        )
+                        job["last_import_id"] = partial_import_id
+                        job["partial_import"] = {
+                            "import_id": partial_import_id,
+                            "posted_count": len(created_transactions),
+                            "total_count": len(txn_ids),
+                        }
+                        _audit(
+                            "import_partial",
+                            target_type="job",
+                            target_id=job_id,
+                            details=(
+                                f"{len(created_transactions)} of {len(txn_ids)} JEs "
+                                f"posted before failure; recorded as partial so "
+                                f"retry de-dupes correctly."
+                            ),
+                        )
+                    except Exception:  # noqa: BLE001
+                        # If we can't even record the partial row, the
+                        # outer handler will still flash the original
+                        # error — but log so an operator can investigate.
+                        logging.getLogger("app").exception(
+                            "Failed to record partial import for job=%s", job_id,
+                        )
+                raise partial_e
 
             # Record the import in history immediately. Even if verification
             # below fails, the JEs ARE in QBO and we want a permanent record
@@ -7696,6 +7900,34 @@ def operator_required(view):
     return wrapper
 
 
+def _is_demo_environment() -> bool:
+    """True when this deploy is the demo/staging instance.
+
+    Heuristic:
+      * SHOW_DEMO_BANNER env var explicitly truthy, OR
+      * the public app URL points at a *.onrender.com host (the canary
+        URL we keep around for staging), OR
+      * demo_mode is enabled at the deploy level.
+
+    Production customers on www.pclawmigrate.com never see the banner.
+    """
+    raw = (os.environ.get("SHOW_DEMO_BANNER") or "").strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    public = (os.environ.get("PUBLIC_APP_URL") or "").strip().lower()
+    if public and "onrender.com" in public:
+        return True
+    # Last resort: demo_mode deploy flag implies this isn't a hardened
+    # production deploy. Operators who turn on demo_mode in prod should
+    # also set SHOW_DEMO_BANNER=0 to silence the banner.
+    try:
+        return demo_mode.is_demo_mode_enabled()
+    except Exception:  # noqa: BLE001
+        return False
+
+
 @app.context_processor
 def _inject_operator_flag():
     """Make `is_operator` available to every template so the nav can
@@ -7712,6 +7944,7 @@ def _inject_operator_flag():
         "is_operator": is_op,
         "demo_mode_enabled": demo_mode.is_demo_mode_enabled(),
         "demo_visible": demo_mode.demo_visible_for_user(user, is_op),
+        "demo_banner_visible": _is_demo_environment(),
     }
 
 

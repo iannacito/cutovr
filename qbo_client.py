@@ -17,12 +17,62 @@ raw response object through.
 """
 
 from urllib.parse import quote
+import logging
+import time
 import requests
+
+
+_log = logging.getLogger("qbo_client")
 
 
 # Intuit returns the transaction id under this header. The casing in their
 # docs varies; requests' case-insensitive header dict normalises it.
 _INTUIT_TID_HEADER = "intuit_tid"
+
+# Retry posture for transient QBO failures (5xx and 429). Bounded so a
+# user-initiated import does not hang for minutes during an Intuit outage,
+# but tolerant enough to absorb a single transient blip mid-batch.
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_BACKOFF_BASE_SECONDS = 1.0
+DEFAULT_BACKOFF_CAP_SECONDS = 8.0
+
+
+def _is_transient_status(status_code) -> bool:
+    """Return True if a status code is worth retrying.
+
+    429 (rate limited) and 5xx (server side) are retryable. 4xx other than
+    429 indicate the request itself is wrong — retrying is just noise.
+    """
+    if status_code is None:
+        return False
+    if status_code == 429:
+        return True
+    return 500 <= status_code < 600
+
+
+def _retry_after_seconds(response, attempt: int, base: float, cap: float) -> float:
+    """Compute the sleep before the next retry.
+
+    Honors a numeric Retry-After header when present. Otherwise falls back
+    to an exponential backoff: base * 2**attempt, capped at ``cap``.
+    """
+    if response is not None:
+        try:
+            ra = response.headers.get("Retry-After") if response.headers else None
+        except AttributeError:
+            ra = None
+        if ra:
+            try:
+                return max(0.0, min(float(ra), cap))
+            except (TypeError, ValueError):
+                pass
+    return min(cap, base * (2 ** attempt))
+
+
+def _sleep(seconds: float) -> None:
+    """Indirection so tests can monkeypatch out the sleep."""
+    if seconds > 0:
+        time.sleep(seconds)
 
 
 def extract_intuit_tid(response):
@@ -139,22 +189,90 @@ class QBOClient:
             )
         return response.json().get("JournalEntry")
 
-    def create_journal_entry(self, journal_entry_payload):
+    def create_journal_entry(self, journal_entry_payload, *,
+                             max_retries: int = DEFAULT_MAX_RETRIES):
+        """Create one JournalEntry, retrying transient failures.
+
+        Retries on 5xx and 429 with bounded exponential backoff (honoring
+        Retry-After when Intuit sends one). 4xx other than 429 fail
+        immediately because retrying a bad request is just noise.
+
+        Network-level failures (DNS / TLS / read timeout) are also retried
+        the same way, since they typically reflect a transient blip rather
+        than a permanent error.
+
+        Each attempt creates a new JournalEntry on the QBO side IF the
+        previous attempt actually reached Intuit and succeeded but the
+        response was lost. We document this limitation rather than try to
+        fully fix it here — true idempotency would require a stable
+        idempotency key that QBO's v3 API does not yet support. Callers
+        guard against this at the batch level: every PCLaw transaction_id
+        is recorded in ImportHistory and re-runs of the same file are
+        blocked by file SHA, and the duplicate transaction_id guard in the
+        send path rejects already-imported transaction ids.
+        """
         url = (
             f"{self.base_url}/v3/company/{self.realm_id}/journalentry?minorversion=65"
         )
-        response = requests.post(
-            url, headers=self._headers(), json=journal_entry_payload, timeout=30
-        )
-        tid = self._record_tid(response)
-        if response.status_code >= 400:
+        attempts = max(1, int(max_retries) + 1)
+        last_exc: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                response = requests.post(
+                    url, headers=self._headers(),
+                    json=journal_entry_payload, timeout=30,
+                )
+            except requests.RequestException as e:
+                # Network-level transient — retry if budget remains.
+                last_exc = e
+                if attempt + 1 < attempts:
+                    delay = _retry_after_seconds(
+                        None, attempt,
+                        DEFAULT_BACKOFF_BASE_SECONDS, DEFAULT_BACKOFF_CAP_SECONDS,
+                    )
+                    _log.warning(
+                        "create_journal_entry network error attempt=%s/%s err=%s sleeping=%.1fs",
+                        attempt + 1, attempts, e, delay,
+                    )
+                    _sleep(delay)
+                    continue
+                raise QBOError(
+                    f"Could not reach QuickBooks while creating a journal entry: {e}",
+                    status_code=None,
+                    body=None,
+                    intuit_tid=None,
+                ) from e
+
+            tid = self._record_tid(response)
+            if response.status_code < 400:
+                return response.json()
+
+            if _is_transient_status(response.status_code) and attempt + 1 < attempts:
+                delay = _retry_after_seconds(
+                    response, attempt,
+                    DEFAULT_BACKOFF_BASE_SECONDS, DEFAULT_BACKOFF_CAP_SECONDS,
+                )
+                _log.warning(
+                    "create_journal_entry transient status=%s attempt=%s/%s tid=%s sleeping=%.1fs",
+                    response.status_code, attempt + 1, attempts, tid, delay,
+                )
+                _sleep(delay)
+                continue
+
             raise QBOError(
                 f"QBO returned {response.status_code}: {response.text}",
                 status_code=response.status_code,
                 body=response.text,
                 intuit_tid=tid,
             )
-        return response.json()
+
+        # All retries exhausted on transient failures.
+        raise QBOError(
+            f"QuickBooks remained unavailable after {attempts} attempts: {last_exc}",
+            status_code=None,
+            body=None,
+            intuit_tid=self.last_intuit_tid,
+        )
 
     def find_account_by_acctnum(self, acct_num):
         """Return the QBO Account dict matching AcctNum exactly, or None.

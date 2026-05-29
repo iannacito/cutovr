@@ -48,6 +48,51 @@
     </ul>
   </section>
 
+  <!-- PCLaw export guide --------------------------------------------- -->
+  <section style="margin-top:var(--space-10);" id="pclaw-export-guide" data-testid="onboarding-export-guide">
+    <h2>Getting your reports out of PCLaw</h2>
+    <p class="muted" style="margin-bottom:var(--space-4);">
+      You don't need to learn any new PCLaw screens to use this tool. Below is what each report is, why we want it, and roughly where to find it inside PCLaw. If your PCLaw build labels a menu differently, the export should still be available from your PCLaw reporting / export area &mdash; the report name is the key.
+    </p>
+    <div class="card" style="padding:var(--space-4);">
+      <ol class="secure-list" style="margin:0;padding-left:1.25rem;">
+        <li style="margin-bottom:var(--space-3);">
+          <strong>Account List (Chart of Accounts).</strong>
+          The list of accounts your firm uses. We match these against your
+          QuickBooks accounts. <br>
+          <span class="muted" style="font-size:.9rem;">Run from your PCLaw reporting/export area &mdash; look for &ldquo;Chart of Accounts&rdquo; or &ldquo;Account List&rdquo;. Export as CSV.</span>
+        </li>
+        <li style="margin-bottom:var(--space-3);">
+          <strong>Transaction History (General Ledger).</strong>
+          The actual entries to move. Run for the period you want to bring over.<br>
+          <span class="muted" style="font-size:.9rem;">Run from your PCLaw reporting/export area &mdash; look for &ldquo;General Ledger&rdquo; or &ldquo;Transaction History&rdquo;. Export as CSV.</span>
+        </li>
+        <li style="margin-bottom:var(--space-3);">
+          <strong>Starting Balances (Trial Balance).</strong>
+          The balance of every account as of your switchover date. Used to seed opening balances in QuickBooks and to check the books afterward.<br>
+          <span class="muted" style="font-size:.9rem;">Run from your PCLaw reporting/export area &mdash; look for &ldquo;Trial Balance&rdquo; as of your switchover date.</span>
+        </li>
+        <li style="margin-bottom:var(--space-3);">
+          <strong>Final Balance Check (Trial Balance, end of period).</strong>
+          A second Trial Balance run for the end of the period you moved. Used at the very end to confirm every dollar landed cleanly.<br>
+          <span class="muted" style="font-size:.9rem;">Same export as above, just dated at the end of your migration window.</span>
+        </li>
+        <li style="margin-bottom:var(--space-3);">
+          <strong>Client Trust Balances (Trust Listing).</strong>
+          Per-matter trust balances. Reconciled against your trust liability and trust-bank totals. Never auto-posted &mdash; see the IOLTA section below.<br>
+          <span class="muted" style="font-size:.9rem;">Run from your PCLaw reporting/export area &mdash; look for &ldquo;Trust Listing&rdquo; or &ldquo;Client Trust Balances&rdquo;.</span>
+        </li>
+        <li>
+          <strong>Customer / Vendor lists</strong> <span class="muted">(if your PCLaw build supports a direct export).</span>
+          Helps QuickBooks attach Accounts Receivable lines to the right client and Accounts Payable lines to the right vendor. If you can't export these, we create the customers and vendors during import based on the transaction history.
+        </li>
+      </ol>
+    </div>
+    <p class="muted" style="font-size:.85rem;margin-top:var(--space-3);">
+      Don't worry about getting the column order &ldquo;right&rdquo; &mdash; we look at the header row, not the position. As long as the file is a CSV with sensible column headings, the app will figure the rest out.
+    </p>
+  </section>
+
   <section style="margin-top:var(--space-10);" id="report-types">
     <h2>What you can upload</h2>
     <p class="muted" style="margin-bottom:var(--space-4);">
@@ -100,33 +145,64 @@
   </section>
 
   <section style="margin-top:var(--space-10);" id="required-columns">
-    <h2>Required columns</h2>
+    <h2>Sample files</h2>
     <p class="muted" style="margin-bottom:var(--space-4);">
-      Your CSV must have these column names (case-sensitive). Optional extras
-      &mdash; <code>description</code>, <code>reference</code>,
-      <code>client_id</code>, <code>matter_id</code>,
-      <code>customer_name</code>, <code>vendor_name</code> &mdash; are kept.
+      Want to try the flow before exporting from PCLaw? Download a sample
+      CSV that already has the columns we expect.
     </p>
-    <div class="card" style="padding:0;">
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Column</th><th>Meaning</th><th>Example</th></tr></thead>
-          <tbody>
-            <tr><td><code>transaction_id</code></td><td>Unique id for the entry. Multiple rows with the same id form one balanced journal entry.</td><td><code>JE-0001</code></td></tr>
-            <tr><td><code>date</code></td><td>Posting date, ISO format.</td><td><code>2026-05-01</code></td></tr>
-            <tr><td><code>account_number</code></td><td>PCLaw account number. Matched first.</td><td><code>1000</code></td></tr>
-            <tr><td><code>account_name</code></td><td>PCLaw account name. Fallback if number doesn&rsquo;t match.</td><td><code>Operating Bank</code></td></tr>
-            <tr><td><code>debit</code></td><td>Debit amount, or 0.</td><td><code>1000.00</code></td></tr>
-            <tr><td><code>credit</code></td><td>Credit amount, or 0.</td><td><code>0.00</code></td></tr>
-            <tr><td><code>memo</code> <small class="muted">(optional)</small></td><td>Free-text description copied into the QuickBooks line.</td><td><code>Opening operating cash</code></td></tr>
-          </tbody>
-        </table>
+    <div class="actions-row" style="margin-bottom:var(--space-4);">
+      <a class="btn btn-primary" href="{{ url_for('onboarding_template_csv') }}"
+         data-testid="onboarding-download-template">Download sample CSV template</a>
+      <a class="btn" href="{{ url_for('onboarding_sample_csv') }}"
+         data-testid="onboarding-download-larger-sample">Larger sample CSV</a>
+    </div>
+
+    <details class="quiet" data-testid="onboarding-technical-columns">
+      <summary>Technical details for support &mdash; required CSV columns</summary>
+      <p class="muted" style="margin-bottom:var(--space-3);margin-top:var(--space-3);">
+        You usually don't need to look at this &mdash; the app reads
+        sensible column names automatically. Open this only if support
+        asks you about the underlying format. Optional extras
+        &mdash; <code>description</code>, <code>reference</code>,
+        <code>client_id</code>, <code>matter_id</code>,
+        <code>customer_name</code>, <code>vendor_name</code> &mdash; are kept.
+      </p>
+      <div class="card" style="padding:0;">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Column</th><th>Meaning</th><th>Example</th></tr></thead>
+            <tbody>
+              <tr><td><code>transaction_id</code></td><td>Unique id for the entry. Multiple rows with the same id form one balanced journal entry.</td><td><code>JE-0001</code></td></tr>
+              <tr><td><code>date</code></td><td>Posting date, ISO format.</td><td><code>2026-05-01</code></td></tr>
+              <tr><td><code>account_number</code></td><td>PCLaw account number. Matched first.</td><td><code>1000</code></td></tr>
+              <tr><td><code>account_name</code></td><td>PCLaw account name. Fallback if number doesn&rsquo;t match.</td><td><code>Operating Bank</code></td></tr>
+              <tr><td><code>debit</code></td><td>Debit amount, or 0.</td><td><code>1000.00</code></td></tr>
+              <tr><td><code>credit</code></td><td>Credit amount, or 0.</td><td><code>0.00</code></td></tr>
+              <tr><td><code>memo</code> <small class="muted">(optional)</small></td><td>Free-text description copied into the QuickBooks line.</td><td><code>Opening operating cash</code></td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
+    </details>
+  </section>
+
+  <!-- IOLTA / trust FAQ ---------------------------------------------- -->
+  <section style="margin-top:var(--space-10);" id="iolta-faq" data-testid="onboarding-iolta-faq">
+    <h2>About trust / IOLTA accounts</h2>
+    <p class="muted" style="margin-bottom:var(--space-4);">
+      Trust accounts are the most sensitive part of a law-firm migration. Here is exactly how {{ app_name }} treats them.
+    </p>
+    <div class="card">
+      <ul class="secure-list" style="margin:0;">
+        <li><strong>Trust balances are checked and reconciled, not blindly auto-posted.</strong> We compare your PCLaw client trust listing against the trust liability and trust-bank totals before anything is sent to QuickBooks.</li>
+        <li><strong>Per-client trust balances do not auto-post to QuickBooks trust accounts.</strong> The trust listing is treated as a reconciliation input. If your firm needs per-client trust balances mirrored into QuickBooks, that's a separate manual step under your accountant's supervision.</li>
+        <li><strong>If trust balances don't reconcile, the migration is flagged.</strong> You'll see an explicit &ldquo;Needs attention&rdquo; on the review step before you can send anything.</li>
+        <li><strong>You decide what to do with mismatches.</strong> We surface the variance with the underlying numbers so you (or your bookkeeper / accountant) can make the call &mdash; we never silently &ldquo;fix&rdquo; a trust discrepancy.</li>
+      </ul>
     </div>
-    <div class="actions-row" style="margin-top:var(--space-5);">
-      <a class="btn btn-primary" href="{{ url_for('onboarding_template_csv') }}">Download sample CSV template</a>
-      <a class="btn" href="{{ url_for('onboarding_sample_csv') }}">Larger sample CSV</a>
-    </div>
+    <p class="muted" style="font-size:.85rem;margin-top:var(--space-3);">
+      Bar rules vary by jurisdiction. {{ app_name }} is a migration tool, not legal or accounting advice. If you're unsure about the trust posture for your migration, please involve your firm's accountant or a trust-account specialist.
+    </p>
   </section>
 
   <details class="quiet" style="margin-top:var(--space-10);">
