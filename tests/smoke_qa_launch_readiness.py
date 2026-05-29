@@ -56,7 +56,7 @@ def t1_landing_consultant_compare():
         "landing consultant compare should anchor traditional cost range"
     assert "1&ndash;3 weeks" in body or "1-3 weeks" in body, \
         "landing should anchor consultant duration (1-3 weeks)"
-    assert "From $799" in body, "landing should anchor PCLaw Migrate from-price"
+    assert "From $799" in body, "landing should anchor PC Law Migrate from-price"
     print("T1 OK: landing has consultant comparison with cost + duration")
 
 

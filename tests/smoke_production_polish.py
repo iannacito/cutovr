@@ -104,13 +104,17 @@ def _connect(c, firm, email, gl_bytes=GL):
 def t1_default_branding_pclaw_migrate():
     c = appmod.app.test_client()
     body = c.get("/login").get_data(as_text=True)
-    assert "PCLaw Migrate" in body, "default APP_NAME should be PCLaw Migrate"
+    assert "PC Law Migrate" in body, "default APP_NAME should be PC Law Migrate"
     # The legacy 'Cut<em>over</em>' fragment must be gone.
     assert "Cut<em>over</em>" not in body
     assert ">Cutover<" not in body
-    # Brand mark uses the new "PCLaw <em>Migrate</em>" form.
-    assert "PCLaw <em>Migrate</em>" in body
-    print("T1 OK: default branding is PCLaw Migrate with legacy Cutover wordmark removed")
+    # The compact "PCLaw Migrate" (no space) brand string must NOT appear
+    # in customer-facing copy — the product is "PC Law Migrate".
+    assert "PCLaw Migrate" not in body, \
+        "compact 'PCLaw Migrate' should not appear in customer-facing pages"
+    # Brand mark uses the all-caps "PC LAW MIGRATE" form on the logo line.
+    assert "PC LAW <em>MIGRATE</em>" in body
+    print("T1 OK: default branding is PC Law Migrate with all-caps brand mark")
 
 
 def t2_favicon_assets_present():

@@ -167,8 +167,8 @@ def t1b_branding_defaults():
     assert "support@your-domain.example" in sup, "default SUPPORT_EMAIL should appear"
     assert "security@your-domain.example" in sup, "default SECURITY_EMAIL should appear"
     base = c.get("/login").get_data(as_text=True)
-    assert "PCLaw Migrate" in base, "default COMPANY_NAME should be PCLaw Migrate"
-    print("T1b OK: default branding shows PCLaw Migrate and placeholder support/security emails")
+    assert "PC Law Migrate" in base, "default COMPANY_NAME should be PC Law Migrate"
+    print("T1b OK: default branding shows PC Law Migrate and placeholder support/security emails")
 
 
 def t2_healthz_reports_placeholder():
