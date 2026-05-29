@@ -172,20 +172,30 @@ def t1b_branding_defaults():
 
 
 def t2_healthz_reports_placeholder():
-    appmod = _fresh_app()
+    # Branding-flag visibility moved to /healthz/detailed when /healthz
+    # was locked down to status-only. We use the HEALTHZ_TOKEN to read it.
+    token = "ctrl-token-12345"
+    appmod = _fresh_app({"HEALTHZ_TOKEN": token})
     c = appmod.app.test_client()
-    j = c.get("/healthz").get_json()
+    # Public /healthz is locked down — never leaks branding flags.
+    pub = c.get("/healthz").get_json()
+    assert pub == {"status": "ok"}, pub
+    j = c.get(f"/healthz/detailed?token={token}").get_json()
     assert j["status"] == "ok", j
     # Defaults are placeholders, so the *_set flags should be False.
     assert j["branding_support_email_set"] is False, j
     assert j["branding_security_email_set"] is False, j
 
-    appmod = _fresh_app({"SUPPORT_EMAIL": "real@example.com", "SECURITY_EMAIL": "real-sec@example.com"})
+    appmod = _fresh_app({
+        "SUPPORT_EMAIL": "real@example.com",
+        "SECURITY_EMAIL": "real-sec@example.com",
+        "HEALTHZ_TOKEN": token,
+    })
     c = appmod.app.test_client()
-    j = c.get("/healthz").get_json()
+    j = c.get(f"/healthz/detailed?token={token}").get_json()
     assert j["branding_support_email_set"] is True, j
     assert j["branding_security_email_set"] is True, j
-    print("T2 OK: /healthz reports branding placeholder vs real")
+    print("T2 OK: /healthz/detailed reports branding placeholder vs real")
 
 
 def t3_qbo_error_parser_unit():

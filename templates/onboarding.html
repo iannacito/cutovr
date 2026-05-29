@@ -27,7 +27,7 @@
   {% endif %}
 
   <section style="margin-top:var(--space-10);">
-    <h2>Before your first real run <small class="muted">(private beta guidance)</small></h2>
+    <h2>Before your first real run</h2>
     <ul class="secure-list" style="margin-top:var(--space-4);">
       <li>
         <strong>Don&rsquo;t upload a full client ledger on your first run.</strong>
@@ -156,14 +156,28 @@
     </p>
   </section>
 
-  <section style="margin-top:var(--space-8);">
-    <div class="actions-row">
-      <a class="btn btn-primary" href="{{ url_for('dashboard') }}">Back to dashboard</a>
-      {% if is_operator %}
-        <a class="btn btn-link" href="{{ url_for('readiness_page') }}">Go-live readiness</a>
-      {% endif %}
-      <a class="btn btn-link" href="{{ url_for('quickbooks_manage') }}">QuickBooks connections</a>
-    </div>
+  <section style="margin-top:var(--space-8);" data-testid="onboarding-footer-actions">
+    {% if user %}
+      {# Logged-in firm admins see the in-app shortcuts. #}
+      <div class="actions-row">
+        <a class="btn btn-primary" href="{{ url_for('dashboard') }}">Back to dashboard</a>
+        {% if is_operator %}
+          <a class="btn btn-link" href="{{ url_for('readiness_page') }}">Go-live readiness</a>
+        {% endif %}
+        <a class="btn btn-link" href="{{ url_for('quickbooks_manage') }}">QuickBooks connections</a>
+      </div>
+    {% else %}
+      {# Logged-out prospects see a single clear next step. The
+         in-app links above only work for signed-in firm admins, so
+         we hide them rather than redirecting visitors to the login
+         wall when they click 'QuickBooks connections'. #}
+      <div class="actions-row">
+        <a class="btn btn-primary btn-lg" href="{{ url_for('signup') }}">
+          Create your firm workspace &rarr;
+        </a>
+        <a class="btn btn-link" href="{{ url_for('login') }}">Sign in</a>
+      </div>
+    {% endif %}
   </section>
 </section>
 {% endblock %}

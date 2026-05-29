@@ -128,8 +128,8 @@
           <tr>
             <th>Account #</th>
             <th>Name</th>
-            <th>QBO type</th>
-            <th>QBO sub-type</th>
+            <th>QuickBooks type</th>
+            <th>QuickBooks sub-type</th>
             <th>Active</th>
             <th>Notes</th>
           </tr>
@@ -163,12 +163,12 @@
     <p>
       These accounts already exist in QuickBooks under the same name,
       but the AcctNum differs from PCLaw. We will not recreate them &mdash;
-      verify whether the QBO number or the PCLaw number is canonical
+      verify whether the QuickBooks number or the PCLaw number is canonical
       before account mapping.
     </p>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>PCLaw #</th><th>PCLaw name</th><th>QBO #</th><th>QBO name</th></tr></thead>
+        <thead><tr><th>PCLaw #</th><th>PCLaw name</th><th>QuickBooks #</th><th>QuickBooks name</th></tr></thead>
         <tbody>
         {% for a in plan.soft_conflicts %}
           <tr>

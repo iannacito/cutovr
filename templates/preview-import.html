@@ -35,8 +35,8 @@
       {% if not qbo_connection.realm_id %}
         <p class="note">
           Tip: connect QuickBooks first &mdash; the preview compares your PCLaw
-          accounts against the chart of accounts in QBO. Connecting does not
-          post anything.
+          accounts against the chart of accounts in QuickBooks. Connecting does
+          not post anything.
         </p>
         <a class="btn btn-primary" href="{{ url_for('job_detail', job_id=job.id) }}">Back to migration &amp; connect QuickBooks</a>
       {% endif %}
@@ -131,8 +131,8 @@
     <p class="eyebrow" style="color:var(--error);">Unmapped accounts</p>
     <h2>These PCLaw accounts have no QuickBooks match yet</h2>
     <p class="muted">
-      Importing will be blocked until each of these is mapped to a QBO
-      account. Click below to pick a matching QBO account for each.
+      Importing will be blocked until each of these is mapped to a QuickBooks
+      account. Click below to pick a matching QuickBooks account for each.
     </p>
     <ul>
       {% for a in preview.unmapped_accounts %}

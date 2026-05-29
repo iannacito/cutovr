@@ -66,13 +66,19 @@ def t1_onboarding_page_renders():
         "debit",
         "credit",
         "Download sample CSV template",
-        "private beta",
+        # Production-ready guidance heading replaces the old beta disclaimer.
+        "Before your first real run",
         "Map accounts",
     ):
         assert needle in body, f"missing {needle!r} in /onboarding"
     assert "/onboarding/template.csv" in body
     assert "/onboarding/sample.csv" in body
-    print("T1 OK: /onboarding renders with required columns + beta disclaimer")
+    # The 'private beta guidance' parenthetical was removed for production
+    # polish — make sure we don't regress.
+    assert "private beta" not in body, (
+        "/onboarding should no longer say 'private beta'"
+    )
+    print("T1 OK: /onboarding renders with required columns + production guidance")
 
 
 def t2_template_csv_download():

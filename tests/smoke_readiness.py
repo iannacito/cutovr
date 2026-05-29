@@ -46,6 +46,7 @@ def _reset_app_env(env):
 
 
 _GOOD_FERNET = "TUk5IiNoXZBh4Ts1tqv-A7vKaakLBzUbm5ZGm-tIsHc="  # generated test value
+_HEALTHZ_TOKEN = "readiness-test-token"
 
 
 def _good_local_env():
@@ -63,7 +64,12 @@ def _good_local_env():
         "SECURITY_EMAIL": "security@pclawmigrate.com",
         "PRIVACY_CONTACT_EMAIL": "privacy@pclawmigrate.com",
         "PUBLIC_APP_URL": "https://www.pclawmigrate.com",
+        "HEALTHZ_TOKEN": _HEALTHZ_TOKEN,
     }
+
+
+def _detailed_url():
+    return f"/healthz/detailed?token={_HEALTHZ_TOKEN}"
 
 
 def t1_collect_checks_all_green():
@@ -128,23 +134,25 @@ def t2_required_failures_when_unset():
 
 
 def t3_healthz_exposes_readiness_block():
+    # Operator-only /healthz/detailed surfaces the readiness block —
+    # public /healthz must NOT (see smoke_health.py).
     appmod = _reset_app_env(_good_local_env())
     client = appmod.app.test_client()
-    r = client.get("/healthz")
+    r = client.get(_detailed_url())
     assert r.status_code == 200, r.status_code
     body = r.get_json()
-    # New surfaces
     assert "readiness" in body and isinstance(body["readiness"], dict), body
     assert "ready_for_go_live" in body, body
     assert isinstance(body["ready_for_go_live"], bool), body
-    # Backward-compat fields still present
     for k in ("status", "app_env", "secret_key_set", "encryption_key_set"):
-        assert k in body, f"missing legacy key {k}"
-    # Never expose actual secret values
+        assert k in body, f"missing key {k}"
     raw = r.get_data(as_text=True)
     assert "test-secret-DO-NOT-LEAK" not in raw
     assert "x" * 64 not in raw
     assert _GOOD_FERNET not in raw
+    # Public probe is locked down.
+    pub = client.get("/healthz")
+    assert pub.get_json() == {"status": "ok"}, pub.get_data(as_text=True)
     print("T3 healthz_exposes_readiness_block PASS")
 
 

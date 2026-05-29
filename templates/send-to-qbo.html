@@ -81,10 +81,8 @@
         {% endif %}
       </details>
 
-      <form action="{{ url_for('import_to_qbo', job_id=job.id) }}" method="post"
-            {% if not qbo_is_sandbox and qbo_real_import %}
-            onsubmit="return confirm('Post records to QuickBooks Online company {{ qbo_connection.company_name or 'your QuickBooks Online company' }}?');"
-            {% endif %}>
+      <form id="send-to-qbo-form"
+            action="{{ url_for('import_to_qbo', job_id=job.id) }}" method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         {% if not qbo_is_sandbox and qbo_real_import %}
           <label style="display:block;margin:var(--space-4) 0;">
@@ -93,7 +91,7 @@
           </label>
         {% endif %}
         <div class="actions-row" style="margin-top:var(--space-4);">
-          <button class="btn btn-primary btn-lg" type="submit"
+          <button id="send-to-qbo-btn" class="btn btn-primary btn-lg" type="submit"
                   data-testid="send-to-qbo-cta">
             {% if not qbo_is_sandbox and qbo_real_import %}
               Send to QuickBooks
@@ -103,6 +101,60 @@
           </button>
         </div>
       </form>
+
+      {# Plain-English loading state. Hidden on first render; revealed
+         after the form submits so the user knows the upload is still
+         working on larger imports. The form continues to submit
+         normally (no fetch / no JS-only path) — JS only disables the
+         button and shows the status panel so the page does not look
+         frozen. If JavaScript is off, the form still works; the user
+         just doesn't get the inline progress message. #}
+      <div id="send-to-qbo-progress"
+           data-testid="send-to-qbo-progress"
+           role="status" aria-live="polite"
+           style="display:none;margin-top:var(--space-5);padding:var(--space-4);
+                  border:1px solid var(--border, #ddd);border-radius:8px;
+                  background:var(--info-bg, #f4f8ff);">
+        <p style="margin:0;font-weight:600;">
+          <span class="spinner" aria-hidden="true"
+                style="display:inline-block;width:14px;height:14px;
+                       border:2px solid currentColor;border-right-color:transparent;
+                       border-radius:50%;vertical-align:-2px;margin-right:.5em;
+                       animation:spin 0.9s linear infinite;"></span>
+          Sending your data to QuickBooks&hellip;
+        </p>
+        <p class="muted" style="margin:.5em 0 0;">
+          This may take a few minutes for larger imports.
+          <strong>Please keep this tab open</strong> &mdash; we&rsquo;ll show the
+          summary as soon as QuickBooks confirms the entries.
+        </p>
+      </div>
+
+      <style>
+        @keyframes spin { to { transform: rotate(360deg); } }
+      </style>
+      <script>
+        (function () {
+          var form = document.getElementById("send-to-qbo-form");
+          var btn = document.getElementById("send-to-qbo-btn");
+          var panel = document.getElementById("send-to-qbo-progress");
+          if (!form || !btn || !panel) { return; }
+          form.addEventListener("submit", function (ev) {
+            {% if not qbo_is_sandbox and qbo_real_import %}
+              var confirmCompany = {{ (qbo_connection.company_name or 'your QuickBooks Online company')|tojson }};
+              if (!window.confirm("Post records to QuickBooks Online company " + confirmCompany + "?")) {
+                ev.preventDefault();
+                return;
+              }
+            {% endif %}
+            // Show the loading panel + disable the button so the user
+            // does not double-click while the import is in flight.
+            panel.style.display = "block";
+            btn.disabled = true;
+            btn.textContent = "Sending your data to QuickBooks…";
+          });
+        })();
+      </script>
       {% if not qbo_real_import %}
         <p class="muted" style="font-size:.88rem;margin-top:var(--space-3);">
           Demo mode &mdash; this simulates the import without touching QuickBooks.

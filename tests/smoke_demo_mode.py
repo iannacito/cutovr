@@ -230,22 +230,29 @@ def t8_unauthenticated_404_off_demo_deploy():
 
 
 def t9_healthz_exposes_demo_mode_flag():
-    """/healthz JSON includes demo_mode_enabled so Render configuration
-    can be verified externally without leaking secrets.
+    """/healthz/detailed (operator-only) includes demo_mode_enabled so
+    Render configuration can be verified externally without leaking it
+    to the public — public /healthz now returns only {status: ok}.
     """
     import json as _json
-    appmod = _reset_app({"DEMO_MODE": "true"})
+    token = "demo-mode-healthz-token"
+    appmod = _reset_app({"DEMO_MODE": "true", "HEALTHZ_TOKEN": token})
     c = appmod.app.test_client()
-    r = c.get("/healthz")
-    assert r.status_code == 200
+    # Public probe must NOT contain demo_mode_enabled.
+    pub = c.get("/healthz")
+    assert pub.status_code == 200
+    assert pub.get_json() == {"status": "ok"}, pub.get_data(as_text=True)
+    # Detailed (with token) reveals it.
+    r = c.get(f"/healthz/detailed?token={token}")
+    assert r.status_code == 200, r.status_code
     body = _json.loads(r.get_data(as_text=True))
     assert body.get("demo_mode_enabled") is True, f"expected demo_mode_enabled=true, got {body!r}"
 
-    appmod = _reset_app({})
+    appmod = _reset_app({"HEALTHZ_TOKEN": token})
     c = appmod.app.test_client()
-    body = _json.loads(c.get("/healthz").get_data(as_text=True))
+    body = _json.loads(c.get(f"/healthz/detailed?token={token}").get_data(as_text=True))
     assert body.get("demo_mode_enabled") is False, f"expected demo_mode_enabled=false, got {body!r}"
-    print("T9 OK: /healthz reports demo_mode_enabled")
+    print("T9 OK: /healthz/detailed reports demo_mode_enabled")
 
 
 def t6_duplicate_protection_unchanged_outside_demo_mode():

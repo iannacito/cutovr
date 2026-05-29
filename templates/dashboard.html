@@ -179,10 +179,42 @@
     {% endif %}
   </section>
 
+  {% if not at_upload_stage %}
+  <section id="start-new" style="margin-bottom:var(--space-8);">
+    <article class="card" data-testid="dashboard-start-new"
+             style="display:flex;flex-wrap:wrap;justify-content:space-between;
+                    align-items:center;gap:var(--space-4);padding:var(--space-5);">
+      <div>
+        <p class="eyebrow" style="margin:0 0 var(--space-2);">New migration</p>
+        <h2 style="margin:0;">Start a new client migration</h2>
+        <p class="muted" style="margin:var(--space-2) 0 0;max-width:60ch;">
+          Archives this firm&rsquo;s prior uploads and saved account matches in
+          {{ app_name }} and takes you back to Step 1. Nothing is deleted from
+          QuickBooks.
+        </p>
+      </div>
+      <form action="{{ url_for('welcome_back_start_fresh') }}" method="post"
+            onsubmit="return confirm('Start a new migration? Your in-progress uploads and account matches will be archived.');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-primary btn-lg" type="submit"
+                data-testid="dashboard-start-new-cta">
+          Start a new migration &rarr;
+        </button>
+      </form>
+    </article>
+  </section>
+  {% endif %}
+
   {% if firm_jobs and not at_upload_stage %}
+  {# Split firm jobs into the current (most-recent) migration and the
+     archive. Lawyers don't need to scroll a 20-row table when they
+     only care about what they're working on right now; the older jobs
+     stay accessible behind a quiet details section. #}
+  {% set current_jobs = firm_jobs[:5] %}
+  {% set archived_jobs = firm_jobs[5:] %}
   <section id="recent" style="margin-bottom:var(--space-10);">
     <div class="flex-between" style="margin-bottom:var(--space-4);">
-      <h2 style="margin:0;">Recent migrations</h2>
+      <h2 style="margin:0;">Current migration</h2>
       <a class="btn btn-link" href="{{ url_for('uploaded_reports') }}">View uploaded reports &rarr;</a>
     </div>
     <div class="card" style="padding:0;">
@@ -192,7 +224,7 @@
             <tr><th>Company</th><th>Status</th><th>Source file</th><th>Created</th></tr>
           </thead>
           <tbody>
-            {% for job in firm_jobs %}
+            {% for job in current_jobs %}
             <tr>
               <td><a href="{{ url_for('job_detail', job_id=job.id) }}">{{ job.company }}</a></td>
               <td><span class="badge {% if 'Imported' in (job.status or '') %}success{% elif 'failed' in (job.status or '')|lower or 'blocked' in (job.status or '')|lower %}error{% endif %}">{{ job.status }}</span></td>
@@ -204,6 +236,31 @@
         </table>
       </div>
     </div>
+    {% if archived_jobs %}
+      <details class="quiet" data-testid="dashboard-archived-jobs"
+               style="margin-top:var(--space-4);">
+        <summary>Earlier migrations ({{ archived_jobs|length }})</summary>
+        <div class="card" style="padding:0;margin-top:var(--space-3);">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Company</th><th>Status</th><th>Source file</th><th>Created</th></tr>
+              </thead>
+              <tbody>
+                {% for job in archived_jobs %}
+                <tr>
+                  <td><a href="{{ url_for('job_detail', job_id=job.id) }}">{{ job.company }}</a></td>
+                  <td><span class="badge {% if 'Imported' in (job.status or '') %}success{% elif 'failed' in (job.status or '')|lower or 'blocked' in (job.status or '')|lower %}error{% endif %}">{{ job.status }}</span></td>
+                  <td><code>{{ job.source_file }}</code></td>
+                  <td>{{ job.created_at[:10] }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+    {% endif %}
   </section>
   {% endif %}
 

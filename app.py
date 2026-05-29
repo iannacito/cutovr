@@ -1424,6 +1424,66 @@ def cutover_setup():
         }:
             accounting_basis = "unknown"
 
+        # Step 1 required-field validation: a blank form (or one missing
+        # the two answers downstream steps depend on) must NOT advance
+        # the workflow. Plain English error, stay on Step 1, preserve
+        # whatever the user did fill in so they don't lose context.
+        missing = []
+        if not cutover_date:
+            missing.append("your switchover date")
+        if not country:
+            missing.append("the country your firm operates in")
+        if missing:
+            if len(missing) == 1:
+                msg = (
+                    "Before you continue, please tell us "
+                    f"{missing[0]}."
+                )
+            else:
+                msg = (
+                    "Before you continue, please tell us "
+                    + ", ".join(missing[:-1])
+                    + " and "
+                    + missing[-1]
+                    + "."
+                )
+            flash(msg, "error")
+            ar_ap_strategy_default = ""
+            if demo_mode.is_demo_mode_enabled() and not ar_ap_strategy:
+                ar_ap_strategy_default = AR_AP_STRATEGY_SKIP
+            return render_template(
+                "cutover.html",
+                cutover={
+                    "cutover_date": cutover_date or "",
+                    "opening_balance_date": opening_balance_date or "",
+                    "period_start": period_start or "",
+                    "period_end": period_end or "",
+                    "country": country or "",
+                    "accounting_basis": accounting_basis or "",
+                    "migration_scope": migration_scope or "",
+                    "notes": notes or "",
+                    "qbo_company_name": qbo_company_name or "",
+                    "qbo_realm_id": qbo_realm_id or "",
+                    "clio_involved": clio_involved,
+                    "ar_ap_strategy": ar_ap_strategy or "",
+                },
+                guidance=cutover_workflow.GUIDANCE_TEXT,
+                country_choices=cutover_workflow.COUNTRY_CHOICES,
+                accounting_basis_choices=cutover_workflow.ACCOUNTING_BASIS_CHOICES,
+                ar_ap_strategy_choices=AR_AP_STRATEGY_CHOICES,
+                ar_ap_strategy_default=ar_ap_strategy_default,
+                ar_ap_guidance=guidance_for_strategy(
+                    ar_ap_strategy or ar_ap_strategy_default,
+                    country=country,
+                    accounting_basis=accounting_basis,
+                    clio_involved=clio_involved,
+                ),
+                **_workflow_stepper_context(
+                    firm_id,
+                    force_current_stage=customer_workflow.STAGE_SETUP,
+                ),
+            ), 400
+
         db.upsert_cutover_settings(
             firm_id,
             cutover_date=cutover_date,
@@ -2455,33 +2515,68 @@ def favicon_ico():
 
 @app.route("/healthz")
 def healthz():
-    """Lightweight, public health probe.
+    """Minimal, public liveness probe.
 
-    Reports presence (not values) of critical config so Render and humans
-    can confirm the deploy is healthy without leaking secrets. The detailed,
-    human-readable readiness checklist is at /readiness and requires login.
+    Returns only ``{status: 'ok'}`` so Render's health check (and any
+    external uptime monitor) can confirm the process is serving traffic
+    without leaking configuration, readiness flags, OAuth redirect URI,
+    or environment names. The detailed operator-only diagnostic moved
+    to ``/healthz/detailed`` (operator login + optional token).
     """
+    return jsonify({"status": "ok"}), 200
+
+
+def _healthz_token_valid():
+    """Return True if the request carries the HEALTHZ_TOKEN secret.
+
+    Lets infra/monitoring fetch detailed health without an operator
+    login session. The token comes from the env var ``HEALTHZ_TOKEN``
+    and may be passed as ``?token=`` or the ``X-Healthz-Token`` header.
+    If the env var is empty, token-based access is disabled.
+    """
+    expected = (os.environ.get("HEALTHZ_TOKEN") or "").strip()
+    if not expected:
+        return False
+    provided = (
+        request.args.get("token", "").strip()
+        or request.headers.get("X-Healthz-Token", "").strip()
+    )
+    if not provided:
+        return False
+    # constant-time compare to avoid timing oracles
+    import hmac
+    return hmac.compare_digest(expected, provided)
+
+
+@app.route("/healthz/detailed")
+def healthz_detailed():
+    """Operator-only health/diagnostic payload.
+
+    Returns the same configuration presence flags and readiness
+    booleans the old ``/healthz`` exposed, plus the configured OAuth
+    redirect URI and QuickBooks environment. Access requires either
+    an operator login session or the ``HEALTHZ_TOKEN`` secret. Never
+    exposes raw secret values — only booleans + the (public) redirect
+    URL.
+    """
+    if not (_is_operator() or _healthz_token_valid()):
+        # Generic 404 so we don't confirm the endpoint exists to the
+        # unauthenticated public.
+        abort(404)
     body = {
         "status": "ok",
         "app_env": APP_ENV,
         "qbo_environment": QBO_ENVIRONMENT,
         "qbo_real_import": QBO_REAL_IMPORT,
-        # Backward-compatible booleans (kept for existing scrapers).
         "secret_key_set": bool(os.environ.get("SECRET_KEY") or os.environ.get("APP_SECRET")),
         "encryption_key_set": bool(os.environ.get("ENCRYPTION_KEY")),
         "qbo_client_id_set": QBO_CLIENT_ID != "your-client-id-here" and bool(QBO_CLIENT_ID),
         "qbo_redirect_uri_set": bool(QBO_REDIRECT_URI) and not QBO_REDIRECT_URI.startswith("http://localhost"),
-        # The configured redirect URI itself (not a secret — it's the public
-        # callback URL registered with Intuit). Surfaced so operators can
-        # copy-paste and compare against their Intuit Developer app keys,
-        # which is the #1 cause of the "redirect_uri ... invalid" OAuth error.
         "configured_qbo_redirect_uri": QBO_REDIRECT_URI or None,
         "branding_support_email_set": not branding.is_placeholder_email(branding.SUPPORT_EMAIL),
         "branding_security_email_set": not branding.is_placeholder_email(branding.SECURITY_EMAIL),
         "demo_mode_enabled": demo_mode.is_demo_mode_enabled(),
     }
-    # Merge in the structured go-live readiness booleans. Only booleans
-    # are exposed here; hints + details stay behind login at /readiness.
     body["readiness"] = readiness.healthz_booleans(
         request_host=request.host, request_scheme=request.scheme,
     )
@@ -2496,9 +2591,12 @@ def healthz():
 def readiness_page():
     """Protected, human-readable go-live readiness checklist.
 
-    Same source of truth as /healthz, but includes remediation hints and
-    visual grouping so an operator can fix red items before flipping the
-    deploy live for real customers.
+    Same source of truth as the operator-only /healthz/detailed
+    endpoint, but includes remediation hints and visual grouping so
+    an operator can fix red items before flipping the deploy live for
+    real customers. Surfaces the configured QuickBooks OAuth redirect
+    URI and environment — the two values most often misconfigured —
+    without ever showing secret values.
     """
     checks = readiness.collect_checks(
         request_host=request.host, request_scheme=request.scheme,
@@ -2517,6 +2615,8 @@ def readiness_page():
         recommended_failing=[c for c in recommended if not c.ok],
         public_url=os.environ.get("PUBLIC_APP_URL", "").strip(),
         configured_qbo_redirect_uri=QBO_REDIRECT_URI,
+        configured_qbo_environment=QBO_ENVIRONMENT,
+        configured_qbo_real_import=QBO_REAL_IMPORT,
         request_host=request.host,
         request_scheme=request.scheme,
     )
