@@ -6,9 +6,9 @@ Run from project root:
 
 Covers the changes in the production-polish-security branch:
 
-  T1 Default branding has been switched from "Cutover" to "PCLaw Migrate"
-     and the brand mark renders without the legacy 'Cut<em>over</em>'
-     fragment.
+  T1 Default branding is "PC Law Migrate" (body copy / app_name) and the
+     header brand mark renders as the uppercase "PC LAW MIGRATE". Legacy
+     'Cut<em>over</em>' and 'PCLaw <em>Migrate</em>' wordmarks are gone.
 
   T2 Favicon assets (SVG, ICO redirect, manifest, apple-touch-icon)
      are referenced from the base template and reachable.
@@ -104,13 +104,15 @@ def _connect(c, firm, email, gl_bytes=GL):
 def t1_default_branding_pclaw_migrate():
     c = appmod.app.test_client()
     body = c.get("/login").get_data(as_text=True)
-    assert "PCLaw Migrate" in body, "default APP_NAME should be PCLaw Migrate"
+    assert "PC Law Migrate" in body, "default APP_NAME should be PC Law Migrate"
     # The legacy 'Cut<em>over</em>' fragment must be gone.
     assert "Cut<em>over</em>" not in body
     assert ">Cutover<" not in body
-    # Brand mark uses the new "PCLaw <em>Migrate</em>" form.
-    assert "PCLaw <em>Migrate</em>" in body
-    print("T1 OK: default branding is PCLaw Migrate with legacy Cutover wordmark removed")
+    # Brand mark in the header is the uppercase "PC LAW MIGRATE".
+    assert "PC LAW MIGRATE" in body
+    # The previous italic 'PCLaw <em>Migrate</em>' wordmark must be gone.
+    assert "PCLaw <em>Migrate</em>" not in body
+    print("T1 OK: default branding is PC Law Migrate with uppercase PC LAW MIGRATE brand mark")
 
 
 def t2_favicon_assets_present():

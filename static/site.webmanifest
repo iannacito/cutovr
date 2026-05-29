@@ -1,6 +1,6 @@
 {
-  "name": "PCLaw Migrate",
-  "short_name": "PCLaw Migrate",
+  "name": "PC Law Migrate",
+  "short_name": "PC Law Migrate",
   "description": "PCLaw to QuickBooks Online migration tool for law firms.",
   "icons": [
     { "src": "/static/favicon.svg", "type": "image/svg+xml", "sizes": "any" },
