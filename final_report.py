@@ -548,7 +548,7 @@ def build_report_pdf(
         topMargin=0.75 * inch,
         bottomMargin=0.75 * inch,
         title=f"Migration summary — {summary.firm_name}",
-        author="PCLaw Migrate",
+        author="PC Law Migrate",
     )
 
     styles = getSampleStyleSheet()

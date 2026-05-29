@@ -6,6 +6,20 @@
   <h1 class="display">Support &amp; <em>contact</em></h1>
   <p class="muted">Most issues have a quick answer below. If yours isn't here, send us the bundle described under &ldquo;Reporting an issue&rdquo; and we'll dig in.</p>
 
+  <section class="card" style="margin-top:var(--space-6);" data-testid="support-assistant-inline">
+    <h2>Try the assistant</h2>
+    <p class="muted">Tap a question for an instant answer. The floating
+      "Need help?" button in the corner opens the same assistant on
+      every page.</p>
+    <div class="support-assistant__topics" style="margin-top:var(--space-3);">
+      {% for topic in assistant_topics %}
+        <a class="support-assistant__topic"
+           href="{{ url_for('support') }}#support-assistant-panel"
+           data-testid="support-assistant-inline-topic">{{ topic.label }}</a>
+      {% endfor %}
+    </div>
+  </section>
+
   <section class="card" style="margin-top:var(--space-6);">
     <h2>Quick answers</h2>
     <ul class="secure-list">

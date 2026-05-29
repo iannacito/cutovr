@@ -261,7 +261,7 @@ def g1_qbo_guide_renders_with_expected_sections():
     body = r.get_data(as_text=True)
     expected_sections = [
         "New to QuickBooks Online",
-        "What PCLaw Migrate posts into QuickBooks",
+        "What PC Law Migrate posts into QuickBooks",
         "What does <em>not</em> happen automatically",
         "Where to find things in QuickBooks",
         "Chart of accounts",

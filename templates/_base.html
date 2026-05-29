@@ -29,7 +29,7 @@
   <header class="site-header">
     <div class="site-header__inner">
       <a href="{{ url_for('index') }}" class="brand-mark">
-        {% if app_name == "PCLaw Migrate" %}PCLaw <em>Migrate</em>{% else %}{{ app_name }}{% endif %}
+        {% if app_name == "PC Law Migrate" %}PC LAW <em>MIGRATE</em>{% else %}{{ app_name }}{% endif %}
       </a>
       <nav aria-label="Primary">
         {% if user %}
@@ -96,6 +96,66 @@
       </div>
     </div>
   </footer>
+  {# Floating support assistant — visible on every page. Deterministic
+     FAQ behind /support/assistant; never claims to access customer
+     QuickBooks/PCLaw data; always falls back to support email. #}
+  <div id="support-assistant"
+       class="support-assistant"
+       data-testid="support-assistant"
+       data-endpoint="{{ url_for('support_assistant_api') }}"
+       data-csrf="{{ csrf_token() }}"
+       data-support-email="{{ support_email }}">
+    <button type="button"
+            class="support-assistant__toggle"
+            data-testid="support-assistant-toggle"
+            aria-expanded="false"
+            aria-controls="support-assistant-panel">
+      <span aria-hidden="true">?</span>
+      <span>Need help?</span>
+    </button>
+    <section id="support-assistant-panel"
+             class="support-assistant__panel"
+             role="dialog"
+             aria-label="Ask PC Law Migrate"
+             hidden>
+      <header class="support-assistant__header">
+        <strong>Ask PC Law Migrate</strong>
+        <button type="button"
+                class="support-assistant__close"
+                data-testid="support-assistant-close"
+                aria-label="Close">&times;</button>
+      </header>
+      <div class="support-assistant__body" data-testid="support-assistant-body">
+        <p class="support-assistant__intro">
+          A small built-in assistant for common questions. I can't see
+          your QuickBooks or PCLaw data — for anything specific to your
+          account, email
+          <a href="mailto:{{ support_email }}">{{ support_email }}</a>.
+        </p>
+        <div class="support-assistant__topics" data-testid="support-assistant-topics">
+          {% for topic in support_assistant_topics %}
+            <button type="button"
+                    class="support-assistant__topic"
+                    data-query="{{ topic.query }}">{{ topic.label }}</button>
+          {% endfor %}
+        </div>
+        <ol class="support-assistant__log" data-testid="support-assistant-log" aria-live="polite"></ol>
+      </div>
+      <form class="support-assistant__form" data-testid="support-assistant-form">
+        <label class="visually-hidden" for="support-assistant-input">Your question</label>
+        <input type="text"
+               id="support-assistant-input"
+               name="query"
+               placeholder="Type your question…"
+               autocomplete="off"
+               maxlength="500"
+               required>
+        <button type="submit" class="btn btn-primary btn-sm">Ask</button>
+      </form>
+    </section>
+  </div>
+
   <script src="{{ url_for('static', filename='password-toggle.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='support-assistant.js') }}" defer></script>
 </body>
 </html>

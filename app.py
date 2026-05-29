@@ -86,6 +86,7 @@ from ar_ap_strategy import (
 )
 import qbo_error_hint
 import email_sender
+import support_assistant
 import cutover_workflow
 import customer_workflow
 import final_report
@@ -637,6 +638,9 @@ def inject_user():
     # to authorize a real QBO company against sandbox-only credentials.
     ctx["qbo_environment"] = QBO_ENVIRONMENT
     ctx["qbo_is_sandbox"] = (QBO_ENVIRONMENT == "sandbox")
+    # The floating support-assistant widget rendered in _base.html uses
+    # these to seed quick-start prompts before the first API call.
+    ctx["support_assistant_topics"] = support_assistant.suggested_topics()
     return ctx
 
 
@@ -1789,7 +1793,7 @@ def import_job_entry():
     if not _get_qbo_connection(primary["id"]):
         flash(
             "Connect QuickBooks first — Step 5 sends the prepared "
-            "entries from PCLaw Migrate to QuickBooks, so we need a "
+            "entries from PC Law Migrate to QuickBooks, so we need a "
             "connected QuickBooks Online company before we can post.",
             "info",
         )
@@ -1890,7 +1894,7 @@ def send_to_qbo_entry():
     if not qbo_conn:
         flash(
             "Connect QuickBooks first — Step 5 sends the prepared "
-            "entries from PCLaw Migrate to QuickBooks, so we need a "
+            "entries from PC Law Migrate to QuickBooks, so we need a "
             "connected QuickBooks Online company before we can post.",
             "info",
         )
@@ -2425,7 +2429,36 @@ def terms():
 @app.route("/support")
 def support():
     """Public support / contact page including a security-reporting hint."""
-    return render_template("support.html")
+    return render_template(
+        "support.html",
+        assistant_topics=support_assistant.suggested_topics(),
+    )
+
+
+@app.route("/support/assistant", methods=["POST"])
+def support_assistant_api():
+    """JSON endpoint for the floating support assistant widget.
+
+    Always returns 200 with a usable answer. The deterministic FAQ in
+    support_assistant.py never claims to access private customer data —
+    on no match it points to the support email so the user is never
+    stuck without a path forward.
+    """
+    payload = request.get_json(silent=True) or {}
+    query = payload.get("query", "") if isinstance(payload, dict) else ""
+    if not isinstance(query, str):
+        query = ""
+    # Cap query length so the API is never asked to chew on huge inputs.
+    query = query.strip()[:500]
+    result = support_assistant.answer(query)
+    return jsonify(
+        {
+            "topic": result["topic"],
+            "answer": result["answer"],
+            "matched": result["matched"],
+            "support_email": branding.SUPPORT_EMAIL,
+        }
+    )
 
 
 @app.route("/security")

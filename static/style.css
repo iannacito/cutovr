@@ -1,5 +1,5 @@
 /* =========================================================================
-   PCLaw Migrate — design system
+   PC Law Migrate — design system
 
    Direction: calm, minimal, premium. Lots of whitespace, restrained
    typography, soft hairlines, near-monochrome palette. Inspired by
@@ -1508,3 +1508,152 @@ details.quiet > *:not(summary) { margin-top: var(--space-3); }
 .pwd-toggle:hover { color: var(--ink); border-color: var(--ink-muted); background: var(--bg-2); }
 .pwd-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .pwd-toggle[aria-pressed="true"] { color: var(--ink); border-color: var(--ink); }
+
+/* ---- Floating support assistant --------------------------------- */
+.support-assistant {
+  position: fixed;
+  right: 1.25rem;
+  bottom: 1.25rem;
+  z-index: 60;
+  font-family: var(--font-sans);
+}
+.support-assistant__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  padding: .65rem 1rem;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--ink);
+  color: #fff;
+  font: 500 .9rem/1 var(--font-sans);
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0,0,0,.18);
+}
+.support-assistant__toggle:hover { background: #111a2b; }
+.support-assistant__toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.support-assistant__toggle span[aria-hidden] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 999px;
+  background: rgba(255,255,255,.18);
+  font-weight: 600;
+}
+.support-assistant__panel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + .6rem);
+  width: min(22rem, 92vw);
+  max-height: min(32rem, 80vh);
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  box-shadow: 0 16px 36px rgba(0,0,0,.18);
+  overflow: hidden;
+}
+.support-assistant__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: .65rem .85rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-2);
+}
+.support-assistant__close {
+  background: transparent;
+  border: 0;
+  font-size: 1.25rem;
+  line-height: 1;
+  color: var(--ink-muted);
+  cursor: pointer;
+  padding: .15rem .35rem;
+  border-radius: var(--radius-sm);
+}
+.support-assistant__close:hover { color: var(--ink); }
+.support-assistant__body {
+  padding: .85rem;
+  overflow-y: auto;
+  flex: 1;
+}
+.support-assistant__intro {
+  margin: 0 0 .65rem;
+  font-size: .82rem;
+  color: var(--ink-muted);
+  line-height: 1.5;
+}
+.support-assistant__topics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem;
+  margin-bottom: .65rem;
+}
+.support-assistant__topic {
+  padding: .35rem .65rem;
+  font: 500 .78rem/1.2 var(--font-sans);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink);
+  cursor: pointer;
+}
+.support-assistant__topic:hover {
+  background: #fff;
+  border-color: var(--ink-muted);
+}
+.support-assistant__log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+}
+.support-assistant__entry { display: flex; }
+.support-assistant__entry--user { justify-content: flex-end; }
+.support-assistant__entry--assistant { justify-content: flex-start; }
+.support-assistant__bubble {
+  max-width: 85%;
+  padding: .55rem .75rem;
+  border-radius: var(--radius-md);
+  font-size: .88rem;
+  line-height: 1.45;
+  word-wrap: break-word;
+}
+.support-assistant__entry--user .support-assistant__bubble {
+  background: var(--ink);
+  color: #fff;
+}
+.support-assistant__entry--assistant .support-assistant__bubble {
+  background: var(--bg-2);
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+.support-assistant__entry--pending .support-assistant__bubble { opacity: .7; }
+.support-assistant__form {
+  display: flex;
+  gap: .4rem;
+  padding: .65rem;
+  border-top: 1px solid var(--line);
+  background: var(--bg-2);
+}
+.support-assistant__form input[type="text"] {
+  flex: 1;
+  padding: .5rem .65rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  font: 400 .9rem/1 var(--font-sans);
+  background: #fff;
+}
+.support-assistant__form input[type="text"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.support-assistant__form .btn-sm {
+  padding: .45rem .75rem;
+  font: 500 .85rem/1 var(--font-sans);
+}
