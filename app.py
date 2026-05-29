@@ -5708,9 +5708,30 @@ def _import_to_qbo_impl(job_id):
                 return redirect(url_for("job_detail", job_id=job_id))
 
             type_index = build_account_type_index(qbo_accounts)
-            payloads = build_journal_entries_from_gl(
+            # ``posted_ids`` is the deterministic list of PCLaw transaction
+            # references AND merged source-journal group ids (one per
+            # payload). Used below to match the QBO response back to the
+            # source rows so the duplicate-guard and reconciliation
+            # report still line up after grouping rescues unbalanced
+            # references (see ``gl_grouping.plan_posting_groups``).
+            from pclaw_pipeline import plan_balanced_payloads
+            from gl_grouping import plan_posting_groups
+            payloads, posted_ids = plan_balanced_payloads(
                 rows, mapping, mapping_mode=mapping_mode, account_type_index=type_index
             )
+            # Build a map from each posted id -> the set of PCLaw
+            # transaction references it covers. For a balanced
+            # individual reference it's just {ref}; for a merged group
+            # it's the full set of source references. We record every
+            # source reference in the duplicate-guard table so a
+            # re-upload of the same file content (or any subset of the
+            # merged references) is still blocked as a duplicate.
+            _grouping_plan = plan_posting_groups(grouped_for_check)
+            sub_refs_by_posted_id: dict[str, list[str]] = {}
+            for ref in _grouping_plan["balanced_transactions"].keys():
+                sub_refs_by_posted_id[ref] = [ref]
+            for grp in _grouping_plan["merged_groups"]:
+                sub_refs_by_posted_id[grp["group_id"]] = list(grp["transaction_ids"])
 
             # QBO requires Entity (Customer/Vendor) on A/R and A/P lines.
             # Resolve and inject before posting; create missing entities.
@@ -5749,7 +5770,7 @@ def _import_to_qbo_impl(job_id):
             # silently double-post the early entries. We catch the
             # exception, write a partial-import row, then re-raise so the
             # outer handler still produces an error flash and audit.
-            txn_ids = list(grouped_for_check.keys())
+            txn_ids = posted_ids
             created = []
             created_transactions = []
             try:
@@ -5762,12 +5783,28 @@ def _import_to_qbo_impl(job_id):
                         "TxnDate": je.get("TxnDate"),
                         "transaction_id": txn_id,
                     })
+                    # Record the merged group id (or single ref) under
+                    # its own row, plus every underlying PCLaw reference
+                    # for merged groups. Recording sub-refs keeps the
+                    # duplicate-guard correct: re-uploading the same
+                    # file (even a re-bucketed corrected copy) is still
+                    # blocked by transaction_id match.
+                    refs_for_id = sub_refs_by_posted_id.get(txn_id, [txn_id])
                     created_transactions.append({
                         "transaction_id": txn_id,
                         "qbo_je_id": je.get("Id"),
                         "doc_number": je.get("DocNumber"),
                         "txn_date": je.get("TxnDate"),
                     })
+                    for sub in refs_for_id:
+                        if sub == txn_id:
+                            continue
+                        created_transactions.append({
+                            "transaction_id": sub,
+                            "qbo_je_id": je.get("Id"),
+                            "doc_number": je.get("DocNumber"),
+                            "txn_date": je.get("TxnDate"),
+                        })
             except Exception as partial_e:  # noqa: BLE001
                 if created_transactions:
                     try:
@@ -5776,12 +5813,12 @@ def _import_to_qbo_impl(job_id):
                             realm_id=realm_id,
                             file_sha256=job.get("file_sha256", ""),
                             company_name=qbo_conn.get("company_name"),
-                            transaction_count=len(created_transactions),
+                            transaction_count=len(created),
                             debit_total=Decimal("0"),
                             credit_total=Decimal("0"),
                             status="partial",
                             notes=(
-                                f"Partial import: {len(created_transactions)} of "
+                                f"Partial import: {len(created)} of "
                                 f"{len(txn_ids)} journal entries posted before "
                                 f"the run failed."
                             ),
@@ -5791,7 +5828,7 @@ def _import_to_qbo_impl(job_id):
                         job["last_import_id"] = partial_import_id
                         job["partial_import"] = {
                             "import_id": partial_import_id,
-                            "posted_count": len(created_transactions),
+                            "posted_count": len(created),
                             "total_count": len(txn_ids),
                         }
                         _audit(
@@ -5799,7 +5836,7 @@ def _import_to_qbo_impl(job_id):
                             target_type="job",
                             target_id=job_id,
                             details=(
-                                f"{len(created_transactions)} of {len(txn_ids)} JEs "
+                                f"{len(created)} of {len(txn_ids)} JEs "
                                 f"posted before failure; recorded as partial so "
                                 f"retry de-dupes correctly."
                             ),
@@ -8001,10 +8038,19 @@ def delete_job(job_id):
     last_import_id = job.get("last_import_id")
 
     try:
-        if "encrypted_file" in job:
-            (UPLOAD_DIR / job["encrypted_file"]).unlink(missing_ok=True)
-        if "encrypted_output" in job:
-            (OUTPUT_DIR / job["encrypted_output"]).unlink(missing_ok=True)
+        # ``job`` may carry the key with a None value (e.g. for jobs that
+        # never produced an output file, or were created from a re-walked
+        # workflow where the encrypted path was cleared). ``Path / None``
+        # raises ``TypeError: unsupported operand type(s) for /:
+        # 'PosixPath' and 'NoneType'`` and bails out before the DB row /
+        # in-memory state is cleared, leaving the user stuck with a
+        # job they can't delete (Cesar QA 2026-05-29). Guard each path.
+        enc_file = job.get("encrypted_file")
+        if enc_file:
+            (UPLOAD_DIR / enc_file).unlink(missing_ok=True)
+        enc_out = job.get("encrypted_output")
+        if enc_out:
+            (OUTPUT_DIR / enc_out).unlink(missing_ok=True)
 
         if job_id in qbo_connections:
             del qbo_connections[job_id]

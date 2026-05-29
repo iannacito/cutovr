@@ -352,6 +352,60 @@
   </section>
   {% endif %}
 
+  {% if preview.merged_groups %}
+  <section class="card" data-testid="merged-groups-card"
+           style="background:#f1f7f0;border:1px solid #b8d4b3;">
+    <p class="eyebrow" style="color:#2b5d28;">Related rows grouped safely</p>
+    <h2>We found {{ preview.merged_groups|length }} group{% if preview.merged_groups|length != 1 %}s{% endif %}
+      of PCLaw rows that balance together.</h2>
+    <p class="muted" style="max-width:62ch;">
+      Some PCLaw reference numbers don&rsquo;t balance on their own, but the
+      related rows that share the same source-journal tag (for example
+      <code>GB</code>, <code>GJ</code>, <code>CER</code>) do balance when posted
+      together. We&rsquo;ll send each of these groups to QuickBooks as one
+      balanced journal entry. Your debits and credits still match dollar
+      for dollar &mdash; nothing unsafe goes through.
+    </p>
+    <div class="table-wrap" style="margin-top:var(--space-3);">
+      <table>
+        <thead>
+          <tr>
+            <th>Source-journal tag</th>
+            <th>PCLaw references</th>
+            <th>Lines</th>
+            <th>Debits</th>
+            <th>Credits</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for g in preview.merged_groups %}
+          <tr>
+            <td><code>{{ g.token }}</code></td>
+            <td>{{ g.transaction_ids|join(', ') }}</td>
+            <td>{{ g.line_count }}</td>
+            <td>{{ g.debits }}</td>
+            <td>{{ g.credits }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <details class="quiet" style="margin-top:var(--space-3);">
+      <summary>Why are these grouped?</summary>
+      <p class="muted" style="max-width:62ch;font-size:.9rem;">
+        PCLaw sometimes splits one bookkeeping batch &mdash; payroll, for
+        example &mdash; across several reference numbers, with the offsetting
+        side on a different reference. Looked at one reference at a time,
+        the entries look unbalanced. Looked at by source-journal tag (the
+        first word in the memo, e.g. <code>GB</code> for General Bank), they
+        balance to the cent. We only group rows that share a tag and that
+        sum to zero debit/credit difference, so the result is always a
+        valid QuickBooks journal entry.
+      </p>
+    </details>
+  </section>
+  {% endif %}
+
   {% if preview.blocked_transactions %}
   <section class="card error-panel" data-testid="blocked-transactions-card">
     <p class="eyebrow" style="color:var(--error);">Some transactions need a fix first</p>
