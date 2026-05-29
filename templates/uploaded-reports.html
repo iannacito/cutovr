@@ -36,7 +36,7 @@
                 <td><code>{{ job.source_file }}</code></td>
                 <td>{{ job.report_type_label }}</td>
                 <td>
-                  <span class="badge {% if 'Imported' in (job.status or '') %}success{% elif 'failed' in (job.status or '')|lower or 'blocked' in (job.status or '')|lower %}error{% endif %}">{{ job.status }}</span>
+                  <span class="badge {% if 'Imported' in (job.status or '') %}success{% elif 'failed' in (job.status or '')|lower or 'blocked' in (job.status or '')|lower %}error{% endif %}">{{ job.status|customer_status }}</span>
                 </td>
                 <td>{{ (job.created_at or '')[:10] }}</td>
                 <td>

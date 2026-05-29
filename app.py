@@ -513,6 +513,39 @@ def _inject_csrf():
     return {"csrf_token": csrf_token}
 
 
+_CUSTOMER_STATUS_REWRITES = (
+    # PCLaw Migrate brand rules: customer-facing UI says "QuickBooks",
+    # not "QBO". Legacy jobs persisted with "QBO" tokens in the status
+    # column. Rewrite at render time so existing rows in the DB display
+    # cleanly without a one-off backfill migration.
+    (" QBO ", " QuickBooks "),
+    ("QBO connection", "QuickBooks connection"),
+    ("QBO preview", "QuickBooks preview"),
+    ("QBO error", "QuickBooks error"),
+    ("Import to QBO", "Import to QuickBooks"),
+    ("for QBO", "for QuickBooks"),
+)
+
+
+@app.template_filter("customer_status")
+def _customer_status(value):
+    """Translate persisted job-status strings to customer-friendly text.
+
+    Old job rows carry tokens like "Chart of Accounts ready for QBO
+    preview". The customer-facing brand is "QuickBooks" — this filter
+    rewrites those tokens at render time so we don't need a one-off
+    DB migration to fix already-persisted state. Operator-only pages
+    do NOT apply this filter (they keep the raw value for debugging).
+    """
+    if value is None:
+        return ""
+    text = str(value)
+    for old, new in _CUSTOMER_STATUS_REWRITES:
+        if old in text:
+            text = text.replace(old, new)
+    return text
+
+
 @app.before_request
 def _csrf_protect():
     if CSRF_DISABLED:
@@ -838,6 +871,52 @@ def _audit(action, target_type=None, target_id=None, details=None):
         target_type=target_type,
         target_id=target_id,
         details=_sanitize_audit_details(details),
+    )
+
+
+def _log_validation_context(action, job, *, preflight=None, preview=None,
+                            extra=None):
+    """Emit a structured audit entry for a validation / import failure.
+
+    Cesar's 2026-05-29 QA asked for "a better log at this point" — when
+    validation fails, the support team needs to know:
+      - job id (already auditable)
+      - file name + report type
+      - row count / blank rows skipped / blocker counts
+      - date parse failures and other row_quality kinds
+      - first few reason codes (NOT the cell contents)
+
+    We deliberately do NOT include row contents, descriptions, account
+    numbers, customer names, or amounts: those are sensitive ledger
+    detail. Only counts and reason-code histograms ship to the log.
+    """
+    pf = preflight or {}
+    pv = preview or {}
+    parts = []
+    parts.append(f"file={(job or {}).get('source_file') or ''}")
+    parts.append(f"report_type={(job or {}).get('report_type') or ''}")
+    if pf:
+        parts.append(f"line_count={pf.get('line_count') or 0}")
+        parts.append(f"blank_skipped={pf.get('blank_rows_skipped') or 0}")
+        parts.append(f"missing_date={pf.get('rows_missing_date') or 0}")
+        parts.append(f"unparseable_date={pf.get('rows_unparseable_date') or 0}")
+        parts.append(f"missing_account={pf.get('rows_missing_account') or 0}")
+        parts.append(f"begin_bal={pf.get('beginning_balance_row_count') or 0}")
+        parts.append(f"balanced={pf.get('balanced')}")
+    if pv:
+        parts.append(f"unmapped={pv.get('unmapped_account_count') or 0}")
+        parts.append(f"blocked_txn={len(pv.get('blocked_transactions') or [])}")
+        kinds = pv.get("row_quality_counts") or {}
+        if kinds:
+            kind_str = ",".join(f"{k}:{v}" for k, v in sorted(kinds.items()))
+            parts.append(f"row_kinds={kind_str}")
+    if extra:
+        parts.append(str(extra))
+    _audit(
+        action,
+        target_type="job",
+        target_id=(job or {}).get("id"),
+        details=" ".join(parts),
     )
 
 
@@ -1844,6 +1923,50 @@ def send_to_qbo_entry():
             detail = " Missing: " + "; ".join(missing) + "."
         flash(head + detail, "error")
         return redirect(url_for("account_mapping", job_id=blocked_job_id))
+
+    # Preflight gate: validation must have caught nothing actionable.
+    # Cesar's 2026-05-29 QA found Send-to-QuickBooks shown for a GL whose
+    # preflight still flagged single-sided beginning-balance rows. Trust
+    # the preflight summary attached to the job at upload time — if it
+    # found problem rows or beginning balances or an unbalanced TB,
+    # send is not safe.
+    primary_preflight = primary.get("preflight") or {}
+    if primary_preflight and not primary_preflight.get("ready", True):
+        _log_validation_context(
+            "step5_blocked_by_preflight",
+            primary,
+            preflight=primary_preflight,
+        )
+    if primary_preflight:
+        if primary_preflight.get("beginning_balance_row_count"):
+            flash(
+                "Your general-ledger file contains beginning-balance rows. "
+                "Move them to the opening trial balance from Step 2 (Starting "
+                "Balances), then re-upload the GL.",
+                "error",
+            )
+            return redirect(url_for("preview_import", job_id=primary["id"]))
+        if (
+            primary_preflight.get("problem_rows")
+            or primary_preflight.get("rows_unparseable_date")
+            or primary_preflight.get("rows_missing_date")
+            or primary_preflight.get("rows_missing_account")
+        ):
+            flash(
+                "Some rows still need a fix before we can send to "
+                "QuickBooks. Open Step 4 to see what to fix, or download "
+                "the validation report.",
+                "error",
+            )
+            return redirect(url_for("preview_import", job_id=primary["id"]))
+        if primary_preflight.get("line_count") and not primary_preflight.get("balanced", True):
+            flash(
+                "Your general-ledger file is not balanced (debits don't "
+                "equal credits). Fix the source CSV and re-upload from "
+                "Step 2.",
+                "error",
+            )
+            return redirect(url_for("preview_import", job_id=primary["id"]))
 
     cutover, items, _next = _build_firm_checklist(firm_id)
     stages = customer_workflow.build_customer_stages(
@@ -2947,7 +3070,7 @@ def _process_uploaded_csv(
             preflight = build_preflight_summary(_gl_rows, _fieldnames)
             preflight["report_type"] = REPORT_GENERAL_LEDGER
             preflight["report_label"] = REPORT_LABELS[REPORT_GENERAL_LEDGER]
-            jobs[job_id]["status"] = "Ready for QBO connection"
+            jobs[job_id]["status"] = "Ready for QuickBooks connection"
             jobs[job_id]["summary"] = {
                 "row_count": _row_count,
                 "format": "GL (transaction_id)",
@@ -2983,7 +3106,7 @@ def _process_uploaded_csv(
             coa_rows, _fn, missing = parse_chart_of_accounts(temp_path)
             preflight = build_coa_preflight(coa_rows, _fn, missing)
             jobs[job_id]["status"] = (
-                "Chart of Accounts ready for QBO preview"
+                "Chart of Accounts ready for QuickBooks preview"
                 if preflight["ready"]
                 else "Chart of Accounts uploaded with warnings"
             )
@@ -2997,7 +3120,7 @@ def _process_uploaded_csv(
             message = (
                 "Chart of Accounts file accepted. Connect QuickBooks to "
                 "see which accounts already exist and which would be "
-                "created. No QBO writes happen until you confirm."
+                "created. Nothing is written to QuickBooks until you confirm."
             )
             category = "success" if preflight["ready"] else "error"
         elif effective_report_type == REPORT_TRIAL_BALANCE:
@@ -3341,16 +3464,39 @@ def upload_bulk():
     )
 
     if summary["categorized"]:
+        # Count any items the validator still flagged as not-ready so the
+        # flash message can say "X items still need attention" instead
+        # of "Amazing!". The bulk record stamps per-file preflight, but
+        # we already have the aggregate counts in ``summary`` and on
+        # each result. A file that parsed as GL but failed preflight
+        # shows up as categorized AND has ``preflight.ready == False``.
+        not_ready = 0
+        for entry in aggregated:
+            jid = entry.get("job_id")
+            if not jid:
+                continue
+            jrec = jobs.get(jid) or {}
+            pf = jrec.get("preflight") or {}
+            if pf and not pf.get("ready", True):
+                not_ready += 1
         if summary["needs_review"]:
             flash(
                 f"Got it — {len(files)} file(s) uploaded. "
                 "A few need a quick look below.",
                 "info",
             )
+        elif not_ready:
+            # Cesar's QA on 2026-05-29 saw a "ready to send" message on
+            # an upload whose preflight still listed blockers. Be plain.
+            flash(
+                f"We checked the file. {not_ready} item(s) still need "
+                "attention before we can send to QuickBooks. See the "
+                "details below.",
+                "error",
+            )
         else:
             flash(
-                "Amazing! Your files are uploaded and we figured out "
-                "what each one is.",
+                "Your file is ready. We checked it and it looks good.",
                 "success",
             )
     else:
@@ -3582,11 +3728,37 @@ def bulk_upload_append(bulk_id):
             f"{added_categorized} newly categorized"
         ),
     )
-    flash(
-        f"Added {len(files)} more file(s). "
-        f"{added_categorized} were identified automatically.",
-        "success" if added_categorized else "info",
-    )
+    # Mirror the "X items still need attention" plain-English check from
+    # the initial upload so a re-uploaded "corrected file" surfaces any
+    # remaining preflight blockers instead of silently appearing ready.
+    not_ready = 0
+    for entry in new_entries:
+        jid = entry.get("job_id")
+        if not jid:
+            continue
+        jrec = jobs.get(jid) or {}
+        pf = jrec.get("preflight") or {}
+        if pf and not pf.get("ready", True):
+            not_ready += 1
+    if not_ready:
+        flash(
+            f"We checked the corrected file. {not_ready} item(s) still "
+            "need attention before we can send to QuickBooks. See the "
+            "details below.",
+            "error",
+        )
+    elif added_categorized:
+        flash(
+            f"Added {len(files)} more file(s). "
+            "Your file is ready to send to QuickBooks.",
+            "success",
+        )
+    else:
+        flash(
+            f"Added {len(files)} more file(s). "
+            "A few need a quick look below.",
+            "info",
+        )
     return redirect(url_for("bulk_upload_review", bulk_id=bulk_id))
 
 
@@ -5451,7 +5623,7 @@ def _import_to_qbo_impl(job_id):
                         f"Duplicate import blocked: this exact file was already imported "
                         f"to this QuickBooks company on {prior['created_at'][:19].replace('T', ' ')} UTC "
                         f"(import #{prior['id']}, {prior['transaction_count']} JEs). "
-                        "Delete the prior import in QBO if you really want to re-post, "
+                        "Delete the prior import in QuickBooks if you really want to re-post, "
                         "or use a different ledger file.",
                         "error",
                     )
@@ -5469,7 +5641,7 @@ def _import_to_qbo_impl(job_id):
                 flash(
                     "Duplicate import blocked: these transaction_id values already "
                     f"exist in a prior successful import to this company: {sorted(already)}. "
-                    "Remove them from the CSV (or delete the prior JEs in QBO) and retry.",
+                    "Remove them from the CSV (or delete the prior entries in QuickBooks) and retry.",
                     "error",
                 )
                 return redirect(url_for("job_detail", job_id=job_id))
@@ -5712,7 +5884,7 @@ def _import_to_qbo_impl(job_id):
             )
 
     except QBOError as e:
-        job["status"] = "Import failed (QBO error)"
+        job["status"] = "Import failed (QuickBooks error)"
         job["last_error"] = qbo_error_hint.parse(str(e), intuit_tid=e.intuit_tid)
         _save_job(job_id)
         _audit(
@@ -5862,7 +6034,8 @@ def preview_import(job_id):
 
     if rows is None and not preview_error:
         preview_error = (
-            "This CSV is not in the General Ledger format expected for QBO import. "
+            "This CSV is not in the General Ledger format expected for the "
+            "QuickBooks import. "
             "Re-upload with columns: " + ", ".join(GL_REQUIRED_COLUMNS) + "."
         )
 
@@ -5887,6 +6060,13 @@ def preview_import(job_id):
     _audit("import_preview", target_type="job", target_id=job_id,
            details=(f"je={preview['journal_entry_count']} unmapped={preview['unmapped_account_count']}"
                     if preview else preview_error or "no preview"))
+    if preview and not preview.get("would_post"):
+        _log_validation_context(
+            "import_preview_blocked",
+            job,
+            preflight=job.get("preflight"),
+            preview=preview,
+        )
 
     # Decide which blocker (if any) the user must resolve. The stepper
     # CTA and the in-page primary action key off this so the user never
@@ -7975,6 +8155,13 @@ def _review_blocker_kind(preview, preview_error):
         return "preview_error"
     if preview.get("unmapped_account_count", 0) > 0:
         return "unmatched"
+    if preview.get("beginning_balance_rows"):
+        # Beginning-balance rows in the GL must move to Starting
+        # Balances before we can send anything — otherwise the GL
+        # import double-posts the opening trial balance.
+        return "beginning_balance"
+    if preview.get("problem_rows"):
+        return "row_quality"
     if preview.get("blocked_transactions"):
         return "blocked_txns"
     if not preview.get("balanced", True):

@@ -16,6 +16,7 @@ flash messages and the job-detail page safe to share with support.
 
 from decimal import Decimal
 
+from gl_row_quality import classify_gl_rows, is_blank_row
 from pclaw_pipeline import (
     GL_REQUIRED_COLUMNS,
     group_rows_by_transaction,
@@ -63,7 +64,15 @@ def build_preflight_summary(rows, fieldnames=None):
     rows_missing_account = 0
     rows_missing_date = 0
 
-    for row in rows:
+    # Truly empty rows (blank trailing rows from Excel, etc.) are skipped
+    # so the counts the user sees reflect the real ledger content. Rows
+    # with a real amount but a missing or unparseable date still count
+    # against ``rows_missing_date`` so the preflight blocks them.
+    significant_rows = [r for r in rows if not is_blank_row(r)]
+
+    quality = classify_gl_rows(significant_rows)
+
+    for row in significant_rows:
         debits += money(row.get("debit"))
         credits += money(row.get("credit"))
         key = _row_account_key(row)
@@ -74,19 +83,29 @@ def build_preflight_summary(rows, fieldnames=None):
         if not (row.get("date") or "").strip():
             rows_missing_date += 1
 
-    transactions = group_rows_by_transaction(rows) if rows else {}
+    transactions = group_rows_by_transaction(significant_rows) if significant_rows else {}
+
+    rows_unparseable_date = quality.counts_by_kind().get("unparseable_date", 0)
+    rows_single_sided = quality.counts_by_kind().get("single_sided", 0)
+    beginning_balance_row_count = len(quality.beginning_balance_rows)
 
     summary = {
         "transaction_count": len(transactions),
-        "line_count": len(rows),
+        "line_count": len(significant_rows),
+        "blank_rows_skipped": quality.blank_rows,
         "total_debits": f"{debits:.2f}",
         "total_credits": f"{credits:.2f}",
-        "balanced": (debits == credits) and len(rows) > 0,
+        "balanced": (debits == credits) and len(significant_rows) > 0,
         "unique_accounts": sorted(accounts),
         "unique_account_count": len(accounts),
         "missing_required_columns": missing_columns,
         "rows_missing_account": rows_missing_account,
         "rows_missing_date": rows_missing_date,
+        "rows_unparseable_date": rows_unparseable_date,
+        "rows_single_sided": rows_single_sided,
+        "beginning_balance_row_count": beginning_balance_row_count,
+        "problem_rows": [r.to_dict() for r in quality.problem_rows],
+        "beginning_balance_rows": [r.to_dict() for r in quality.beginning_balance_rows],
     }
     summary["ready"] = (
         not missing_columns
@@ -94,6 +113,8 @@ def build_preflight_summary(rows, fieldnames=None):
         and summary["line_count"] > 0
         and rows_missing_account == 0
         and rows_missing_date == 0
+        and rows_unparseable_date == 0
+        and beginning_balance_row_count == 0
     )
     return summary
 
