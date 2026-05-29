@@ -351,6 +351,8 @@ def build_customer_stages(
     match_blocked: bool = False,
     match_blocked_job_id: Optional[str] = None,
     force_current_stage: Optional[str] = None,
+    review_blocker: Optional[str] = None,
+    review_job_id: Optional[str] = None,
 ) -> List[WorkflowStage]:
     """Project the detailed checklist into the 6-stage customer stepper.
 
@@ -514,6 +516,58 @@ def build_customer_stages(
                         f"/jobs/{match_blocked_job_id}/account-mapping"
                     )
             stage.cta_label = "Create missing QuickBooks accounts"
+            break
+
+    # Review-stage CTA override. When the user is on the Step 4 review
+    # page, the stepper-level CTA must reflect the *actual* blocker the
+    # page is showing — not the generic "Proceed to Step 4: Review
+    # import" copy, and never a stale "Create missing QuickBooks
+    # accounts" button when accounts are already matched.
+    if review_blocker:
+        for stage in stages:
+            if stage.key != STAGE_REVIEW or stage.status != STAGE_STATUS_CURRENT:
+                continue
+            def _u(endpoint, fallback, **kw):
+                if url_for is None:
+                    return fallback
+                try:
+                    return url_for(endpoint, **kw)
+                except Exception:
+                    return fallback
+            if review_blocker == "ready":
+                stage.cta_label = "Step 5: Send to QuickBooks"
+                stage.cta_url = _u(
+                    "send_to_qbo_entry", "/send-to-qbo"
+                )
+            elif review_blocker == "unmatched":
+                if review_job_id:
+                    stage.cta_url = _u(
+                        "account_mapping",
+                        f"/jobs/{review_job_id}/account-mapping",
+                        job_id=review_job_id,
+                    )
+                else:
+                    stage.cta_url = _u(
+                        "match_accounts_entry", "/match-accounts"
+                    )
+                stage.cta_label = "Match accounts"
+            elif review_blocker in ("blocked_txns", "unbalanced"):
+                if review_job_id:
+                    stage.cta_url = _u(
+                        "validation_report_csv",
+                        f"/jobs/{review_job_id}/validation-report.csv",
+                        job_id=review_job_id,
+                    )
+                else:
+                    stage.cta_url = ""
+                stage.cta_label = "Download validation report"
+            else:
+                # Preview unavailable / generic error — suppress the
+                # stepper CTA. The in-page panel surfaces the right
+                # recovery action (re-upload, reconnect QuickBooks, etc.)
+                # so a duplicate CTA in the stepper would only confuse.
+                stage.cta_label = ""
+                stage.cta_url = ""
             break
 
     return stages

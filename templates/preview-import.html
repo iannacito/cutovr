@@ -65,9 +65,26 @@
         <dt>Ready to send?</dt>
         <dd>
           {% if preview.would_post %}
-            <span class="badge success">Yes &mdash; safe to send</span>
+            <span class="badge success" data-testid="ready-yes">Yes &mdash; safe to send</span>
           {% else %}
-            <span class="badge error">No &mdash; resolve the items below first</span>
+            <span class="badge error" data-testid="ready-no">No &mdash; one thing to do first</span>
+            {% if review_blocker == 'unmatched' %}
+              <span class="muted" data-testid="ready-reason-unmatched">
+                &mdash; finish matching {{ preview.unmapped_account_count }}
+                account{% if preview.unmapped_account_count != 1 %}s{% endif %}.
+              </span>
+            {% elif review_blocker == 'blocked_txns' %}
+              <span class="muted" data-testid="ready-reason-blocked">
+                &mdash; fix
+                {{ preview.blocked_transactions|length }}
+                row{% if preview.blocked_transactions|length != 1 %}s{% endif %}
+                that QuickBooks would reject.
+              </span>
+            {% elif review_blocker == 'unbalanced' %}
+              <span class="muted" data-testid="ready-reason-unbalanced">
+                &mdash; debits and credits don&rsquo;t balance overall.
+              </span>
+            {% endif %}
           {% endif %}
         </dd>
       </div>
@@ -95,9 +112,15 @@
       </dl>
     </details>
 
-    <div class="actions-row" style="margin-top:var(--space-4);">
-      <a class="btn" href="{{ url_for('account_mapping', job_id=job.id) }}">Match accounts</a>
-      <a class="btn btn-link" href="{{ url_for('validation_report_csv', job_id=job.id) }}">
+    <div class="actions-row" style="margin-top:var(--space-4);"
+         data-testid="step4-at-a-glance-actions">
+      {% if review_blocker == 'unmatched' %}
+        <a class="btn" href="{{ url_for('account_mapping', job_id=job.id) }}">
+          Match accounts
+        </a>
+      {% endif %}
+      <a class="btn btn-link"
+         href="{{ url_for('validation_report_csv', job_id=job.id) }}">
         Download validation report (CSV)
       </a>
     </div>
@@ -176,14 +199,14 @@
   </section>
 
   {% if preview.customers or preview.vendors %}
-  <section class="card">
+  <section class="card" data-testid="preview-customers-vendors">
     <p class="eyebrow">Customers &amp; Vendors</p>
-    <h2>Entities that would be looked up or created</h2>
+    <h2>Names we&rsquo;ll add to QuickBooks for you</h2>
     <p class="muted">
-      QuickBooks requires a Customer on every Accounts Receivable line and a
-      Vendor on every Accounts Payable line. Any name shown below that is
-      not already in your QBO company will be <strong>created</strong> as
-      part of the import.
+      QuickBooks needs a customer on receivable lines and a vendor on
+      payable lines. We&rsquo;ll create only the names needed for this
+      import &mdash; nothing more. Any name shown below that isn&rsquo;t
+      already in QuickBooks will be added as part of the import.
     </p>
     {% if preview.customers %}
     <h3 style="margin-top:var(--space-3);">Customers</h3>
@@ -205,27 +228,64 @@
   {% endif %}
 
   {% if preview.blocked_transactions %}
-  <section class="card error-panel">
-    <p class="eyebrow" style="color:var(--error);">Blocked transactions</p>
-    <h2>These rows would be rejected by QuickBooks</h2>
-    <p class="muted">
-      Either fix these in your CSV and re-upload, or remove them from the
-      export before retrying.
+  <section class="card error-panel" data-testid="blocked-transactions-card">
+    <p class="eyebrow" style="color:var(--error);">Some rows need a fix first</p>
+    <h2>Some rows need to be fixed before QuickBooks will accept them.</h2>
+    <p class="muted" style="max-width:62ch;" data-testid="blocked-transactions-plain-summary">
+      We found <strong>{{ preview.blocked_transactions|length }}</strong>
+      transaction{% if preview.blocked_transactions|length != 1 %}s{% endif %}
+      that QuickBooks would reject as-is &mdash; usually because the
+      debits and credits don&rsquo;t match, or only one side of the entry
+      is on the row. To fix:
     </p>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Transaction reference</th><th>Entries</th><th>Reasons</th></tr></thead>
-        <tbody>
-          {% for b in preview.blocked_transactions %}
-          <tr>
-            <td><code>{{ b.transaction_id }}</code></td>
-            <td>{{ b.line_count }}</td>
-            <td>{{ b.reasons|join('; ') }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+    <ol class="muted" style="max-width:62ch;font-size:.95rem;">
+      <li>Download the validation report below.</li>
+      <li>Open it in Excel or Google Sheets and correct the listed rows
+        in your PCLaw CSV.</li>
+      <li>Upload the corrected file from
+        <a href="{{ url_for('dashboard') }}#intake">Step 2: Upload reports</a>
+        and come back here.</li>
+    </ol>
+    <p class="muted" style="font-size:.85rem;max-width:62ch;">
+      <strong>Heads up about opening balances:</strong> single-sided rows
+      (e.g.&nbsp;a beginning-balance line with only a debit or only a
+      credit) are listed here too. Opening balances belong on the
+      Starting Balances upload in Step&nbsp;2, not in the general-ledger
+      file &mdash; remove those rows from this CSV and they will post
+      from the opening trial balance instead.
+    </p>
+    <div class="actions-row" data-testid="blocked-transactions-actions"
+         style="margin-top:var(--space-3);">
+      <a class="btn btn-primary"
+         href="{{ url_for('validation_report_csv', job_id=job.id) }}"
+         data-testid="blocked-download-cta">
+        Download validation report (CSV)
+      </a>
+      <a class="btn"
+         href="{{ url_for('dashboard') }}#intake"
+         data-testid="blocked-reupload-cta">
+        Upload corrected file
+      </a>
     </div>
+
+    <details class="quiet" style="margin-top:var(--space-4);"
+             data-testid="blocked-transactions-technical">
+      <summary>Technical details (for support)</summary>
+      <div class="table-wrap" style="margin-top:var(--space-3);">
+        <table>
+          <thead><tr><th>Transaction reference</th><th>Entries</th><th>Reasons</th></tr></thead>
+          <tbody>
+            {% for b in preview.blocked_transactions %}
+            <tr>
+              <td><code>{{ b.transaction_id }}</code></td>
+              <td>{{ b.line_count }}</td>
+              <td>{{ b.reasons|join('; ') }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
   </section>
   {% endif %}
 
@@ -273,6 +333,63 @@
     </ol>
   </details>
 
+  {# Step 4 not-ready state: explain exactly why and what to do next,
+     with one CTA pointing at the right place. The CTA is chosen by
+     ``review_blocker`` so the user never sees a "Create missing
+     QuickBooks accounts" button when account matching is already
+     complete and the only blocker is transactions. #}
+  {% if review_blocker and review_blocker != 'ready' %}
+    <section class="card" data-testid="step4-next-action-card"
+             style="margin-top:var(--space-6);">
+      <p class="eyebrow">Not ready to send</p>
+      {% if review_blocker == 'unmatched' %}
+        <h2>One or more accounts still need to be matched.</h2>
+        <p class="muted" style="max-width:62ch;">
+          Before QuickBooks will accept this import, every PCLaw account
+          in your file must point at a QuickBooks account. Finish matching,
+          then come back here.
+        </p>
+        <div class="actions-row" style="margin-top:var(--space-3);">
+          <a class="btn btn-primary btn-lg"
+             href="{{ url_for('account_mapping', job_id=job.id) }}"
+             data-testid="step4-next-cta-match">
+            Match accounts &rarr;
+          </a>
+        </div>
+      {% elif review_blocker == 'blocked_txns' or review_blocker == 'unbalanced' %}
+        <h2>Some rows in your CSV need to be fixed first.</h2>
+        <p class="muted" style="max-width:62ch;">
+          {% if review_blocker == 'unbalanced' %}
+            Your debits and credits don&rsquo;t balance overall.
+          {% else %}
+            A few transactions are unbalanced or single-sided.
+          {% endif %}
+          Download the validation report, correct those rows in your CSV,
+          then upload the corrected file.
+        </p>
+        <div class="actions-row" style="margin-top:var(--space-3);">
+          <a class="btn btn-primary btn-lg"
+             href="{{ url_for('validation_report_csv', job_id=job.id) }}"
+             data-testid="step4-next-cta-download">
+            Download validation report (CSV)
+          </a>
+          <a class="btn"
+             href="{{ url_for('dashboard') }}#intake"
+             data-testid="step4-next-cta-reupload">
+            Upload corrected file
+          </a>
+        </div>
+      {% elif review_blocker == 'preview_error' %}
+        <h2>We couldn&rsquo;t build the preview.</h2>
+        <p class="muted" style="max-width:62ch;">
+          See the message above for the next step &mdash; usually
+          reconnecting QuickBooks or re-uploading your general-ledger
+          export will get the preview running again.
+        </p>
+      {% endif %}
+    </section>
+  {% endif %}
+
   <div class="actions-row" data-testid="step4-nav-footer"
        style="margin-top:var(--space-6);">
     <a class="btn"
@@ -280,11 +397,11 @@
        data-testid="step4-back-to-step3">
       &larr; Back to Step 3: Match accounts
     </a>
-    {% if not preview_error and preview and preview.would_post %}
+    {% if review_blocker == 'ready' %}
       <a class="btn btn-primary btn-lg"
          href="{{ url_for('send_to_qbo_entry') }}"
          data-testid="step4-proceed-to-step5">
-        Proceed to Step 5: Send to QuickBooks &rarr;
+        Step 5: Send to QuickBooks &rarr;
       </a>
     {% endif %}
   </div>
