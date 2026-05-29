@@ -24,8 +24,10 @@ What we auto-detect:
 from pathlib import Path
 import csv
 from decimal import Decimal
+from io import StringIO
 
 from csv_safety import sanitize_csv_cell
+from csv_decode import open_csv_text
 
 
 # Logical column -> ordered list of header synonyms we accept (matched
@@ -137,7 +139,8 @@ def parse_pclaw_csv(file_path):
     ``Amount`` column substitutes for a missing debit/credit pair.
     """
     file_path = Path(file_path)
-    with file_path.open("r", newline="", encoding="utf-8-sig") as f:
+    text, _encoding_used = open_csv_text(file_path)
+    with StringIO(text) as f:
         reader = csv.DictReader(f)
         fieldnames = list(reader.fieldnames or [])
         mapping, missing = detect_gl_columns(fieldnames)

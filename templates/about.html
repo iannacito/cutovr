@@ -1,0 +1,38 @@
+{% extends "_base.html" %}
+{% block title %}About &mdash; {{ app_name }}{% endblock %}
+{% block meta_description %}{{ app_name }} is a focused tool that helps law firms move from PCLaw to QuickBooks Online in under an hour, for a fraction of the cost of a traditional migration consultant.{% endblock %}
+{% block content %}
+<section class="page page--prose" data-testid="about-page">
+  <p class="eyebrow">About</p>
+  <h1 class="display">Built for law firms <em>leaving PCLaw</em>.</h1>
+
+  <h2>The problem we solve</h2>
+  <p>
+    Moving from PCLaw to QuickBooks Online is a known pain. The typical path is to hire a consultant: rates run roughly $3,000&ndash;$4,000 for a single migration, and the project usually takes one to three weeks of meetings, file exchanges, and review cycles. Most of that time is process, not work &mdash; the actual data movement is the same set of steps every time.
+  </p>
+  <p>
+    {{ app_name }} takes those steps and turns them into a guided workflow your firm administrator can run themselves. The same export-validate-match-send-reconcile sequence, but in one screen at a time, with the safety nets a finance-grade tool needs: preview before posting, one-click reversal, duplicate guards, and an audit log.
+  </p>
+
+  <h2>How we think about this product</h2>
+  <ul class="secure-list">
+    <li><strong>Simple beats clever.</strong> The app is built for a paralegal or firm administrator, not an accountant. Customer-facing language uses plain English &mdash; &ldquo;Starting balances&rdquo;, not &ldquo;Opening JE&rdquo;.</li>
+    <li><strong>Nothing posts silently.</strong> Every step previews. Every send requires explicit confirmation. Imports are reversible.</li>
+    <li><strong>Lower friction, lower cost.</strong> Flat pricing. No subscription. Pay once when your migration is ready to send.</li>
+    <li><strong>We're a focused tool, not a platform.</strong> We do one thing: PCLaw &rarr; QuickBooks Online. We're not trying to replace your accountant or your QuickBooks subscription.</li>
+  </ul>
+
+  <h2>Who built this</h2>
+  <p>
+    {{ app_name }} is a small, independent team. We built this because we kept watching firms pay thousands of dollars and wait weeks for a migration that should be straightforward. We are not affiliated with Intuit, LEAP, PCLaw, or any of the legal-software incumbents.
+  </p>
+  <p>
+    The product is built and operated in the United States. The application runs on Render with US-region hosting. The only required external service for an import is Intuit's QuickBooks Online API. For more on data handling, see the <a href="{{ url_for('security_page') }}">Security page</a> and <a href="{{ url_for('privacy') }}">Privacy Policy</a>.
+  </p>
+
+  <h2>Working with us</h2>
+  <p>
+    For pricing questions, see <a href="{{ url_for('pricing') }}">Pricing</a>. For a Complete-tier quote, use the <a href="{{ url_for('quote_request') }}">quote request form</a>. For everything else, email <a href="mailto:{{ support_email }}">{{ support_email }}</a>.
+  </p>
+</section>
+{% endblock %}

@@ -1,9 +1,25 @@
+import logging
+import time
 import requests
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
 import base64
 
-from qbo_client import extract_intuit_tid
+from qbo_client import (
+    extract_intuit_tid,
+    _is_transient_status,
+    _retry_after_seconds,
+    DEFAULT_BACKOFF_BASE_SECONDS,
+    DEFAULT_BACKOFF_CAP_SECONDS,
+)
+
+
+_log = logging.getLogger("qbo_auth")
+
+# Number of retries the token-refresh path takes when Intuit returns a
+# transient 5xx or 429. Keep this small: a brief blip should not force
+# a full re-OAuth, but a genuine outage should still fail fast.
+TOKEN_REFRESH_MAX_RETRIES = 2
 
 
 class QBOAuthError(Exception):
@@ -62,31 +78,79 @@ class QBOAuthHandler:
         raw = f"{self.client_id}:{self.client_secret}".encode()
         return base64.b64encode(raw).decode()
 
-    def _post_token(self, data):
-        """POST to the token endpoint and capture the intuit_tid from the
-        response (success or failure). On non-2xx, raises QBOAuthError with
-        the captured tid; the raw body is NOT included to avoid leaking
-        anything Intuit echoes back.
+    def _post_token(self, data, *, max_retries: int = TOKEN_REFRESH_MAX_RETRIES):
+        """POST to the token endpoint with bounded retry on transient errors.
+
+        Retries 5xx and 429 with exponential backoff (honoring Retry-After).
+        This prevents a single Intuit blip during refresh from cascading
+        into a forced full re-OAuth flow for the user.
+
+        4xx other than 429 (e.g. 400 invalid_grant on a truly expired
+        refresh token) fail fast — those are not transient and retrying
+        would just delay surfacing the right "please reconnect" message.
+
+        The raw body is deliberately not included in the error message
+        because Intuit's token endpoint can echo fragments that resemble
+        client identifiers.
         """
         headers = {
             "Authorization": f"Basic {self._auth_header()}",
             "Content-Type": "application/x-www-form-urlencoded",
             "Accept": "application/json",
         }
-        resp = requests.post(self.TOKEN_URL, headers=headers, data=data, timeout=30)
-        tid = extract_intuit_tid(resp)
-        self.last_intuit_tid = tid
-        if resp.status_code >= 400:
-            # Build a non-leaky message. We deliberately omit resp.text — it
-            # can contain snippets that resemble client identifiers and is
-            # not useful to surface; the status + intuit_tid is what Intuit
-            # support needs.
+        attempts = max(1, int(max_retries) + 1)
+        last_status = None
+        last_tid = None
+        for attempt in range(attempts):
+            try:
+                resp = requests.post(
+                    self.TOKEN_URL, headers=headers, data=data, timeout=30,
+                )
+            except requests.RequestException as e:
+                if attempt + 1 < attempts:
+                    delay = _retry_after_seconds(
+                        None, attempt,
+                        DEFAULT_BACKOFF_BASE_SECONDS, DEFAULT_BACKOFF_CAP_SECONDS,
+                    )
+                    _log.warning(
+                        "Intuit token endpoint network error attempt=%s/%s err=%s sleeping=%.1fs",
+                        attempt + 1, attempts, e, delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                raise QBOAuthError(
+                    f"Could not reach Intuit token endpoint: {e}",
+                    status_code=None,
+                    intuit_tid=None,
+                ) from e
+            tid = extract_intuit_tid(resp)
+            self.last_intuit_tid = tid
+            last_tid = tid
+            last_status = resp.status_code
+            if resp.status_code < 400:
+                return resp
+            if _is_transient_status(resp.status_code) and attempt + 1 < attempts:
+                delay = _retry_after_seconds(
+                    resp, attempt,
+                    DEFAULT_BACKOFF_BASE_SECONDS, DEFAULT_BACKOFF_CAP_SECONDS,
+                )
+                _log.warning(
+                    "Intuit token endpoint transient status=%s attempt=%s/%s tid=%s sleeping=%.1fs",
+                    resp.status_code, attempt + 1, attempts, tid, delay,
+                )
+                time.sleep(delay)
+                continue
             raise QBOAuthError(
                 f"Intuit token endpoint returned {resp.status_code}",
                 status_code=resp.status_code,
                 intuit_tid=tid,
             )
-        return resp
+        # Retries exhausted on transient failures.
+        raise QBOAuthError(
+            f"Intuit token endpoint kept returning {last_status} after {attempts} attempts",
+            status_code=last_status,
+            intuit_tid=last_tid,
+        )
 
     def get_bearer_token(self, authorization_code):
         """Exchange the authorization code for access + refresh tokens."""

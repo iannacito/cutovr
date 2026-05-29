@@ -158,7 +158,14 @@ class ImportHistory:
     def has_completed_transactions(
         self, transaction_ids: Iterable[str], realm_id: str
     ) -> set:
-        """Return the subset of transaction_ids already imported into this realm."""
+        """Return the subset of transaction_ids already imported into this realm.
+
+        Includes both fully successful imports AND partial imports — where
+        the batch failed after some JEs were already posted. Those JEs
+        are real records in QuickBooks; re-posting them on a retry would
+        create silent duplicates, which is exactly the failure mode this
+        guard exists to prevent.
+        """
         ids = list(transaction_ids)
         if not ids:
             return set()
@@ -168,7 +175,7 @@ class ImportHistory:
                 f"SELECT DISTINCT t.transaction_id "
                 f"FROM imported_transactions t "
                 f"JOIN imports i ON i.id = t.import_id "
-                f"WHERE i.realm_id = ? AND i.status = 'success' "
+                f"WHERE i.realm_id = ? AND i.status IN ('success', 'partial') "
                 f"  AND t.transaction_id IN ({placeholders})",
                 [realm_id, *ids],
             ).fetchall()

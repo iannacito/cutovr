@@ -1,0 +1,77 @@
+{% extends "_base.html" %}
+{% block title %}Security &mdash; {{ app_name }}{% endblock %}
+{% block meta_description %}How {{ app_name }} protects PCLaw ledger files, QuickBooks tokens, and your firm's data: encryption at rest, OAuth-only access, least-necessary scope, audit logging, and reversible imports.{% endblock %}
+{% block content %}
+<section class="page page--prose" data-testid="security-page">
+  <p class="eyebrow">Trust</p>
+  <h1 class="display">Security &amp; <em>data handling</em></h1>
+  <p class="muted">How {{ app_name }} protects your firm's files, QuickBooks tokens, and clients' data. Last updated: {{ now_year }}.</p>
+
+  <h2>Encryption at rest</h2>
+  <ul class="secure-list">
+    <li>Uploaded PCLaw CSV files are encrypted with AES-256 (Fernet) immediately after upload. The unencrypted copy is removed from the server.</li>
+    <li>QuickBooks Online OAuth tokens (access and refresh) are encrypted with the same scheme before being written to the database.</li>
+    <li>Encrypted output files (intermediate QBO-format CSVs) are encrypted with the same scheme.</li>
+  </ul>
+
+  <h2>QuickBooks access via OAuth &mdash; we never see your QuickBooks password</h2>
+  <ul class="secure-list">
+    <li>You sign in to QuickBooks directly with Intuit. {{ app_name }} never sees, stores, or transmits your QuickBooks Online password.</li>
+    <li>Intuit issues an access token to {{ app_name }} only after you grant consent on Intuit's pages.</li>
+    <li>You can disconnect {{ app_name }} from inside QuickBooks (Apps &rarr; Connected apps) at any time, which immediately invalidates the token.</li>
+  </ul>
+
+  <h2>Least-necessary data access</h2>
+  <ul class="secure-list">
+    <li>We request the single QuickBooks scope needed for the import: <code>com.intuit.quickbooks.accounting</code>.</li>
+    <li>The app reads your chart of accounts to match against PCLaw, looks up customers and vendors to attach to A/R and A/P lines, and creates JournalEntry records you initiate.</li>
+    <li>We do not read payroll data, banking transactions, or any other QuickBooks data that isn't required to fulfill the import.</li>
+  </ul>
+
+  <h2>Audit logging</h2>
+  <ul class="secure-list">
+    <li>Every sign-in, upload, QuickBooks connect/disconnect, import, and reversal is recorded in a per-firm audit log with timestamp and actor.</li>
+    <li>Failed login attempts, rate-limit hits, and password reset events are logged so you can review unusual activity.</li>
+    <li>OAuth token rotations are logged. Intuit transaction ids (intuit_tid) on any failing API call are captured so Intuit support can trace the request without the customer sharing sensitive content.</li>
+  </ul>
+  <p class="muted">
+    We do not currently publish SOC&nbsp;2 or other formal compliance reports.
+    If your firm needs a written security questionnaire response, contact
+    <a href="mailto:{{ security_email }}">{{ security_email }}</a>.
+  </p>
+
+  <h2>Reversible imports</h2>
+  <ul class="secure-list">
+    <li>Every import can be reversed in one click. Reversals post offsetting journal entries to QuickBooks, which QuickBooks treats as fully auditable activity rather than silently voiding records.</li>
+    <li>Duplicate imports of the same file are blocked by file hash before anything is posted.</li>
+    <li>Pre-flight checks validate balance, account mapping, and required columns before posting.</li>
+  </ul>
+
+  <h2>Account security</h2>
+  <ul class="secure-list">
+    <li>Passwords are hashed with industry-standard algorithms; we never store plaintext passwords.</li>
+    <li>Login, password reset, and signup are rate-limited to slow down credential-stuffing and account-creation abuse.</li>
+    <li>Sessions are HTTP-only and HTTPS-only cookies in production. CSRF protection is enforced on every state-changing request.</li>
+  </ul>
+
+  <h2>Hosting &amp; sub-processors</h2>
+  <p>
+    {{ app_name }} runs on Render (US region). The only required sub-processor for migrations is Intuit's QuickBooks Online API. We may use a transactional email provider for password-reset and support correspondence. No other sub-processor receives uploaded ledger files or QuickBooks tokens. See the <a href="{{ url_for('privacy') }}">Privacy Policy</a> for more.
+  </p>
+
+  <h2>Reporting a security issue</h2>
+  <p>
+    Please report suspected security issues to
+    <a href="mailto:{{ security_email }}">{{ security_email }}</a>.
+    Include a short reproduction, the approximate time, and any URLs involved. We acknowledge within two business days and will not pursue legal action against good-faith research that follows responsible disclosure norms (no data exfiltration, no service degradation, no targeting of other customers).
+  </p>
+
+  <p class="note" style="margin-top:var(--space-6);">
+    We deliberately avoid overclaiming. The statements above describe what
+    {{ app_name }} does today &mdash; they are not a substitute for a formal
+    audit, certification, or contractual security commitment. If you need
+    additional assurances for a procurement review, contact
+    <a href="mailto:{{ security_email }}">{{ security_email }}</a>.
+  </p>
+</section>
+{% endblock %}

@@ -79,9 +79,18 @@
     {% endfor %}
   </ol>
 
+  {% if workflow_current %}
+    <p class="workflow-stepper__reassure muted"
+       data-testid="workflow-stepper-reassure"
+       style="font-size:.85rem;margin-top:var(--space-3);">
+      Nothing is sent to QuickBooks yet. Most steps take a few minutes.
+      Keep this tab open while a step is running.
+    </p>
+  {% endif %}
+
   {% if workflow_current and workflow_current.friendly_terms %}
     <details class="quiet workflow-stepper__terms" aria-label="Accounting terms in this step">
-      <summary>What this step is called in accounting</summary>
+      <summary>Technical details for support &mdash; what this step is called in accounting</summary>
       <p>
         {% for term in workflow_current.friendly_terms %}
           <span class="workflow-term">
