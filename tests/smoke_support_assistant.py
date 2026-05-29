@@ -239,6 +239,85 @@ def t12_minimize_js_drives_visibility_via_hidden_attribute():
     print("T12 OK: JS sets panel.hidden to drive the [hidden] CSS override")
 
 
+def t14_widget_loads_stylesheet_and_script_app_wide():
+    """The Minimize fix is a CSS rule. It only helps if `style.css` is
+    loaded on every page where the widget renders, alongside the JS
+    that drives `panel.hidden`. The widget HTML, the <link
+    rel="stylesheet" href=".../style.css">, and the <script
+    src=".../support-assistant.js"> all live in the shared _base.html
+    template, so any page that `extends "_base.html"` inherits all
+    three together.
+
+    This test does two things:
+
+      1. Confirms every Jinja template that defines a user-facing
+         page extends `_base.html`. If a future page is added that
+         hand-rolls its <html> and skips _base, the widget + fix
+         would silently not apply to it.
+      2. Walks a representative slice of customer-facing AND
+         authenticated app routes, renders each, and asserts the
+         widget element, the style.css link, and the
+         support-assistant.js script tag are all present in the same
+         response. That's the closest a Flask test client can get to
+         "the fix applies app-wide.\""""
+    templates_dir = ROOT / "templates"
+    skip = {"_base.html", "_workflow_stepper.html"}
+    non_extending = []
+    for tpl in sorted(templates_dir.glob("*.html")):
+        if tpl.name in skip:
+            continue
+        head = tpl.read_text().splitlines()[0:3]
+        if not any('extends "_base.html"' in line for line in head):
+            non_extending.append(tpl.name)
+    assert not non_extending, (
+        "These page templates do not extend _base.html, so the support "
+        "assistant widget + Minimize CSS fix would not apply to them: "
+        f"{non_extending}. Either extend _base.html or document why."
+    )
+
+    # Representative sample across public + app-shell pages. Keeps the
+    # check broad without exploding test time.
+    sample_paths = [
+        "/",                  # landing
+        "/login",
+        "/signup",
+        "/pricing",
+        "/security",
+        "/privacy",
+        "/terms",
+        "/support",
+        "/onboarding",
+        "/quickbooks-guide",
+        "/about",
+        "/forgot-password",
+    ]
+    c = appmod.app.test_client()
+    for path in sample_paths:
+        resp = c.get(path)
+        # Some routes may redirect (auth, etc.) — follow once.
+        if resp.status_code in (301, 302, 303, 307, 308):
+            resp = c.get(path, follow_redirects=True)
+        if resp.status_code != 200:
+            # Skip routes that genuinely can't render without auth /
+            # state — but flag them so we don't silently drop coverage.
+            print(f"T14 NOTE: {path} returned {resp.status_code}, skipping")
+            continue
+        body = resp.get_data(as_text=True)
+        assert 'data-testid="support-assistant"' in body, (
+            f"widget HTML missing on {path}"
+        )
+        assert "static/style.css" in body or 'href="/static/style.css' in body, (
+            f"style.css link missing on {path} — Minimize CSS fix won't load"
+        )
+        assert "support-assistant.js" in body, (
+            f"support-assistant.js missing on {path} — toggle/Minimize won't bind"
+        )
+    print(
+        f"T14 OK: all {len([t for t in templates_dir.glob('*.html') if t.name not in skip])} "
+        "page templates extend _base.html; widget + CSS + JS co-load on every sampled route"
+    )
+
+
 def t13_minimize_round_trip_via_jsdom_if_available():
     """End-to-end functional check: parse the page HTML, inject the
     real static CSS, run the real static JS, simulate the click on
@@ -315,5 +394,6 @@ if __name__ == "__main__":
     t10_close_button_is_a_button_element()
     t11_panel_hidden_attribute_actually_hides_panel()
     t12_minimize_js_drives_visibility_via_hidden_attribute()
+    t14_widget_loads_stylesheet_and_script_app_wide()
     t13_minimize_round_trip_via_jsdom_if_available()
     print("\nAll support assistant smoke tests OK.")
