@@ -12,6 +12,7 @@ Run from project root:
 
 import json
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -76,7 +77,7 @@ def t3_assistant_api_returns_useful_answer():
     payload = r.get_json()
     assert payload["matched"] is True, payload
     assert "QuickBooks" in payload["answer"]
-    assert payload["topic"] == "quickbooks"
+    assert payload["topic"] == "quickbooks_connect"
     print("T3 OK: assistant returns matched answer for 'connect QuickBooks'")
 
 
@@ -89,8 +90,105 @@ def t4_assistant_api_pricing_query():
     )
     payload = r.get_json()
     assert payload["matched"] is True
-    assert "$799" in payload["answer"]
-    print("T4 OK: pricing query returns the $799 anchor answer")
+    assert payload["topic"] == "pricing"
+    # Essential repriced to $999; pricing answer must stay in sync with the
+    # pricing page.
+    assert "$999" in payload["answer"], payload["answer"]
+    assert "$799" not in payload["answer"], (
+        "assistant still quotes the retired $799 Essential price"
+    )
+    print("T4 OK: pricing query returns the $999 Essential price")
+
+
+def t4b_assistant_pricing_in_sync_with_pricing_page():
+    """Guard against the assistant and the /pricing page drifting apart on
+    the Essential price."""
+    pricing_body = appmod.app.test_client().get("/pricing").get_data(as_text=True)
+    assert "$999" in pricing_body, "/pricing should show the $999 Essential price"
+    result = support_assistant.answer("what does the essentials plan cost")
+    assert result["matched"] is True
+    assert result["topic"] == "pricing"
+    assert "$999" in result["answer"]
+    print("T4b OK: assistant pricing answer matches the $999 on /pricing")
+
+
+def t4c_assistant_covers_expected_intents():
+    """The expanded assistant should map realistic, plain-English customer
+    questions onto the right intent. Each pair is (query, expected_topic).
+    These exercise the synonym/fuzzy layer (e.g. "qbo" -> quickbooks,
+    "can't connect" -> connect, "iolta" -> trust)."""
+    cases = [
+        # (query, expected topic)
+        ("what is pc law migrate", "what_is"),
+        ("how does the migration work step by step", "steps"),
+        ("which PCLaw reports do I need to export", "reports_needed"),
+        ("I forgot to upload a report, can I add more", "more_reports"),
+        ("can't connect to quickbooks", "quickbooks_connect"),
+        ("the quickbooks redirect failed", "quickbooks_connect"),
+        ("an account looks missing", "matching"),
+        ("how do account numbers get matched", "matching"),
+        ("why is this transaction blocked", "blocked"),
+        ("i got a validation error", "blocked"),
+        ("how are trust balances handled", "trust"),
+        ("iolta retainer funds", "trust"),
+        ("does the trial balance reconcile", "trial_balance"),
+        ("will this delete data in my quickbooks", "data_safety"),
+        ("does it change my existing quickbooks data", "data_safety"),
+        ("can I try a demo before the real migration", "demo"),
+        ("is my data secure and private", "security"),
+        ("how long do you keep my data", "security"),
+        ("how much does the essentials plan cost", "pricing"),
+        ("i forgot my password", "login"),
+        ("how do I reset my password", "login"),
+        ("where is the final report pdf", "final_report"),
+        ("how do I contact a real person", "support"),
+        ("how do I undo an import", "reverse"),
+    ]
+    failures = []
+    for query, expected in cases:
+        result = support_assistant.answer(query)
+        if not result["matched"] or result["topic"] != expected:
+            failures.append(
+                f"{query!r} -> matched={result['matched']} "
+                f"topic={result['topic']!r} (expected {expected!r})"
+            )
+    assert not failures, "intent mismatches:\n" + "\n".join(failures)
+    print(f"T4c OK: {len(cases)} representative questions map to the right intent")
+
+
+def t4d_assistant_answers_are_concise_and_actionable():
+    """Lawyer-friendly contract: answers stay short (<= ~6 sentences) so the
+    widget never dumps a wall of text."""
+    long_answers = []
+    # Walk every intent via a direct answer() call using a query we know
+    # maps to it, so we measure the *rendered* copy.
+    probe = {
+        "what_is": "what is pc law migrate",
+        "steps": "how does it work step by step",
+        "reports_needed": "which reports do I need",
+        "more_reports": "i forgot to upload a report",
+        "quickbooks_connect": "connect quickbooks",
+        "matching": "missing account match",
+        "blocked": "blocked validation error",
+        "trust": "trust balances",
+        "trial_balance": "trial balance reconcile",
+        "data_safety": "will this delete my quickbooks data",
+        "reverse": "undo the import",
+        "demo": "demo vs real",
+        "security": "is my data secure and private",
+        "pricing": "how much does it cost",
+        "login": "forgot password",
+        "final_report": "final report pdf",
+        "support": "contact a real person",
+    }
+    for topic, query in probe.items():
+        ans = support_assistant.answer(query)["answer"]
+        # Count sentence-ending punctuation as a rough proxy.
+        sentences = [s for s in re.split(r"[.!?]+", ans) if s.strip()]
+        if len(sentences) > 6:
+            long_answers.append(f"{topic}: {len(sentences)} sentences")
+    assert not long_answers, "answers too long: " + ", ".join(long_answers)
+    print(f"T4d OK: all {len(probe)} answers are concise (<= 6 sentences)")
 
 
 def t5_assistant_fallback_for_unknown_query():
@@ -102,8 +200,20 @@ def t5_assistant_fallback_for_unknown_query():
     )
     payload = r.get_json()
     assert payload["matched"] is False
-    assert payload["support_email"] in payload["answer"]
-    print("T5 OK: unknown query falls back to support-email message")
+    # The endpoint always returns the configured support_email field...
+    assert payload["support_email"]
+    # ...but a placeholder/deploy-default mailbox must NOT be surfaced to a
+    # visitor in the answer text. Real mailboxes should appear; placeholders
+    # fall back to neutral, still-useful copy.
+    import branding as _branding
+    if _branding.is_placeholder_email(payload["support_email"]):
+        assert payload["support_email"] not in payload["answer"], (
+            "placeholder support email must not leak into the fallback answer"
+        )
+        assert payload["answer"].strip(), "fallback must still be a usable message"
+    else:
+        assert payload["support_email"] in payload["answer"]
+    print("T5 OK: unknown query falls back to a usable, placeholder-safe message")
 
 
 def t6_assistant_does_not_promise_private_access():
@@ -386,6 +496,9 @@ if __name__ == "__main__":
     t2_widget_has_suggested_topics()
     t3_assistant_api_returns_useful_answer()
     t4_assistant_api_pricing_query()
+    t4b_assistant_pricing_in_sync_with_pricing_page()
+    t4c_assistant_covers_expected_intents()
+    t4d_assistant_answers_are_concise_and_actionable()
     t5_assistant_fallback_for_unknown_query()
     t6_assistant_does_not_promise_private_access()
     t7_assistant_endpoint_safe_with_empty_body()
