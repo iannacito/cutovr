@@ -105,17 +105,34 @@
     </p>
   </article>
 
-  <article class="card" style="margin-bottom:var(--space-6);">
-    <h2>Step-by-step demo flow</h2>
-    <ol style="line-height:1.8;">
-      <li><strong>Step 1.</strong> Click <em>Start a new demo</em> above to reset the app workspace.</li>
-      <li><strong>Step 2.</strong> Confirm the right QuickBooks demo company is connected (see panel above).</li>
-      <li><strong>Step 3.</strong> Download the sample PCLaw reports below.</li>
-      <li><strong>Step 4.</strong> Go to the <a href="{{ url_for('dashboard') }}">dashboard</a>, upload the reports, and review the Chart of Accounts.</li>
-      <li><strong>Step 5.</strong> Post starting balances from the opening-balance review screen.</li>
-      <li><strong>Step 6.</strong> Import transaction history (general ledger) to QuickBooks.</li>
-      <li><strong>Step 7.</strong> Show the migration summary on the job detail / checklist pages.</li>
+  <article class="card" data-testid="demo-rehearsed-path" style="margin-bottom:var(--space-6);">
+    <h2>Rehearsed demo path</h2>
+    <p class="muted" style="max-width:62ch;">
+      Follow this exact order on a live demo &mdash; don't click around.
+      The first two steps are prep on this page; steps 1&ndash;6 are the
+      customer-facing workflow the prospect sees, each with a single
+      primary button that takes you to the next step.
+    </p>
+    <ol style="line-height:1.9;">
+      <li><strong>Prep A.</strong> Click <em>Start a new demo</em> above to reset the app workspace to a clean slate.</li>
+      <li><strong>Prep B.</strong> Confirm the right QuickBooks demo company is connected (see panel above), then download the four sample reports below.</li>
+      <li><strong>Step 1 &mdash; Set up:</strong> <a href="{{ url_for('cutover_setup') }}">open Set up your switchover</a>, enter the cutover date and country, save.</li>
+      <li><strong>Step 2 &mdash; Upload:</strong> on the <a href="{{ url_for('dashboard') }}#intake">dashboard</a>, upload the Chart of Accounts, Trial Balance, and General Ledger sample files.</li>
+      <li><strong>Step 3 &mdash; Match accounts:</strong> follow the single primary button to <a href="{{ url_for('match_accounts_entry') }}">match accounts</a>; create any missing QuickBooks accounts when prompted.</li>
+      <li><strong>Step 4 &mdash; Review:</strong> open the <a href="{{ url_for('import_job_entry') }}">review screen</a> and confirm everything balances.</li>
+      <li><strong>Step 5 &mdash; Send to QuickBooks:</strong> use <a href="{{ url_for('send_to_qbo_entry') }}">Send to QuickBooks</a> to post the migration.</li>
+      <li><strong>Step 6 &mdash; Final balance check:</strong> open <a href="{{ url_for('reconcile_balances') }}">Reconcile balances</a> and show the final report (and email it to yourself).</li>
     </ol>
+    <p class="muted" style="margin-top:var(--space-3);font-size:.9rem;">
+      The on-screen stepper always highlights the current step and shows
+      one <em>next</em> button on the right and a <em>back</em> button on the
+      left, so you can drive the whole demo from those buttons without
+      hunting through the nav.
+    </p>
+    <a class="btn btn-primary btn-lg" href="{{ url_for('cutover_setup') }}"
+       data-testid="demo-begin-step1" style="margin-top:var(--space-3);">
+      Begin at Step 1
+    </a>
   </article>
 
   <article class="card">

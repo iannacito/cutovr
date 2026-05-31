@@ -18,6 +18,24 @@
     </ul>
   </section>
 
+  <section class="card" data-testid="operator-retention">
+    <p class="eyebrow">Data retention</p>
+    <h2>Cleanup</h2>
+    <p class="muted" style="max-width:64ch;">
+      Removes used/expired password-reset tokens, encrypted files for
+      jobs archived past the retention window, and orphaned upload blobs.
+      <strong>Never touches an active migration or any QuickBooks Online
+      data.</strong> Safe to run any time; it's also safe to schedule.
+    </p>
+    <form action="{{ url_for('operator_run_cleanup') }}" method="post"
+          onsubmit="return confirm('Run data-retention cleanup now? This removes expired tokens and old archived-job files only.');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn btn-primary" type="submit" data-testid="operator-run-cleanup">
+        Run cleanup now
+      </button>
+    </form>
+  </section>
+
   <section class="card">
     <p class="eyebrow">High-level metrics</p>
     <div class="table-wrap">
