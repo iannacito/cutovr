@@ -14,6 +14,7 @@ import requests
 
 from app_db import AppDB
 import branding
+import data_retention
 import demo_mode
 import operator_panel
 import readiness
@@ -334,6 +335,13 @@ SIGNUP_RATE_LIMIT_MAX = 10
 SIGNUP_RATE_LIMIT_WINDOW_SECONDS = 5 * 60
 QUOTE_RATE_LIMIT_MAX = 5
 QUOTE_RATE_LIMIT_WINDOW_SECONDS = 15 * 60
+# The support assistant is a public, unauthenticated JSON endpoint. It only
+# returns a deterministic FAQ (no private data), but it's still a free
+# endpoint anyone can script against. A generous per-IP budget stops
+# automated hammering while never tripping a real visitor who clicks the
+# widget a dozen times in a sitting.
+SUPPORT_ASSISTANT_RATE_LIMIT_MAX = 30
+SUPPORT_ASSISTANT_RATE_LIMIT_WINDOW_SECONDS = 5 * 60
 
 login_limiter = RateLimiter(
     db,
@@ -354,6 +362,11 @@ quote_request_limiter = RateLimiter(
     db,
     max_events=QUOTE_RATE_LIMIT_MAX,
     window_seconds=QUOTE_RATE_LIMIT_WINDOW_SECONDS,
+)
+support_assistant_limiter = RateLimiter(
+    db,
+    max_events=SUPPORT_ASSISTANT_RATE_LIMIT_MAX,
+    window_seconds=SUPPORT_ASSISTANT_RATE_LIMIT_WINDOW_SECONDS,
 )
 
 # QBO OAuth configuration (set these via environment variables in real use)
@@ -2452,6 +2465,37 @@ def support_assistant_api():
     on no match it points to the support email so the user is never
     stuck without a path forward.
     """
+    # Per-IP soft rate limit. The widget is public and returns no private
+    # data, but the endpoint is still free to script; this is a brute-force
+    # speed bump. Returns 429 with a usable, plain-English answer so the
+    # widget always has something to render.
+    ip_key = f"support_assistant:ip:{client_ip(request)}"
+    allowed, _ = support_assistant_limiter.check_and_record(ip_key)
+    if not allowed:
+        # Never surface the deploy-default placeholder address to a visitor;
+        # drop the "email us" sentence when no real mailbox is configured.
+        if branding.is_placeholder_email(branding.SUPPORT_EMAIL):
+            next_step = "Please wait a moment and try again."
+        else:
+            next_step = (
+                "Please wait a moment and try again, or email "
+                f"{branding.SUPPORT_EMAIL} and a human will help."
+            )
+        return (
+            jsonify(
+                {
+                    "topic": "rate_limited",
+                    "answer": (
+                        "You're sending questions a little too quickly. "
+                        + next_step
+                    ),
+                    "matched": False,
+                    "support_email": branding.SUPPORT_EMAIL,
+                }
+            ),
+            429,
+        )
+
     payload = request.get_json(silent=True) or {}
     query = payload.get("query", "") if isinstance(payload, dict) else ""
     if not isinstance(query, str):
@@ -8335,6 +8379,47 @@ def operator_firm_detail(firm_id):
     if not detail:
         abort(404)
     return render_template("operator-firm.html", **detail)
+
+
+@app.route("/operator/cleanup", methods=["POST"])
+@operator_required
+def operator_run_cleanup():
+    """Operator-triggered data-retention sweep.
+
+    Runs the safe cleanup steps in data_retention.run_cleanup():
+      - delete used/expired password-reset tokens,
+      - unlink encrypted files for jobs archived past the retention window,
+      - remove orphaned encrypted blobs older than the window.
+
+    Never touches an active job or any QuickBooks Online data. The result
+    is summarized in a flash message and an audit row (counts only — no
+    file names, tokens, or contents).
+    """
+    report = data_retention.run_cleanup(db, UPLOAD_DIR, OUTPUT_DIR)
+    archived = report["archived_job_files"]
+    orphans = report["orphaned_upload_files"]
+    _audit(
+        "data_retention_cleanup",
+        target_type="deploy",
+        target_id="cleanup",
+        details=(
+            f"window_days={report['retention_days']} "
+            f"reset_tokens={report['expired_reset_tokens_removed']} "
+            f"archived_jobs_swept={archived['jobs_swept']} "
+            f"archived_files={archived['files_removed']} "
+            f"orphan_files={orphans['files_removed']} "
+            f"errors={archived['errors'] + orphans['errors']}"
+        ),
+    )
+    flash(
+        "Cleanup complete. Removed "
+        f"{report['expired_reset_tokens_removed']} expired reset token(s), "
+        f"{archived['files_removed']} archived-job file(s), and "
+        f"{orphans['files_removed']} orphaned upload file(s). "
+        "No active migrations or QuickBooks data were touched.",
+        "success",
+    )
+    return redirect(url_for("operator_dashboard"))
 
 
 # ---------------------------------------------------------------------------

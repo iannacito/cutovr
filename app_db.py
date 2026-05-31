@@ -422,6 +422,43 @@ class AppDB:
             )
             return cur.rowcount or 0
 
+    # --- data-retention cleanup -------------------------------------------
+
+    def purge_expired_reset_tokens(self) -> int:
+        """Delete password-reset tokens that are already used OR past their
+        expiry. Single-use, time-limited tokens have no value once spent or
+        stale; keeping them only grows the table and leaves hashed secrets
+        on disk longer than necessary. Returns the number of rows removed.
+        """
+        with self._conn() as c:
+            cur = c.execute(
+                "DELETE FROM password_reset_tokens "
+                "WHERE used_at IS NOT NULL OR expires_at < ?",
+                (_now(),),
+            )
+            return cur.rowcount or 0
+
+    def list_archived_jobs_before(self, before_iso: str) -> list:
+        """Return archived jobs whose row was last updated before
+        ``before_iso`` (an ISO-8601 timestamp). Used by retention cleanup
+        to find stale demo/abandoned jobs whose encrypted files can be
+        purged. Only ever returns jobs whose status marks them archived,
+        so an active in-progress migration is never selected.
+
+        Returns the operator-safe columns the cleanup routine needs —
+        never token blobs.
+        """
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT id, firm_id, company, encrypted_file, encrypted_output, "
+                "       status, updated_at "
+                "FROM jobs "
+                "WHERE status LIKE 'Archived%' AND updated_at < ? "
+                "ORDER BY updated_at ASC",
+                (before_iso,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
     def get_user(self, user_id: int) -> Optional[dict]:
         with self._conn() as c:
             row = c.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -602,6 +639,30 @@ class AppDB:
         with self._conn() as c:
             c.execute("DELETE FROM qbo_connections WHERE job_id = ?", (job_id,))
             c.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+
+    def clear_job_file_pointers(self, job_id: str) -> None:
+        """Null out the encrypted-file pointers for a job whose on-disk
+        blobs were removed by retention cleanup. Keeps the row (audit
+        history) but prevents later reads from chasing a missing file.
+        """
+        with self._conn() as c:
+            c.execute(
+                "UPDATE jobs SET encrypted_file = NULL, encrypted_output = NULL, "
+                "updated_at = ? WHERE id = ?",
+                (_now(), job_id),
+            )
+
+    def all_job_file_pointers(self) -> list:
+        """Return {id, encrypted_file, encrypted_output} for every job row.
+
+        Used by retention cleanup to know which encrypted blobs on disk are
+        still referenced by a live job. Returns no token columns.
+        """
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT id, encrypted_file, encrypted_output FROM jobs"
+            ).fetchall()
+            return [dict(r) for r in rows]
 
     # --- qbo connections (metadata only; tokens still in-memory) ----------
 
