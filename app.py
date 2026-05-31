@@ -2472,14 +2472,22 @@ def support_assistant_api():
     ip_key = f"support_assistant:ip:{client_ip(request)}"
     allowed, _ = support_assistant_limiter.check_and_record(ip_key)
     if not allowed:
+        # Never surface the deploy-default placeholder address to a visitor;
+        # drop the "email us" sentence when no real mailbox is configured.
+        if branding.is_placeholder_email(branding.SUPPORT_EMAIL):
+            next_step = "Please wait a moment and try again."
+        else:
+            next_step = (
+                "Please wait a moment and try again, or email "
+                f"{branding.SUPPORT_EMAIL} and a human will help."
+            )
         return (
             jsonify(
                 {
                     "topic": "rate_limited",
                     "answer": (
                         "You're sending questions a little too quickly. "
-                        "Please wait a moment and try again, or email "
-                        f"{branding.SUPPORT_EMAIL} and a human will help."
+                        + next_step
                     ),
                     "matched": False,
                     "support_email": branding.SUPPORT_EMAIL,
