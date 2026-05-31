@@ -191,6 +191,20 @@ def r1_step6_renders_when_step5_complete():
     assert 'data-testid="step6-report-submit"' in body
     # Step 6 completion banner present once import is done.
     assert 'data-testid="step6-complete-banner"' in body
+    # The completed page reads as a success / end-of-migration page.
+    assert 'data-testid="step6-success-hero"' in body, (
+        "completed Step 6 must render the success hero"
+    )
+    assert "Your migration is complete" in body
+    assert "sent to QuickBooks" in body
+    # End of the migration: no forward 'Proceed to Step 6' CTA anywhere on
+    # the page (the stepper's reconcile CTA is suppressed on this page).
+    assert "Proceed to Step 6" not in body, (
+        "final page must not show a 'Proceed to Step 6: Reconcile balances' CTA"
+    )
+    # The terminal action is a quiet return-to-dashboard, not a next step.
+    assert 'data-testid="step6-return-to-dashboard"' in body
+    assert 'data-testid="step6-return-to-migration"' not in body
     # And the blocked panel is NOT present.
     assert 'data-testid="step6-blocked"' not in body
     # The report preview is visible inline so the demo user can see
@@ -547,6 +561,30 @@ def r9_mail_alias_env_vars_work():
     print("R9 OK: MAIL_* env aliases configure SMTP (Render/Zoho friendly)")
 
 
+def r10_no_proceed_to_step6_cta_on_step6_page():
+    """The stepper's forward CTA must be suppressed on the Step 6 page so
+    the user never sees a 'Proceed to Step 6: Reconcile balances' button
+    while they are already there."""
+    client = appmod.app.test_client()
+    _signup_and_login(client, "r10@example.test")
+    user = appmod.db.get_user_by_email("r10@example.test")
+    _complete_step1(user["firm_id"])
+    _make_imported_gl_job(user, job_id="job_r10")
+
+    r = client.get("/reconcile-balances", follow_redirects=False)
+    assert r.status_code == 200, r.status_code
+    body = r.get_data(as_text=True)
+    assert "Proceed to Step 6" not in body, (
+        "stepper must not render a forward 'Proceed to Step 6' CTA here"
+    )
+    assert "Reconcile balances &rarr;" not in body, (
+        "stepper forward CTA arrow link must be suppressed on Step 6"
+    )
+    # Success framing is present.
+    assert 'data-testid="step6-success-hero"' in body
+    print("R10 OK: no 'Proceed to Step 6' forward CTA on the Step 6 page")
+
+
 def main():
     r1_step6_renders_when_step5_complete()
     r2_step6_blocked_before_import()
@@ -557,6 +595,7 @@ def main():
     r7_reconciliation_summary_classification()
     r8_submit_when_smtp_configured_but_send_fails()
     r9_mail_alias_env_vars_work()
+    r10_no_proceed_to_step6_cta_on_step6_page()
     print("\nALL STEP 6 RECONCILE-BALANCES SMOKE TESTS PASSED")
 
 

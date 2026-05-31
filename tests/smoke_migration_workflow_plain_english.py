@@ -321,14 +321,28 @@ def e8_step6_reconcile_banner_is_plain():
     assert 'data-testid="step6-complete-banner"' in body, (
         "expected the Step 6 complete banner"
     )
-    assert "You" in body and "done" in body and "Everything matches" in body, (
+    # The completed page reads as a success / end-of-migration page.
+    assert 'data-testid="step6-success-hero"' in body, (
+        "expected the Step 6 success hero on a completed migration"
+    )
+    assert "Your migration is complete" in body, (
+        "Step 6 success hero should state the migration is complete"
+    )
+    assert "All done" in body and "everything matches" in body, (
         "Step 6 complete banner should read in plain English"
+    )
+    assert "sent to QuickBooks" in body, (
+        "Step 6 success copy should confirm data was sent to QuickBooks"
+    )
+    # This is the end of the migration — no forward step CTA.
+    assert "Proceed to Step 6" not in body, (
+        "completed Step 6 page must not show a 'Proceed to Step 6' CTA"
     )
     # Older technical phrase should be gone.
     assert "Migration demo complete" not in body, (
         "old technical 'Migration demo complete' banner copy should be removed"
     )
-    print("E8 OK: Step 6 complete banner is plain English")
+    print("E8 OK: Step 6 complete banner is plain English + reads as success")
 
 
 def main():

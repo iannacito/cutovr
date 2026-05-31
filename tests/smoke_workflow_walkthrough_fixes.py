@@ -142,7 +142,8 @@ def w1_step6_no_query_string_banner_replay():
 
 
 def w2_step6_terminal_cta_present():
-    """The Step 6 page has a clear final CTA back to Migration."""
+    """The completed Step 6 page has a quiet terminal action back to the
+    dashboard — and NO forward 'next migration step' CTA."""
     client = appmod.app.test_client()
     _signup_and_login(client, "w2@example.test")
     user = appmod.db.get_user_by_email("w2@example.test")
@@ -151,16 +152,17 @@ def w2_step6_terminal_cta_present():
 
     r = client.get("/reconcile-balances")
     body = r.get_data(as_text=True)
-    assert 'data-testid="step6-return-to-migration"' in body, (
-        "Step 6 must have a final return-to-Migration CTA."
+    assert 'data-testid="step6-return-to-dashboard"' in body, (
+        "Step 6 must have a quiet terminal return-to-dashboard action."
     )
-    # The button copy is plain — either "Return to Migration" or
-    # "Done — return to Migration" (when summary.is_complete).
-    assert (
-        "Return to Migration" in body
-        or "return to Migration" in body
-    ), "Final CTA must read 'Return to Migration'."
-    print("W2 OK: Step 6 has a final 'Return to Migration' CTA")
+    assert "Return to dashboard" in body, (
+        "Terminal action must read 'Return to dashboard'."
+    )
+    # This is the end of the migration: no forward 'Proceed to Step 6' CTA.
+    assert "Proceed to Step 6" not in body, (
+        "Final page must not show a 'Proceed to Step 6' CTA."
+    )
+    print("W2 OK: Step 6 has a quiet terminal 'Return to dashboard' action, no forward CTA")
 
 
 def w3_step5_no_job_id_as_record_count():
