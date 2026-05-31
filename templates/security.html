@@ -9,9 +9,9 @@
 
   <h2>Encryption at rest</h2>
   <ul class="secure-list">
-    <li>Uploaded PCLaw CSV files are encrypted with AES-256 (Fernet) immediately after upload. The unencrypted copy is removed from the server.</li>
-    <li>QuickBooks Online OAuth tokens (access and refresh) are encrypted with the same scheme before being written to the database.</li>
-    <li>Encrypted output files (intermediate QBO-format CSVs) are encrypted with the same scheme.</li>
+    <li>Uploaded PCLaw files are encrypted with AES-256 immediately after upload. The unencrypted copy is removed from the server.</li>
+    <li>Your QuickBooks connection tokens are encrypted with the same standard before being saved.</li>
+    <li>Any intermediate files we generate during a migration are encrypted with the same standard.</li>
   </ul>
 
   <h2>QuickBooks access via OAuth &mdash; we never see your QuickBooks password</h2>

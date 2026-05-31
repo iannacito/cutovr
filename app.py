@@ -2156,7 +2156,7 @@ def reconcile_balances_send_report():
         return _flash_and_redirect(
             "error",
             "Please enter a valid email address (for example, "
-            "you@firm.example) so we know where to send the report.",
+            "name@yourfirm.com) so we know where to send the report.",
         )
 
     subject = (

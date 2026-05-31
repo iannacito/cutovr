@@ -12,7 +12,7 @@
   <h2>What we collect</h2>
   <ul class="secure-list">
     <li><strong>Account data</strong> &mdash; firm name, your work email, and a hashed password used to sign you in.</li>
-    <li><strong>Uploaded ledger files</strong> &mdash; the PCLaw CSV you upload. Files are encrypted at rest with AES-256 (Fernet) immediately after upload; the unencrypted copy is removed.</li>
+    <li><strong>Uploaded ledger files</strong> &mdash; the PCLaw CSV you upload. Files are encrypted at rest with AES-256 immediately after upload; the unencrypted copy is removed.</li>
     <li><strong>QuickBooks Online OAuth tokens</strong> &mdash; the access and refresh tokens Intuit issues when you click &ldquo;Connect to QuickBooks.&rdquo; Tokens are encrypted at rest and used only to call Intuit's API on your behalf to read the chart of accounts and create JournalEntry records you initiate.</li>
     <li><strong>Operational metadata</strong> &mdash; job IDs, file SHA-256 hashes, import counts, error messages, and a per-firm audit log of in-app actions (sign-in, upload, connect, import, reverse, etc.).</li>
   </ul>
@@ -27,7 +27,7 @@
 
   <h2>How we secure data</h2>
   <ul class="secure-list">
-    <li>Uploaded files are encrypted at rest with AES-256 (Fernet symmetric encryption).</li>
+    <li>Uploaded files are encrypted at rest with AES-256.</li>
     <li>QuickBooks OAuth tokens are encrypted at rest with the same scheme.</li>
     <li>Sessions are HTTP-only and (in production) HTTPS-only cookies. CSRF protection is enforced on every state-changing request.</li>
     <li>The application validates required production environment variables on startup and fails fast if any are missing or malformed.</li>
