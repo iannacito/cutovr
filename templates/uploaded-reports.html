@@ -8,9 +8,9 @@
     <p class="eyebrow">Step 2 of 6 &middot; Uploaded reports</p>
     <h1>Reports uploaded for this migration</h1>
     <p class="muted" style="max-width:64ch;">
-      Every PCLaw report you&rsquo;ve uploaded for the active migration run,
-      with the report type we detected and its current status.
-      This is not the QuickBooks import log &mdash; for that, open the
+      The PCLaw reports you&rsquo;ve uploaded for this migration, with the
+      type we detected and where each one stands. Looking for what&rsquo;s
+      already in QuickBooks? See your
       <a href="{{ url_for('firm_imports') }}">import history</a>.
     </p>
   </div>
@@ -60,9 +60,9 @@
     </div>
   </section>
 
-  <div class="actions-row" style="margin-top:var(--space-5);">
-    <a class="btn" href="{{ url_for('dashboard') }}#intake">Add another report</a>
-    <a class="btn btn-link" href="{{ url_for('dashboard') }}">Back to Step 2: Upload reports</a>
+  <div class="actions-row" style="margin-top:var(--space-5);justify-content:space-between;">
+    <a class="btn btn-link" href="{{ url_for('dashboard') }}">&larr; Back to Step 2: Upload reports</a>
+    <a class="btn btn-primary" href="{{ url_for('dashboard') }}#intake">Add another report</a>
   </div>
 </section>
 {% endblock %}

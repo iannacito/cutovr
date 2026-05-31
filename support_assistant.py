@@ -54,20 +54,21 @@ _FAQ: List[Tuple[str, List[str], str]] = [
         "steps",
         ["step", "steps", "workflow", "how", "process", "order"],
         (
-            "The flow is six short steps: 1) Upload your PCLaw reports, "
-            "2) Match your accounts, 3) Review the Trial Balance, 4) Connect "
-            "QuickBooks, 5) Send the entries, 6) Reconcile the balances. "
-            "You can pause and come back — your progress is saved."
+            "The flow is six short steps: 1) Set up your migration, "
+            "2) Upload your PCLaw reports, 3) Connect QuickBooks and match "
+            "your accounts, 4) Review everything before posting, 5) Send to "
+            "QuickBooks, 6) Check the final balances. You can pause and come "
+            "back — your progress is saved."
         ),
     ),
     (
         "quickbooks",
         ["quickbooks", "qbo", "connect", "connection", "intuit", "oauth"],
         (
-            "You'll need an active QuickBooks Online subscription. On Step 4 "
-            "you click \"Connect QuickBooks\" and sign in with Intuit. We "
-            "store only the short-lived access token, encrypted. You can "
-            "disconnect any time from the QuickBooks page."
+            "You'll need an active QuickBooks Online subscription. On Step 3 "
+            "you click \"Connect QuickBooks\" and sign in with Intuit. Your "
+            "connection is stored encrypted, and you can disconnect any time "
+            "from the QuickBooks page."
         ),
     ),
     (

@@ -62,7 +62,11 @@
         </p>
         <div class="actions-row" style="margin-top:var(--space-4);">
           <a href="{{ load_error.reconnect_url }}" class="btn btn-primary btn-lg" data-testid="reconnect-cta">Reconnect QuickBooks</a>
-          <a href="mailto:support@pclaw-qbo.example?subject=QuickBooks%20account%20access%20issue" class="btn btn-link">Contact support</a>
+          {% if support_email and "your-domain.example" not in support_email %}
+            <a href="mailto:{{ support_email }}?subject=QuickBooks%20account%20access" class="btn btn-link">Contact support</a>
+          {% else %}
+            <a href="{{ url_for('support') }}" class="btn btn-link">Contact support</a>
+          {% endif %}
         </div>
       {% elif load_error.category == 'rate_limit' %}
         <h2 style="margin-top:0;">QuickBooks is asking us to slow down</h2>

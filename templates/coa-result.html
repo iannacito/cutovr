@@ -9,8 +9,8 @@
     <h1>{{ job.company }}</h1>
     {% if created and not failed %}
       <p class="muted">
-        Created {{ created|length }} QuickBooks account(s). Continue with
-        the opening trial balance step in the migration checklist.
+        Added {{ created|length }} account(s) to QuickBooks. Next, set your
+        starting balances.
       </p>
     {% elif created and failed %}
       <p class="muted">
@@ -62,10 +62,10 @@
     <p class="eyebrow" style="color:var(--error);">Failed</p>
     <h2>{{ failed|length }} account(s) could not be created</h2>
     <p>
-      Each row below shows what QuickBooks rejected. Common causes:
-      AccountType / AccountSubType mismatch, duplicate Name in a parent
-      hierarchy, or a missing scope on the OAuth token. Fix the underlying
-      issue and re-open the confirmation page to retry.
+      Each row below shows what QuickBooks rejected. Common causes are an
+      account type that doesn&rsquo;t match, or an account name already in
+      use in QuickBooks. Fix the issue and re-open the confirmation page to
+      retry.
       {% if intuit_tids %}
         Intuit support reference(s): {{ intuit_tids|join(', ') }}.
       {% endif %}
@@ -101,15 +101,12 @@
     <p class="eyebrow">Next step</p>
     <h2>What to do now</h2>
     <p>
-      The Chart of Accounts is the first cutover-data step. With accounts
-      created, the next step is the <strong>opening trial balance</strong>:
-      upload it and (when posting is implemented) post the opening journal
-      entry as of the day before your cutover date. After that, mappings
-      and the general ledger import are unchanged from existing flows.
+      Your accounts are set up in QuickBooks. Next, set your starting
+      balances so QuickBooks begins with the same figures as PCLaw.
     </p>
     <p>
-      <a class="btn" href="{{ url_for('migration_checklist') }}">Open migration checklist</a>
-      <a class="btn" href="{{ url_for('job_detail', job_id=job.id) }}">Back to this job</a>
+      <a class="btn btn-primary" href="{{ url_for('migration_checklist') }}">Continue to starting balances &rarr;</a>
+      <a class="btn btn-link" href="{{ url_for('job_detail', job_id=job.id) }}">Back to migration</a>
     </p>
     {% if created %}
     <p class="muted" style="margin-top:var(--space-3);font-size:.92rem;">

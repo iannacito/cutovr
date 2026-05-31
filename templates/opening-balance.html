@@ -14,8 +14,9 @@
     <details class="quiet" style="margin-top:var(--space-3);">
       <summary>What this step does</summary>
       <p class="muted" style="margin-top:var(--space-2);">
-        We build a single balanced journal entry that seeds QuickBooks
-        with the starting balances from the trial balance you uploaded.
+        We post a single opening entry to QuickBooks with the starting
+        balances from the report you uploaded, so your QuickBooks company
+        begins with the same figures as PCLaw.
       </p>
     </details>
   </section>
@@ -234,7 +235,7 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <p>
           Type <code>{{ confirmation_phrase }}</code> exactly to post the
-          opening balance JournalEntry to QuickBooks Online company
+          starting balances to your QuickBooks company
           <strong>{{ qbo_connection.company_name or qbo_connection.realm_id or '(not connected)' }}</strong>.
         </p>
         <label>
@@ -242,7 +243,7 @@
           <input type="text" name="confirm_post" autocomplete="off" placeholder="{{ confirmation_phrase }}">
         </label>
         <p style="margin-top:var(--space-3);">
-          <button type="submit" class="btn btn-primary">Post opening balance JE</button>
+          <button type="submit" class="btn btn-primary">Post starting balances</button>
           <a class="btn" href="{{ url_for('job_detail', job_id=job.id) }}">Cancel</a>
         </p>
       </form>

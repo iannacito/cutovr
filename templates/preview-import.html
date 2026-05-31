@@ -45,7 +45,7 @@
 
   <section class="card">
     <p class="eyebrow">At a glance</p>
-    <h2>Review what we&rsquo;ll send.</h2>
+    <h2>Summary of this import</h2>
     <dl class="summary-grid">
       <div><dt>Transactions ready</dt><dd>{{ preview.journal_entry_count }}</dd></div>
       <div><dt>Accounts involved</dt><dd>{{ preview.unique_account_count }}</dd></div>
@@ -234,9 +234,9 @@
       look like beginning balances.</h2>
     <p class="muted" style="max-width:62ch;" data-testid="beginning-balance-summary">
       These rows have no transaction date (or a "Balance Forward" /
-      "Beginning Balance" label). They are how PCLaw represents the
-      account's starting position. Sending them through the general
-      ledger would double-post your opening trial balance.
+      "Beginning Balance" label). They are how PCLaw shows an account&rsquo;s
+      starting position. Sending them here would record your starting
+      balances twice.
     </p>
     <p class="muted" style="max-width:62ch;">
       <strong>What to do:</strong> remove these rows from the general-ledger
