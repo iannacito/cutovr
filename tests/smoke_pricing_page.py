@@ -62,8 +62,8 @@ def t1_pricing_renders_with_packages_and_faq():
         "Current Year",
         "Up to 3 Years",
         "3+ years of history",
-        # Prices
-        "$799",
+        # Prices (Essential repriced $799 -> $999)
+        "$999",
         "$1,499",
         # Quote-based tier signal for the Complete tier
         "Quote",
@@ -125,7 +125,7 @@ def t3_landing_has_pricing_section_linking_to_pricing_page():
         "Essential",
         "Standard",
         "Complete",
-        "$799",
+        "$999",
         "$1,499",
         "Quote",
         # Recommended badge on the teaser too
@@ -200,8 +200,9 @@ def t6_pricing_drops_custom_and_old_amounts():
         "/pricing still shows the retired 'Up to 5 Years' framing"
     )
     # The old base amounts must not appear (Complete is quote-based now,
-    # so $1,999 in particular must not resurface).
-    for stale_amount in ("$499", "$999", "$1,999"):
+    # so $1,999 in particular must not resurface). Note: $999 is now the
+    # live Essential price, so it is intentionally NOT in this stale list.
+    for stale_amount in ("$499", "$1,999"):
         assert stale_amount not in body, (
             f"/pricing still references retired amount {stale_amount}"
         )

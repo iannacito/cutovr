@@ -6,7 +6,7 @@ Run from project root:
 
 Covers:
   T1  Landing has consultant comparison (price + duration anchors).
-  T2  Landing has the price anchor ("From $799 — no subscription.").
+  T2  Landing has the price anchor ("From $999 — no subscription.").
   T3  Landing has the under-an-hour qualifier near the hero.
   T4  Landing no longer claims a public QuickBooks sandbox demo.
   T5  /security renders with encryption, OAuth, audit, reversible bullets.
@@ -56,7 +56,7 @@ def t1_landing_consultant_compare():
         "landing consultant compare should anchor traditional cost range"
     assert "1&ndash;3 weeks" in body or "1-3 weeks" in body, \
         "landing should anchor consultant duration (1-3 weeks)"
-    assert "From $799" in body, "landing should anchor PC Law Migrate from-price"
+    assert "From $999" in body, "landing should anchor PC Law Migrate from-price"
     print("T1 OK: landing has consultant comparison with cost + duration")
 
 
@@ -64,7 +64,7 @@ def t2_landing_price_anchor():
     r = _get("/")
     body = r.get_data(as_text=True)
     assert "landing-price-anchor" in body
-    assert "From $799" in body
+    assert "From $999" in body
     assert "no subscription" in body
     print("T2 OK: landing has hero price anchor")
 

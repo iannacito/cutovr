@@ -2,7 +2,7 @@
 
 The pricing model is history-based, not firm-size-based:
 
-  Essential        $799    Current Year
+  Essential        $999    Current Year
   Standard         $1,499  Up to 3 Years  (most common)
   Complete                 3+ years of history; quote-based
                            (NOT Stripe; handled via /support)

@@ -17,7 +17,7 @@ the thing you wire in.
 
 | Plan slug   | Public label              | Amount  | Env var                         |
 |-------------|---------------------------|---------|---------------------------------|
-| `essential` | Essential — Current Year  | $799    | `STRIPE_PRICE_ESSENTIAL`        |
+| `essential` | Essential — Current Year  | $999    | `STRIPE_PRICE_ESSENTIAL`        |
 | `standard`  | Standard — Up to 3 Years  | $1,499  | `STRIPE_PRICE_STANDARD`         |
 
 The **Complete** tier (3+ years of history) is quote-based
