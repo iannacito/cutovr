@@ -1,6 +1,6 @@
 # Security Hardening Roadmap
 
-PCLaw Migrate handles **law-firm financial data** and writes JournalEntry
+Cutovr handles **law-firm financial data** and writes JournalEntry
 records into customer QuickBooks Online companies. The threat model is
 therefore closer to a small fintech than a generic SaaS: an attacker who
 can post or alter journal entries can hide fraud or manufacture audit

@@ -1,6 +1,6 @@
-# Demo setup &mdash; PCLaw Migrate
+# Demo setup &mdash; Cutovr
 
-This document explains how to run a repeatable PCLaw Migrate demo (tens to
+This document explains how to run a repeatable Cutovr demo (tens to
 hundreds of times) against a single dedicated QuickBooks Online demo
 company **without** purging QBO between runs and **without** flipping
 between QBO accounts.

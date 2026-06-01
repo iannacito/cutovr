@@ -182,7 +182,7 @@ def send_quote_request(form, *, reference: str) -> bool:
     if not is_smtp_configured():
         return False
 
-    subject = f"[PC Law Migrate] Quote request {reference}"
+    subject = f"[Cutovr] Quote request {reference}"
     lines = [
         f"Reference: {reference}",
         f"Firm name: {form.get('firm_name', '')}",

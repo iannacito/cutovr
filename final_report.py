@@ -504,7 +504,7 @@ def build_report_text(summary: ReconcileSummary) -> str:
 # PDFs (and lets us return a friendlier error if the dep is missing
 # on a slim deployment).
 
-_PDF_DEFAULT_SUPPORT_EMAIL = "support@pclawmigrate.com"
+_PDF_DEFAULT_SUPPORT_EMAIL = "support@cutovr.com"
 
 
 def _status_phrase(summary: "ReconcileSummary") -> str:
@@ -548,7 +548,7 @@ def build_report_pdf(
         topMargin=0.75 * inch,
         bottomMargin=0.75 * inch,
         title=f"Migration summary — {summary.firm_name}",
-        author="PC Law Migrate",
+        author="Cutovr",
     )
 
     styles = getSampleStyleSheet()

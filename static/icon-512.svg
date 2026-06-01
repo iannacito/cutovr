@@ -1,11 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="PC Law Migrate logo">
-  <title>PC Law Migrate</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Cutovr logo">
+  <title>Cutovr</title>
   <rect width="512" height="512" rx="96" ry="96" fill="#1f3b5b"/>
-  <!-- "P" letterform -->
-  <path d="M112 368 V144 H208 a64 64 0 0 1 0 128 H160 V368 Z M160 192 V224 H208 a16 16 0 0 0 0 -32 Z"
-        fill="#ffffff"/>
-  <!-- "M" letterform -->
-  <path d="M272 368 V144 h48 l48 112 48 -112 h48 V368 H416 V240 l-48 112 h-32 l-48 -112 V368 Z"
-        fill="#ffffff"/>
+  <!-- "C" letterform: open ring -->
+  <path d="M352 176 A128 128 0 1 0 352 336"
+        fill="none" stroke="#ffffff" stroke-width="56" stroke-linecap="round"/>
 </svg>

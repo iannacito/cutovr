@@ -8,7 +8,7 @@ Covers the changes in the phase2-customer-controls branch:
 
   T1 Configurable branding: APP_NAME, COMPANY_NAME, SUPPORT_EMAIL,
      SECURITY_EMAIL, PRIVACY_CONTACT_EMAIL appear in the rendered public
-     pages and footer when set via env, and defaults to "PCLaw Migrate"
+     pages and footer when set via env, and defaults to "Cutovr"
      / placeholder addresses when unset.
 
   T2 /healthz reports placeholder-email status.
@@ -171,7 +171,7 @@ def t1b_branding_defaults():
     assert "your-domain.example" not in sup, "placeholder must not leak into /support"
     base = c.get("/login").get_data(as_text=True)
     assert "your-domain.example" not in base, "placeholder must not leak into footer/widget"
-    assert "PC Law Migrate" in base, "default COMPANY_NAME should be PC Law Migrate"
+    assert "Cutovr" in base, "default COMPANY_NAME should be Cutovr"
     print("T1b OK: default branding suppresses placeholder support/security emails")
 
 

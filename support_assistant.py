@@ -1,7 +1,7 @@
 """Deterministic FAQ assistant for the support widget.
 
 A small, dependency-free intent matcher that answers the most common
-customer and prospect questions about PC Law Migrate. Used by the
+customer and prospect questions about Cutovr. Used by the
 floating "Need help?" widget surfaced from _base.html on every page.
 
 Design notes:
@@ -242,7 +242,7 @@ _FAQ: List[Tuple[str, List[Group], str]] = [
             (1, ["pclaw", "quickbooks", "product", "service", "do", "tool"]),
         ],
         (
-            "PC Law Migrate moves your firm's accounting history out of "
+            "Cutovr moves your firm's accounting history out of "
             "PCLaw and into QuickBooks — chart of accounts, opening "
             "balances, general ledger, trial balance, and A/R / A/P. You "
             "upload your PCLaw reports, match accounts, preview, then post. "
@@ -350,7 +350,7 @@ _FAQ: List[Tuple[str, List[Group], str]] = [
         (
             "If your firm carries trust (IOLTA) balances, export the Client "
             "Trust listing from PCLaw and upload it with your other reports. "
-            "PC Law Migrate keeps trust balances separate and reconciles the "
+            "Cutovr keeps trust balances separate and reconciles the "
             "trust total so client funds line up before anything posts. If "
             "the trust total doesn't match, the review step flags it."
         ),
@@ -363,7 +363,7 @@ _FAQ: List[Tuple[str, List[Group], str]] = [
             (1, ["check", "match"]),
         ],
         (
-            "After you post (Step 6), PC Law Migrate compares your QuickBooks "
+            "After you post (Step 6), Cutovr compares your QuickBooks "
             "totals against the PCLaw Trial Balance you uploaded and shows any "
             "differences line by line. If the final balances tie out, you're "
             "done; if they don't, the report points you at the accounts to "
@@ -507,13 +507,13 @@ def _fallback_answer() -> str:
     if branding.is_placeholder_email(branding.SUPPORT_EMAIL):
         return (
             "I'm a small built-in assistant, so I can answer general "
-            "questions about PC Law Migrate but I can't see your account or "
+            "questions about Cutovr but I can't see your account or "
             "your QuickBooks data. Try rephrasing, or follow the step-by-step "
             "guidance on your migration page — it shows what to do next."
         )
     return (
         "I'm a small built-in assistant, so I can answer general questions "
-        "about PC Law Migrate but I can't see your account or your "
+        "about Cutovr but I can't see your account or your "
         f"QuickBooks data. If this didn't answer your question, email "
         f"{branding.SUPPORT_EMAIL} and a real person will follow up."
     )
@@ -597,7 +597,7 @@ def answer(query: str) -> dict:
 def suggested_topics() -> List[dict]:
     """Short list of clickable starter prompts shown in the widget UI."""
     return [
-        {"label": "What does PC Law Migrate do?", "query": "what is pc law migrate"},
+        {"label": "What does Cutovr do?", "query": "what is cutovr"},
         {"label": "Which reports do I need?", "query": "which reports do I need"},
         {"label": "How do the steps work?", "query": "how does the migration work step by step"},
         {"label": "How do I connect QuickBooks?", "query": "how do I connect quickbooks"},

@@ -1,6 +1,6 @@
 {
-  "name": "PC Law Migrate",
-  "short_name": "PC Law Migrate",
+  "name": "Cutovr",
+  "short_name": "Cutovr",
   "description": "PCLaw to QuickBooks Online migration tool for law firms.",
   "icons": [
     { "src": "/static/favicon.svg", "type": "image/svg+xml", "sizes": "any" },

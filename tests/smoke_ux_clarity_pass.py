@@ -21,7 +21,7 @@ Checks:
      (Connect QuickBooks + match is Step 3, Review is Step 4).
   T5 Public Security / Privacy pages drop the internal "Fernet" library
      name while keeping the reassuring "AES-256".
-  T6 Public pages render "PC Law Migrate" (not "PCLaw Migrate") and never
+  T6 Public pages never leak the legacy "PCLaw Migrate" product name and never
      surface customer-facing "QBO".
 """
 

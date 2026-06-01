@@ -1,4 +1,4 @@
-"""Production go-live readiness checks for PCLaw Migrate.
+"""Production go-live readiness checks for Cutovr.
 
 This module produces a structured, secret-free view of "is this deploy
 ready to be turned on for real customers?" suitable for both:
@@ -137,7 +137,7 @@ def collect_checks(request_host: Optional[str] = None,
     redirect_local = redirect_uri.startswith("http://localhost")
     redirect_ok = bool(redirect_uri) and redirect_https and not redirect_local
     if not redirect_uri:
-        redirect_hint = "Set QBO_REDIRECT_URI to your public callback URL (e.g. https://www.pclawmigrate.com/oauth/callback)."
+        redirect_hint = "Set QBO_REDIRECT_URI to your public callback URL (e.g. https://www.cutovr.com/oauth/callback)."
     elif redirect_local:
         redirect_hint = "QBO_REDIRECT_URI must point at the public host, not localhost."
     elif not redirect_https:
@@ -277,7 +277,7 @@ def collect_checks(request_host: Optional[str] = None,
         label="Custom domain in use (not *.onrender.com)",
         ok=custom_domain_ok,
         severity=SEVERITY_RECOMMENDED,
-        hint="Point your custom domain (e.g. www.pclawmigrate.com) at this Render service "
+        hint="Point your custom domain (e.g. www.cutovr.com) at this Render service "
              "and set PUBLIC_APP_URL so Intuit sees a stable URL." if not custom_domain_ok else "",
         detail=domain_detail,
     ))

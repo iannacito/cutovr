@@ -1,4 +1,4 @@
-"""Data-retention cleanup for PC Law Migrate.
+"""Data-retention cleanup for Cutovr.
 
 Law-firm financial data should not linger on disk longer than it is
 needed. This module collects the small, *safe* cleanup jobs that keep the
