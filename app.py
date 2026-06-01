@@ -2095,6 +2095,13 @@ def reconcile_balances():
     cutover, items, stages, summary = _build_reconcile_view(firm_id)
     current = customer_workflow.current_stage(stages)
     reachable, reason = _step6_is_reachable(stages, summary)
+    # The user is *on* the final step. Strip the stepper's forward CTA so
+    # the top-right button never reads "Proceed to Step 6: Reconcile
+    # balances" while they're already there — this is the end of the
+    # migration, so there is no next step to advance to.
+    if current is not None and current.key == customer_workflow.STAGE_RECONCILE:
+        current.cta_label = ""
+        current.cta_url = ""
     report_text = (
         final_report.build_report_text(summary) if reachable else ""
     )

@@ -23,21 +23,32 @@
       </div>
     </section>
   {% else %}
-    <div class="hero">
-      <p class="eyebrow">Step 6 of 6 &middot; Final balance check</p>
-      <h1>Final balance check</h1>
-      <p style="max-width:64ch;">
-        Confirm QuickBooks matches PCLaw. Each line below is in plain
-        English &mdash; no accounting jargon.
-      </p>
-    </div>
-
     {% if summary.is_complete %}
+      <div class="hero" data-testid="step6-success-hero">
+        <p class="eyebrow">Migration complete &middot; Step 6 of 6</p>
+        <h1>Your migration is complete.</h1>
+        <p style="max-width:64ch;">
+          Your data has been sent to QuickBooks. You can download or email
+          a copy of the summary below for your records.
+        </p>
+      </div>
+
       <div class="flash success" role="status"
            data-testid="step6-complete-banner"
            style="margin-bottom:var(--space-6);">
-        <strong>You're done! Everything matches.</strong>
-        You can email yourself a copy of the final report below.
+        <strong>All done &mdash; everything matches.</strong>
+        Your data has been sent to QuickBooks. Download or email a copy of
+        the summary below.
+      </div>
+    {% else %}
+      <div class="hero" data-testid="step6-review-hero">
+        <p class="eyebrow">Step 6 of 6 &middot; Review</p>
+        <h1>Review your migration</h1>
+        <p style="max-width:64ch;">
+          A plain-English recap of what was sent to QuickBooks. Review the
+          lines below &mdash; if anything still needs attention, we&rsquo;ll
+          point it out.
+        </p>
       </div>
     {% endif %}
 
@@ -206,15 +217,28 @@
     {% endif %}
 
     <div class="actions-row" style="margin-bottom:var(--space-8);">
-      <a class="btn" href="{{ url_for('send_to_qbo_entry') }}"
-         data-testid="step6-back-to-step5-link">
-        &larr; Back to Step 5
-      </a>
-      <a class="btn btn-primary btn-lg"
-         href="{{ url_for('dashboard') }}"
-         data-testid="step6-return-to-migration">
-        {% if summary.is_complete %}Done &mdash; return to Migration{% else %}Return to Migration{% endif %}
-      </a>
+      {% if summary.is_complete %}
+        {# Migration is finished — no next step. Offer a single, quiet way
+           back to the dashboard, framed as "you're done" rather than as
+           the next stage of the migration. #}
+        <a class="btn btn-secondary"
+           href="{{ url_for('dashboard') }}"
+           data-testid="step6-return-to-dashboard">
+          Return to dashboard
+        </a>
+      {% else %}
+        {# Not complete yet: keep a quiet way back to Step 5 to finish the
+           import, but do not frame the dashboard link as the next step. #}
+        <a class="btn" href="{{ url_for('send_to_qbo_entry') }}"
+           data-testid="step6-back-to-step5-link">
+          &larr; Back to Step 5
+        </a>
+        <a class="btn btn-secondary"
+           href="{{ url_for('dashboard') }}"
+           data-testid="step6-return-to-dashboard">
+          Return to dashboard
+        </a>
+      {% endif %}
     </div>
   {% endif %}
 </section>
