@@ -28,6 +28,34 @@ def money(value):
     return Decimal(cleaned).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+def normalize_txn_date(raw, transaction_id=None):
+    """Coerce a PCLaw GL date into the ISO ``YYYY-MM-DD`` QuickBooks needs.
+
+    QuickBooks rejects a JournalEntry whose ``TxnDate`` is not ISO. PCLaw's
+    fresh export writes dates like ``Jan 4/21`` (see Cesar's QA
+    2026-06-01); passing that string straight through made the *whole*
+    import fail — often surfacing downstream as a confusing
+    "fewer than 2 posting lines" error because the entry never built.
+
+    We reuse :func:`gl_row_quality.parse_gl_date`, which already accepts
+    the PCLaw native format, ISO, MM/DD/YYYY, ``D-MMM-YY``, and Excel
+    serials. If the value still can't be read we raise a plain-English
+    error that names the offending date and transaction so the
+    validation report can point the user at the exact row.
+    """
+    from gl_row_quality import parse_gl_date  # local import to avoid cycle
+
+    iso = parse_gl_date(raw)
+    if iso:
+        return iso
+    where = f" in transaction {transaction_id}" if transaction_id else ""
+    raise ValueError(
+        f"We couldn't read the date '{raw}'{where}. PCLaw exports it as "
+        "Jan 4/21 — that format is now accepted, along with YYYY-MM-DD "
+        "and MM/DD/YYYY. Fix this row's date and re-upload."
+    )
+
+
 def load_general_ledger_csv(path):
     path = Path(path)
     text, _enc = open_csv_text(path)
@@ -224,7 +252,7 @@ def build_journal_entry_payload(
         )
 
     return {
-        "TxnDate": first_row["date"],
+        "TxnDate": normalize_txn_date(first_row["date"], transaction_id),
         "PrivateNote": (
             f"Imported from PCLaw via pclaw-qbo | transaction_id={transaction_id}"
         ),
@@ -254,9 +282,22 @@ def plan_balanced_payloads(rows, account_mapping, mapping_mode="number", account
         # unbalanced batch even if the validation gate is bypassed.
         first = plan["still_blocked"][0]
         reasons = "; ".join(first.get("reasons") or ["unbalanced"])
+        blocked_count = len(plan["still_blocked"])
+        more = (
+            f" {blocked_count - 1} other entr"
+            + ("y is" if blocked_count == 2 else "ies are")
+            + " also affected."
+            if blocked_count > 1
+            else ""
+        )
         raise ValueError(
-            f"Transaction {first['transaction_id']} cannot be posted: {reasons}. "
-            "Fix the CSV (or share a source-journal memo across the related rows) and retry."
+            f"One general-ledger entry couldn't be posted: {reasons} "
+            f"(PCLaw reference {first['transaction_id']})."
+            f"{more} A balanced entry needs at least one debit line and one "
+            "credit line that add up to the same total. Download the "
+            "validation report to see the exact rows, fix them in the CSV "
+            "(or share a source-journal memo across the related rows), and "
+            "re-upload."
         )
 
     payloads = []

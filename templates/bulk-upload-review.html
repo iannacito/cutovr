@@ -43,7 +43,11 @@
       </div>
       <div class="next-card__actions">
         <a class="btn btn-primary btn-lg" href="{{ url_for('match_accounts_entry') }}" data-testid="step2-proceed-to-step3">Proceed to Step 3: Match accounts &rarr;</a>
-        <a class="btn btn-secondary btn-lg" href="#add-more-reports"
+        <a class="btn btn-secondary btn-lg" href="{{ url_for('uploaded_reports') }}"
+           data-testid="step2-manage-reports">
+          Manage uploaded reports
+        </a>
+        <a class="btn btn-link" href="#add-more-reports"
            data-testid="step2-add-more-files-top">
           Add more files &darr;
         </a>

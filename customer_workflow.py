@@ -99,6 +99,12 @@ class WorkflowStage:
     # nothing to go back to so both fields stay empty.
     back_label: str = ""
     back_url: str = ""
+    # Direct-jump URL for the stepper rail. Populated for completed and
+    # current stages so a lawyer can click back to a finished step (or
+    # the one they're on). Upcoming stages stay unclickable on purpose —
+    # jumping *ahead* is what produced Cesar's "Step 3 jumped to Step 4"
+    # confusion, so the rail only ever moves you to work you've reached.
+    nav_url: str = ""
     friendly_terms: List[str] = field(default_factory=list)
     detail_items: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -127,6 +133,7 @@ class WorkflowStage:
             "cta_url": self.cta_url,
             "back_label": self.back_label,
             "back_url": self.back_url,
+            "nav_url": self.nav_url,
             "friendly_terms": list(self.friendly_terms),
             "detail_items": list(self.detail_items),
         }
@@ -343,6 +350,38 @@ def _stage_back_link(
     return table.get(current_key, ("", ""))
 
 
+def _stage_nav_url(
+    stage_key: str,
+    url_for: Optional[Callable[..., str]],
+) -> str:
+    """Canonical entry URL for a stage's rail bubble.
+
+    Maps each customer-facing stage to the route that owns it so the
+    stepper rail can deep-link. Mirrors the back-link table but is keyed
+    by the stage *itself* (not the step before it). Returns "" when no
+    safe destination exists (e.g. url_for unavailable in unit tests).
+    """
+    def u(endpoint: str, fallback: str) -> str:
+        if url_for is None:
+            return ""
+        try:
+            return url_for(endpoint)
+        except Exception:
+            return fallback
+
+    table = {
+        STAGE_SETUP:     lambda: u("cutover_setup", "/cutover"),
+        STAGE_UPLOAD:    lambda: (u("uploaded_reports", "/uploaded-reports")
+                                  or u("dashboard", "/dashboard")),
+        STAGE_MATCH:     lambda: u("match_accounts_entry", "/match-accounts"),
+        STAGE_REVIEW:    lambda: u("import_job_entry", "/import-job"),
+        STAGE_IMPORT:    lambda: u("send_to_qbo_entry", "/send-to-qbo"),
+        STAGE_RECONCILE: lambda: u("reconcile_balances", "/reconcile-balances"),
+    }
+    factory = table.get(stage_key)
+    return factory() if factory else ""
+
+
 def build_customer_stages(
     checklist_items: Iterable[ChecklistItem],
     *,
@@ -492,6 +531,11 @@ def build_customer_stages(
             )
         else:
             stage.status = STAGE_STATUS_UPCOMING
+        # Rail deep-link: completed steps (revisit) and the current step
+        # (re-focus) are clickable; upcoming steps deliberately are not,
+        # so the rail can never skip a lawyer ahead past unfinished work.
+        if stage.status in (STAGE_STATUS_COMPLETE, STAGE_STATUS_CURRENT):
+            stage.nav_url = _stage_nav_url(stage.key, url_for)
 
     # When the Match stage is blocked by missing-account detection,
     # override its CTA to send the user straight into the

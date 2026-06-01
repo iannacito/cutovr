@@ -72,6 +72,15 @@ def t1_date_parser_accepts_common_formats():
         # Excel serial: 2026-01-15 is day 46037 from the 1899-12-30 epoch.
         ("46037", "2026-01-15"),
         ("46037.0", "2026-01-15"),
+        # PCLaw native export format "MMM D/YY" (Cesar QA 2026-06-01).
+        # Firms had to hand-edit every row before the GL would import;
+        # now the format is accepted directly.
+        ("Jan 4/21", "2021-01-04"),
+        ("Jan 04/21", "2021-01-04"),
+        ("Dec 31/20", "2020-12-31"),
+        ("January 4/21", "2021-01-04"),
+        ("Jan-4/21", "2021-01-04"),
+        ("Jan 4/2021", "2021-01-04"),
     ]
     for raw, expected in cases:
         got = parse_gl_date(raw)
@@ -86,7 +95,7 @@ def t1_date_parser_accepts_common_formats():
     assert parse_gl_date(None) is None
     assert parse_gl_date("Balance Forward") is None
     assert parse_gl_date("not-a-date") is None
-    print("T1 OK: parse_gl_date accepts ISO, MM/DD/YYYY, named-month, and Excel serials")
+    print("T1 OK: parse_gl_date accepts ISO, MM/DD/YYYY, named-month, PCLaw 'Jan 4/21', and Excel serials")
 
 
 def t2_beginning_balance_tokens_routed_separately():

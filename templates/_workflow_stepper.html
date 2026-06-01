@@ -59,22 +59,34 @@
     <div class="workflow-progress__fill" style="width: {{ workflow_progress }}%;"></div>
   </div>
 
+  {# The rail steps are clickable for work the user has already reached
+     (completed + current stages carry a nav_url). Upcoming steps render
+     as plain, non-interactive markers so the rail can never jump a lawyer
+     ahead of unfinished work — the source of Cesar's "Step 3 jumped to
+     Step 4" report. #}
   <ol class="workflow-steps" aria-label="Migration stages">
     {% for stage in workflow_stages %}
       <li class="workflow-step workflow-step--{{ stage.status }}">
-        <span class="workflow-step__bubble" aria-hidden="true">
-          {% if stage.status == 'complete' %}
-            &#10003;
-          {% else %}
-            {{ stage.index }}
-          {% endif %}
-        </span>
-        <span class="workflow-step__body">
-          <span class="workflow-step__label">{{ stage.short_label }}</span>
-          <span class="workflow-step__state visually-hidden">
-            {% if stage.status == 'complete' %}Completed{% elif stage.status == 'current' %}In progress now{% else %}Upcoming{% endif %}
+        {% set _step_state = 'Completed' if stage.status == 'complete' else ('In progress now' if stage.status == 'current' else 'Upcoming') %}
+        {% if stage.nav_url %}
+          <a class="workflow-step__link" href="{{ stage.nav_url }}"
+             data-testid="workflow-step-link"
+             {% if stage.status == 'current' %}aria-current="step"{% endif %}
+             aria-label="Step {{ stage.index }}: {{ stage.short_label }} ({{ _step_state }})">
+            <span class="workflow-step__bubble" aria-hidden="true">
+              {% if stage.status == 'complete' %}&#10003;{% else %}{{ stage.index }}{% endif %}
+            </span>
+            <span class="workflow-step__body">
+              <span class="workflow-step__label">{{ stage.short_label }}</span>
+            </span>
+          </a>
+        {% else %}
+          <span class="workflow-step__bubble" aria-hidden="true">{{ stage.index }}</span>
+          <span class="workflow-step__body">
+            <span class="workflow-step__label">{{ stage.short_label }}</span>
+            <span class="workflow-step__state visually-hidden">{{ _step_state }}</span>
           </span>
-        </span>
+        {% endif %}
       </li>
     {% endfor %}
   </ol>
