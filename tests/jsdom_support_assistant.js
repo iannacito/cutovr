@@ -59,10 +59,10 @@ const html = `<!doctype html><html><head><style>${css}</style></head><body>
   <section id="support-assistant-panel"
            class="support-assistant__panel"
            role="dialog"
-           aria-label="Ask PC Law Migrate"
+           aria-label="Ask Cutovr"
            hidden>
     <header class="support-assistant__header">
-      <strong>Ask PC Law Migrate</strong>
+      <strong>Ask Cutovr</strong>
       <button type="button"
               class="support-assistant__close"
               data-testid="support-assistant-close"
@@ -75,7 +75,7 @@ const html = `<!doctype html><html><head><style>${css}</style></head><body>
     <div class="support-assistant__body" data-testid="support-assistant-body">
       <p class="support-assistant__intro">Intro.</p>
       <div class="support-assistant__topics" data-testid="support-assistant-topics">
-        <button type="button" class="support-assistant__topic" data-query="what is pc law migrate">What does PC Law Migrate do?</button>
+        <button type="button" class="support-assistant__topic" data-query="what is cutovr">What does Cutovr do?</button>
       </div>
       <ol class="support-assistant__log" data-testid="support-assistant-log" aria-live="polite"></ol>
     </div>

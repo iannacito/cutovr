@@ -529,7 +529,7 @@ def _inject_csrf():
 
 
 _CUSTOMER_STATUS_REWRITES = (
-    # PCLaw Migrate brand rules: customer-facing UI says "QuickBooks",
+    # Cutovr brand rules: customer-facing UI says "QuickBooks",
     # not "QBO". Legacy jobs persisted with "QBO" tokens in the status
     # column. Rewrite at render time so existing rows in the DB display
     # cleanly without a one-off backfill migration.
@@ -1814,7 +1814,7 @@ def import_job_entry():
     if not _get_qbo_connection(primary["id"]):
         flash(
             "Connect QuickBooks first — Step 5 sends the prepared "
-            "entries from PC Law Migrate to QuickBooks, so we need a "
+            "entries from Cutovr to QuickBooks, so we need a "
             "connected QuickBooks Online company before we can post.",
             "info",
         )
@@ -1915,7 +1915,7 @@ def send_to_qbo_entry():
     if not qbo_conn:
         flash(
             "Connect QuickBooks first — Step 5 sends the prepared "
-            "entries from PC Law Migrate to QuickBooks, so we need a "
+            "entries from Cutovr to QuickBooks, so we need a "
             "connected QuickBooks Online company before we can post.",
             "info",
         )
@@ -2751,7 +2751,7 @@ def quickbooks_guide():
     """Plain-English orientation to QuickBooks Online for new customers.
 
     Public so lawyers can read it before signing up or connecting QBO.
-    Covers: what PCLaw Migrate posts, what does not happen automatically,
+    Covers: what Cutovr posts, what does not happen automatically,
     where to find imported data inside QuickBooks Online, and a short
     after-import review checklist.
     """
@@ -8233,7 +8233,7 @@ def _is_demo_environment() -> bool:
         URL we keep around for staging), OR
       * demo_mode is enabled at the deploy level.
 
-    Production customers on www.pclawmigrate.com never see the banner.
+    Production customers on www.cutovr.com never see the banner.
     """
     raw = (os.environ.get("SHOW_DEMO_BANNER") or "").strip().lower()
     if raw in ("1", "true", "yes", "on"):

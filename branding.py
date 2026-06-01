@@ -23,8 +23,8 @@ def _env(name: str, default: str) -> str:
     return value or default
 
 
-APP_NAME = _env("APP_NAME", "PC Law Migrate")
-COMPANY_NAME = _env("COMPANY_NAME", "PC Law Migrate")
+APP_NAME = _env("APP_NAME", "Cutovr")
+COMPANY_NAME = _env("COMPANY_NAME", "Cutovr")
 SUPPORT_EMAIL = _env("SUPPORT_EMAIL", "support@your-domain.example")
 SECURITY_EMAIL = _env("SECURITY_EMAIL", "security@your-domain.example")
 PRIVACY_CONTACT_EMAIL = _env("PRIVACY_CONTACT_EMAIL", SUPPORT_EMAIL)

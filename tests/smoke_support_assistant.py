@@ -119,7 +119,7 @@ def t4c_assistant_covers_expected_intents():
     "can't connect" -> connect, "iolta" -> trust)."""
     cases = [
         # (query, expected topic)
-        ("what is pc law migrate", "what_is"),
+        ("what is cutovr", "what_is"),
         ("how does the migration work step by step", "steps"),
         ("which PCLaw reports do I need to export", "reports_needed"),
         ("I forgot to upload a report, can I add more", "more_reports"),
@@ -163,7 +163,7 @@ def t4d_assistant_answers_are_concise_and_actionable():
     # Walk every intent via a direct answer() call using a query we know
     # maps to it, so we measure the *rendered* copy.
     probe = {
-        "what_is": "what is pc law migrate",
+        "what_is": "what is cutovr",
         "steps": "how does it work step by step",
         "reports_needed": "which reports do I need",
         "more_reports": "i forgot to upload a report",

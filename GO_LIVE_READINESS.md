@@ -1,6 +1,6 @@
 # Go-Live Readiness
 
-PCLaw Migrate ships a self-checking readiness layer so you can confirm that a
+Cutovr ships a self-checking readiness layer so you can confirm that a
 Render deploy is fully configured for real customer use **before**
 flipping the switch with Intuit.
 

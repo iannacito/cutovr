@@ -1,5 +1,5 @@
 """
-Demo mode: a dedicated, repeatable demo workspace for PCLaw Migrate.
+Demo mode: a dedicated, repeatable demo workspace for Cutovr.
 
 The product gets demoed dozens to hundreds of times against one connected
 QuickBooks Online sandbox/demo company. Without this module the demo

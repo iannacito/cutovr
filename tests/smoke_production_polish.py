@@ -6,9 +6,9 @@ Run from project root:
 
 Covers the changes in the production-polish-security branch:
 
-  T1 Default branding has been switched from "Cutover" to "PCLaw Migrate"
-     and the brand mark renders without the legacy 'Cut<em>over</em>'
-     fragment.
+  T1 Default branding is "Cutovr" and the brand mark renders as the
+     all-caps split 'CUT<em>OVR</em>'; legacy "PC Law Migrate" /
+     "PCLaw Migrate" product names are gone from customer copy.
 
   T2 Favicon assets (SVG, ICO redirect, manifest, apple-touch-icon)
      are referenced from the base template and reachable.
@@ -101,20 +101,20 @@ def _connect(c, firm, email, gl_bytes=GL):
     return job_id
 
 
-def t1_default_branding_pclaw_migrate():
+def t1_default_branding_cutovr():
     c = appmod.app.test_client()
     body = c.get("/login").get_data(as_text=True)
-    assert "PC Law Migrate" in body, "default APP_NAME should be PC Law Migrate"
-    # The legacy 'Cut<em>over</em>' fragment must be gone.
-    assert "Cut<em>over</em>" not in body
-    assert ">Cutover<" not in body
-    # The compact "PCLaw Migrate" (no space) brand string must NOT appear
-    # in customer-facing copy — the product is "PC Law Migrate".
+    assert "Cutovr" in body, "default COMPANY_NAME should be Cutovr (footer)"
+    # Legacy product names must be gone from customer copy.
+    assert "PC Law Migrate" not in body, \
+        "legacy 'PC Law Migrate' must not appear after rebrand"
     assert "PCLaw Migrate" not in body, \
-        "compact 'PCLaw Migrate' should not appear in customer-facing pages"
-    # Brand mark uses the all-caps "PC LAW MIGRATE" form on the logo line.
-    assert "PC LAW <em>MIGRATE</em>" in body
-    print("T1 OK: default branding is PC Law Migrate with all-caps brand mark")
+        "compact 'PCLaw Migrate' must not appear in customer-facing pages"
+    assert "PC LAW <em>MIGRATE</em>" not in body, \
+        "legacy all-caps brand mark must be gone"
+    # Brand mark uses the all-caps split "CUT<em>OVR</em>" on the logo line.
+    assert "CUT<em>OVR</em>" in body
+    print("T1 OK: default branding is Cutovr with all-caps brand mark")
 
 
 def t2_favicon_assets_present():
@@ -312,7 +312,7 @@ def t6_account_mapping_resilience():
 
 
 def main():
-    t1_default_branding_pclaw_migrate()
+    t1_default_branding_cutovr()
     t2_favicon_assets_present()
     t3_security_headers_on_every_response()
     t4_oversized_upload_returns_friendly_redirect()
