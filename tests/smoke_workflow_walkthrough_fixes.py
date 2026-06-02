@@ -260,15 +260,18 @@ def w4_step4_plain_english_pass():
     print("W4 OK: Step 4 review page reads in plain English")
 
 
-def w5_step3_no_duplicate_proceed_cta_and_no_enums():
-    """Step 3 mapping page has one Proceed CTA and no raw enums."""
+def w5_step3_proceed_ctas_and_no_enums():
+    """Step 3 mapping page has both Proceed CTAs and no raw enums."""
     tmpl = Path(ROOT, "templates", "account-mapping.html").read_text()
 
-    # The in-page success-card extra "Proceed to Step 4" CTA was
-    # removed; only the footer Proceed CTA remains.
+    # Two "Proceed to Step 4" CTAs render once mapping is complete: one
+    # in the top success card (next to the "we matched your accounts"
+    # message) and one in the footer nav. Both are inside the same
+    # mapping-complete gate, so they always appear together.
     proceed_count = tmpl.count("Proceed to Step 4")
-    assert proceed_count == 1, (
-        f"Expected exactly 1 'Proceed to Step 4' CTA, found {proceed_count}"
+    assert proceed_count == 2, (
+        f"Expected exactly 2 'Proceed to Step 4' CTAs (top success card "
+        f"+ footer), found {proceed_count}"
     )
 
     # Raw QuickBooks AccountType enum strings must not be rendered
@@ -286,7 +289,7 @@ def w5_step3_no_duplicate_proceed_cta_and_no_enums():
     assert "or qbo_connection.realm_id" not in coa_confirm, (
         "coa-confirm still falls back to raw realm_id."
     )
-    print("W5 OK: Step 3 single CTA + AccountType translated + no realm-id fallback")
+    print("W5 OK: Step 3 top+footer Proceed CTAs + AccountType translated + no realm-id fallback")
 
 
 def w6_step1_no_visible_realm_id_input():
@@ -352,7 +355,7 @@ def main():
     w2_step6_terminal_cta_present()
     w3_step5_no_job_id_as_record_count()
     w4_step4_plain_english_pass()
-    w5_step3_no_duplicate_proceed_cta_and_no_enums()
+    w5_step3_proceed_ctas_and_no_enums()
     w6_step1_no_visible_realm_id_input()
     w7_no_operator_or_oauth_copy_in_auth_pages()
     print()
