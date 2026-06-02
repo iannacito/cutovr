@@ -112,6 +112,52 @@
     </div>
   </header>
 
+  {# ---- Import receipt ----------------------------------------------
+     When the import is complete this success card is the FIRST piece of
+     content after the progress stepper + job hero. User testing: lawyers
+     scrolled past the QuickBooks connection panel looking for the green
+     "Import complete" confirmation and thought the import had failed. #}
+  {% if job.import_summary %}
+  <section class="card success-panel" data-testid="import-complete-panel">
+    <p class="eyebrow">Sent</p>
+    <h2 style="margin-bottom:var(--space-3);">Import complete.</h2>
+    <dl class="summary-grid">
+      <div><dt>Source transactions</dt><dd>{{ job.import_summary.source_transaction_count }}</dd></div>
+      <div><dt>QuickBooks entries created</dt><dd>{{ job.import_summary.qbo_je_count }}</dd></div>
+      <div><dt>Source debits</dt><dd>${{ job.import_summary.source_debit_total }}</dd></div>
+      <div><dt>Source credits</dt><dd>${{ job.import_summary.source_credit_total }}</dd></div>
+    </dl>
+    <div class="actions-row" style="margin-top:var(--space-4);">
+      <a class="btn btn-primary" href="{{ url_for('reconciliation_report_csv', job_id=job.id) }}">
+        Download audit report
+      </a>
+      <a class="btn btn-link" href="{{ url_for('quickbooks_guide') }}#after-import">
+        Open QuickBooks and review imported data &rarr;
+      </a>
+    </div>
+    {% if job.qbo_results %}
+      <details class="quiet">
+        <summary>QuickBooks entry IDs ({{ job.qbo_results|length }})</summary>
+        <div class="table-wrap" style="margin-top:var(--space-3);">
+          <table>
+            <thead><tr><th>PCLaw transaction</th><th>QuickBooks Id</th><th>DocNumber</th><th>Date</th></tr></thead>
+            <tbody>
+              {% for r in job.qbo_results %}
+                <tr>
+                  <td><code>{{ r.transaction_id or '—' }}</code></td>
+                  <td><code>{{ r.Id }}</code></td>
+                  <td><code>{{ r.DocNumber }}</code></td>
+                  <td>{{ r.TxnDate }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    {% endif %}
+  </section>
+  {% endif %}
+
   {# ---- Report-type next action (non-GL reports) --------------------- #}
   {% if report_type and report_type != 'general_ledger' %}
   <section class="next-card">
@@ -449,48 +495,6 @@
       {% endif %}
     {% endif %}
   </section>
-
-  {# ---- Import receipt ---------------------------------------------- #}
-  {% if job.import_summary %}
-  <section class="card success-panel">
-    <p class="eyebrow">Sent</p>
-    <h2 style="margin-bottom:var(--space-3);">Import complete.</h2>
-    <dl class="summary-grid">
-      <div><dt>Source transactions</dt><dd>{{ job.import_summary.source_transaction_count }}</dd></div>
-      <div><dt>QuickBooks entries created</dt><dd>{{ job.import_summary.qbo_je_count }}</dd></div>
-      <div><dt>Source debits</dt><dd>${{ job.import_summary.source_debit_total }}</dd></div>
-      <div><dt>Source credits</dt><dd>${{ job.import_summary.source_credit_total }}</dd></div>
-    </dl>
-    <div class="actions-row" style="margin-top:var(--space-4);">
-      <a class="btn btn-primary" href="{{ url_for('reconciliation_report_csv', job_id=job.id) }}">
-        Download audit report
-      </a>
-      <a class="btn btn-link" href="{{ url_for('quickbooks_guide') }}#after-import">
-        Open QuickBooks and review imported data &rarr;
-      </a>
-    </div>
-    {% if job.qbo_results %}
-      <details class="quiet">
-        <summary>QuickBooks entry IDs ({{ job.qbo_results|length }})</summary>
-        <div class="table-wrap" style="margin-top:var(--space-3);">
-          <table>
-            <thead><tr><th>PCLaw transaction</th><th>QuickBooks Id</th><th>DocNumber</th><th>Date</th></tr></thead>
-            <tbody>
-              {% for r in job.qbo_results %}
-                <tr>
-                  <td><code>{{ r.transaction_id or '—' }}</code></td>
-                  <td><code>{{ r.Id }}</code></td>
-                  <td><code>{{ r.DocNumber }}</code></td>
-                  <td>{{ r.TxnDate }}</td>
-                </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </details>
-    {% endif %}
-  </section>
-  {% endif %}
 
   {# ---- Verification (collapsed) ------------------------------------ #}
   {% if job.qbo_results %}

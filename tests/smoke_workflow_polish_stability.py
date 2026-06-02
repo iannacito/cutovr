@@ -272,6 +272,48 @@ def p5_import_complete_panel_renders_before_hero():
     print("OK  P5  Step 5 import-complete panel renders before the hero")
 
 
+def p5b_job_detail_import_complete_panel_renders_above_connection_panel():
+    """On the job-detail view, when the import is complete the
+    "Import complete" success card must render high on the page — right
+    after the job hero and BEFORE the lower supporting detail sections
+    (the primary next-card, preflight, the large QuickBooks connection
+    panel, verification, history). Same user-testing finding as Step 5:
+    lawyers scrolled past the connection panel hunting for the green
+    confirmation and assumed the import had failed."""
+    tmpl = (ROOT / "templates" / "job-detail.html").read_text()
+    panel_idx = tmpl.find('data-testid="import-complete-panel"')
+    assert panel_idx != -1, "import-complete-panel marker missing from job-detail.html"
+
+    hero_idx = tmpl.find('class="detail-hero"')
+    connect_idx = tmpl.find('<p class="eyebrow">QuickBooks Online</p>')
+    preflight_idx = tmpl.find("Import preflight")
+    history_idx = tmpl.find("Import history for this job")
+    assert hero_idx != -1, "detail-hero marker missing"
+    assert connect_idx != -1, "QuickBooks Online connection panel marker missing"
+
+    # First meaningful content after the header.
+    assert hero_idx < panel_idx, (
+        "Import-complete card should render after the job hero "
+        f"(hero={hero_idx}, panel={panel_idx})"
+    )
+    # Above the lower supporting detail sections.
+    for label, idx in (
+        ("QuickBooks connection panel", connect_idx),
+        ("preflight", preflight_idx),
+        ("import history", history_idx),
+    ):
+        if idx != -1:
+            assert panel_idx < idx, (
+                f"Import-complete card must render before the {label} "
+                f"(panel={panel_idx}, {label}={idx})"
+            )
+
+    # Existing actions preserved + customer-facing QuickBooks wording.
+    assert "Download audit report" in tmpl
+    assert "Open QuickBooks and review imported data" in tmpl
+    print("OK  P5b job-detail import-complete card renders above the connection panel")
+
+
 def p6_stepper_no_longer_renders_redundant_title_block():
     """The repeated 'Migration progress · Step X of 6 / step name /
     description' h2/eyebrow/lede block inside the stepper partial is
@@ -404,6 +446,7 @@ def main():
     p3_start_fresh_archives_jobs_and_redirects_to_step1()
     p4_step2_add_more_files_visible_above_the_fold()
     p5_import_complete_panel_renders_before_hero()
+    p5b_job_detail_import_complete_panel_renders_above_connection_panel()
     p6_stepper_no_longer_renders_redundant_title_block()
     p7_step1_forward_cta_is_step2_upload_your_reports()
     p8_step6_skipped_lines_collapsed_into_details()
