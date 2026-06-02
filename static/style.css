@@ -1387,6 +1387,27 @@ details.quiet > *:not(summary) { margin-top: var(--space-3); }
   color: var(--ink-faint);
 }
 
+/* Clickable rail steps (completed + current). Keep the bubble/label
+   layout identical to the static version; only add affordance. */
+.workflow-step__link {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  text-decoration: none;
+  color: inherit;
+  border-radius: var(--radius-sm, 6px);
+}
+.workflow-step__link:hover .workflow-step__label,
+.workflow-step__link:focus-visible .workflow-step__label {
+  text-decoration: underline;
+  color: var(--ink);
+}
+.workflow-step__link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .workflow-stepper__terms {
   margin: var(--space-5) 0 0;
   font-size: .88rem;

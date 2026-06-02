@@ -8104,6 +8104,130 @@ def reverse_import(job_id):
     return redirect(url_for("job_detail", job_id=job_id))
 
 
+def _purge_job_local(job_id, job):
+    """Delete a job's local footprint: encrypted files, tokens, rows.
+
+    Shared by ``delete_job`` and the Step-2 manage-reports
+    delete/replace flows. Does NOT touch QuickBooks — any JournalEntry
+    already posted stays in the firm's QBO company until explicitly
+    reversed. The import_history row is intentionally preserved so the
+    duplicate-upload guard still fires on a re-upload of the same bytes.
+
+    Each path is guarded because ``job`` may carry the key with a None
+    value (jobs that never produced an output file, or re-walked
+    workflows where the encrypted path was cleared). ``Path / None``
+    raises before the DB / in-memory state is cleared, which previously
+    left users stuck with a job they couldn't delete (Cesar QA
+    2026-05-29).
+    """
+    enc_file = job.get("encrypted_file")
+    if enc_file:
+        (UPLOAD_DIR / enc_file).unlink(missing_ok=True)
+    enc_out = job.get("encrypted_output")
+    if enc_out:
+        (OUTPUT_DIR / enc_out).unlink(missing_ok=True)
+    if job_id in qbo_connections:
+        del qbo_connections[job_id]
+    jobs.pop(job_id, None)
+    db.delete_job(job_id)
+
+
+@app.route("/uploaded-reports/<job_id>/remove", methods=["POST"])
+@login_required
+def uploaded_report_remove(job_id):
+    """Delete one uploaded report from the Step-2 manage-reports page.
+
+    Lighter-touch than ``/jobs/<id>/delete`` (no typed DELETE
+    confirmation) because the manage screen shows the file's name and
+    report type inline and the action sits behind a per-row control —
+    the user can see exactly what they're removing. Still refuses to
+    touch a report that has already posted to QuickBooks without sending
+    them through the reverse-import flow first, so a stray click can't
+    orphan posted journal entries.
+    """
+    job, _user = _job_or_403(job_id)
+    if job.get("qbo_results"):
+        flash(
+            "This report has already been sent to QuickBooks. Reverse the "
+            "import from its detail page before removing it here.",
+            "error",
+        )
+        return redirect(url_for("uploaded_reports"))
+    try:
+        _purge_job_local(job_id, job)
+        _audit("uploaded_report_remove", target_type="job", target_id=job_id,
+               details=f"company={job.get('company')} via manage-reports")
+        flash(
+            f"Removed {job.get('source_file') or 'the report'}. You can "
+            "upload a replacement any time.",
+            "success",
+        )
+    except Exception as e:  # noqa: BLE001
+        _audit("uploaded_report_remove_failed", target_type="job",
+               target_id=job_id, details=str(e))
+        flash(f"Could not remove the report: {e}", "error")
+    return redirect(url_for("uploaded_reports"))
+
+
+@app.route("/uploaded-reports/<job_id>/replace", methods=["POST"])
+@login_required
+def uploaded_report_replace(job_id):
+    """Swap the file behind an uploaded report, keeping its report type.
+
+    The common case (Cesar QA 2026-06-01): a firm exports the General
+    Ledger, the dates need correcting, and they re-export and want to
+    drop the corrected file in place of the old one without restarting
+    the whole migration. We delete the old job's local footprint and
+    process the replacement as the same report type, then return the
+    user to the manage-reports page.
+    """
+    old_job, user = _job_or_403(job_id)
+    if old_job.get("qbo_results"):
+        flash(
+            "This report has already been sent to QuickBooks. Reverse the "
+            "import from its detail page before replacing it.",
+            "error",
+        )
+        return redirect(url_for("uploaded_reports"))
+
+    file = request.files.get("ledger_file")
+    if not file or not file.filename:
+        flash("Choose a replacement CSV to upload.", "error")
+        return redirect(url_for("uploaded_reports"))
+
+    # Keep the report classification stable across the swap so the
+    # replacement lands in the same slot (especially important for GLs).
+    keep_report_type = old_job.get("report_type")
+    keep_company = old_job.get("company") or (db.get_firm(user["firm_id"]) or {}).get("name") or ""
+    keep_email = old_job.get("email") or user["email"]
+
+    result = _process_uploaded_csv(
+        file_storage=file,
+        company=keep_company,
+        user_email=keep_email,
+        user=user,
+        user_picked_report_type=keep_report_type if is_valid_report_type(keep_report_type or "") else None,
+    )
+    if not result.get("job_id"):
+        # New file rejected — leave the original in place so the user
+        # doesn't lose their upload over a bad replacement.
+        flash(result.get("message") or "We couldn't read that file. The original report is still here.", "error")
+        return redirect(url_for("uploaded_reports"))
+
+    try:
+        _purge_job_local(job_id, old_job)
+        _audit("uploaded_report_replace", target_type="job", target_id=job_id,
+               details=f"replaced by {result['job_id']} ({result.get('filename')})")
+    except Exception as e:  # noqa: BLE001
+        _audit("uploaded_report_replace_purge_failed", target_type="job",
+               target_id=job_id, details=str(e))
+
+    if result.get("message"):
+        flash(result["message"], result.get("category") or "success")
+    flash("Replacement uploaded. The previous file was removed.", "success")
+    return redirect(url_for("uploaded_reports"))
+
+
 @app.route("/jobs/<job_id>/delete", methods=["POST"])
 @login_required
 def delete_job(job_id):
@@ -8136,24 +8260,7 @@ def delete_job(job_id):
     last_import_id = job.get("last_import_id")
 
     try:
-        # ``job`` may carry the key with a None value (e.g. for jobs that
-        # never produced an output file, or were created from a re-walked
-        # workflow where the encrypted path was cleared). ``Path / None``
-        # raises ``TypeError: unsupported operand type(s) for /:
-        # 'PosixPath' and 'NoneType'`` and bails out before the DB row /
-        # in-memory state is cleared, leaving the user stuck with a
-        # job they can't delete (Cesar QA 2026-05-29). Guard each path.
-        enc_file = job.get("encrypted_file")
-        if enc_file:
-            (UPLOAD_DIR / enc_file).unlink(missing_ok=True)
-        enc_out = job.get("encrypted_output")
-        if enc_out:
-            (OUTPUT_DIR / enc_out).unlink(missing_ok=True)
-
-        if job_id in qbo_connections:
-            del qbo_connections[job_id]
-        jobs.pop(job_id, None)
-        db.delete_job(job_id)
+        _purge_job_local(job_id, job)
         _audit(
             "delete_job",
             target_type="job",

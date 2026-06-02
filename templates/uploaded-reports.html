@@ -1,68 +1,102 @@
 {% extends "_base.html" %}
-{% block title %}Uploaded reports &mdash; {{ firm.name }}{% endblock %}
+{% block title %}Manage reports &mdash; {{ firm.name }}{% endblock %}
 {% block content %}
 <section class="page" data-testid="uploaded-reports-page">
   {% include "_workflow_stepper.html" %}
 
   <div class="hero">
-    <p class="eyebrow">Step 2 of 6 &middot; Uploaded reports</p>
-    <h1>Reports uploaded for this migration</h1>
+    <p class="eyebrow">Step 2 of 6 &middot; Manage reports</p>
+    <h1>Your reports for this migration</h1>
     <p class="muted" style="max-width:64ch;">
-      The PCLaw reports you&rsquo;ve uploaded for this migration, with the
-      type we detected and where each one stands. Looking for what&rsquo;s
-      already in QuickBooks? See your
+      Here are the reports you&rsquo;ve uploaded. Replace a file if you
+      re-exported it from PCLaw (handy for the General Ledger after fixing
+      dates), or remove one you didn&rsquo;t mean to add. Looking for
+      what&rsquo;s already in QuickBooks? See your
       <a href="{{ url_for('firm_imports') }}">import history</a>.
     </p>
   </div>
 
-  <section class="card" style="padding:0;margin-bottom:var(--space-6);">
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Report</th>
-            <th>Source file</th>
-            <th>Type</th>
-            <th>Status</th>
-            <th>Uploaded</th>
-            <th>Open</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% if uploaded_jobs %}
-            {% for job in uploaded_jobs %}
-              <tr data-testid="uploaded-report-row">
-                <td><strong>{{ job.company }}</strong></td>
-                <td><code>{{ job.source_file }}</code></td>
-                <td>{{ job.report_type_label }}</td>
-                <td>
-                  <span class="badge {% if 'Imported' in (job.status or '') %}success{% elif 'failed' in (job.status or '')|lower or 'blocked' in (job.status or '')|lower %}error{% endif %}">{{ job.status|customer_status }}</span>
-                </td>
-                <td>{{ (job.created_at or '')[:10] }}</td>
-                <td>
-                  <a class="btn btn-link" href="{{ url_for('job_detail', job_id=job.id) }}">
-                    Open &rarr;
-                  </a>
-                </td>
-              </tr>
-            {% endfor %}
-          {% else %}
-            <tr>
-              <td colspan="6" style="text-align:center;color:var(--ink-muted);padding:var(--space-6);"
-                  data-testid="uploaded-reports-empty">
-                No reports uploaded for the active run yet.
-                <a href="{{ url_for('dashboard') }}#intake">Upload your first report &rarr;</a>
-              </td>
-            </tr>
-          {% endif %}
-        </tbody>
-      </table>
+  {% if uploaded_jobs %}
+    <div class="report-slots" data-testid="report-slots">
+      {% for job in uploaded_jobs %}
+        {% set is_imported = 'Imported' in (job.status or '') %}
+        {% set is_problem = 'failed' in (job.status or '')|lower or 'blocked' in (job.status or '')|lower %}
+        <article class="card report-slot" data-testid="report-slot"
+                 style="padding:var(--space-5);margin-bottom:var(--space-4);">
+          <div style="display:flex;justify-content:space-between;gap:var(--space-4);align-items:flex-start;flex-wrap:wrap;">
+            <div style="min-width:0;">
+              <p class="eyebrow">{{ job.report_type_label }}</p>
+              <h3 style="margin:var(--space-1) 0 var(--space-2);">{{ job.company }}</h3>
+              <p class="muted" style="font-size:.9rem;margin:0;">
+                <code>{{ job.source_file }}</code>
+                {% if job.created_at %}&middot; uploaded {{ (job.created_at or '')[:10] }}{% endif %}
+              </p>
+            </div>
+            <span class="badge {% if is_imported %}success{% elif is_problem %}error{% endif %}"
+                  data-testid="report-slot-status">
+              {{ job.status|customer_status }}
+            </span>
+          </div>
+
+          <div class="report-slot__actions"
+               style="display:flex;gap:var(--space-3);align-items:center;flex-wrap:wrap;margin-top:var(--space-4);">
+            <a class="btn btn-secondary" href="{{ url_for('job_detail', job_id=job.id) }}"
+               data-testid="report-slot-open">Open</a>
+
+            {# Replace — especially useful for a re-exported General Ledger.
+               One file input + submit, scoped to this report's slot. #}
+            <form class="report-slot__replace" method="post" enctype="multipart/form-data"
+                  action="{{ url_for('uploaded_report_replace', job_id=job.id) }}"
+                  style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap;margin:0;"
+                  data-testid="report-slot-replace-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <label class="visually-hidden" for="replace-{{ job.id }}">Replacement CSV</label>
+              <input id="replace-{{ job.id }}" type="file" name="ledger_file" accept=".csv" required>
+              <button class="btn" type="submit" data-testid="report-slot-replace-submit">Replace file</button>
+            </form>
+
+            {# A compact "more actions" menu, in the spirit of the storage
+               apps Cesar referenced — keeps the row clean and tucks the
+               destructive action behind a deliberate open. #}
+            <details class="report-slot__more" data-testid="report-slot-more"
+                     style="margin-left:auto;">
+              <summary class="btn btn-link" aria-label="More actions for this report">More actions &#9662;</summary>
+              <div class="report-slot__menu"
+                   style="margin-top:var(--space-2);display:flex;flex-direction:column;gap:var(--space-2);">
+                {% if is_imported %}
+                  <p class="muted" style="font-size:.85rem;margin:0;max-width:40ch;">
+                    Already sent to QuickBooks. To remove it, reverse the
+                    import from its detail page first.
+                  </p>
+                {% else %}
+                  <form method="post" action="{{ url_for('uploaded_report_remove', job_id=job.id) }}"
+                        onsubmit="return confirm('Remove this report from the migration? The uploaded file is deleted; nothing in QuickBooks changes.');"
+                        style="margin:0;" data-testid="report-slot-remove-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button class="btn btn-danger" type="submit" data-testid="report-slot-remove-submit">
+                      Remove report
+                    </button>
+                  </form>
+                {% endif %}
+              </div>
+            </details>
+          </div>
+        </article>
+      {% endfor %}
     </div>
-  </section>
+  {% else %}
+    <div class="card" style="padding:var(--space-6);text-align:center;color:var(--ink-muted);"
+         data-testid="uploaded-reports-empty">
+      <p>No reports uploaded for this migration yet.</p>
+      <a class="btn btn-primary" href="{{ url_for('dashboard') }}#intake">Upload your first report &rarr;</a>
+    </div>
+  {% endif %}
 
   <div class="actions-row" style="margin-top:var(--space-5);justify-content:space-between;">
     <a class="btn btn-link" href="{{ url_for('dashboard') }}">&larr; Back to Step 2: Upload reports</a>
-    <a class="btn btn-primary" href="{{ url_for('dashboard') }}#intake">Add another report</a>
+    <a class="btn btn-primary" href="{{ url_for('dashboard') }}#intake" data-testid="uploaded-reports-add-another">
+      Add another report
+    </a>
   </div>
 </section>
 {% endblock %}

@@ -40,6 +40,12 @@ _EXCEL_EPOCH = date(1899, 12, 30)
 # MM/DD/YYYY in Canada and the US; Excel re-exports often coerce to
 # YYYY-MM-DD or D-MMM-YY. The list is intentionally tight — adding more
 # permissive formats hides genuine bad input.
+#
+# A fresh-off-PCLaw export writes the date as "Jan 4/21" (month
+# abbreviation, day, slash, two-digit year) — see Cesar's QA 2026-06-01.
+# Firms were having to hand-edit every row to a format the app accepted
+# before the GL would import. The "%b %d/%y" / "%b %-d/%y" family below
+# accepts that native format directly so no manual edit is needed.
 _DATE_FORMATS: tuple[str, ...] = (
     "%Y-%m-%d",
     "%Y/%m/%d",
@@ -51,6 +57,12 @@ _DATE_FORMATS: tuple[str, ...] = (
     "%d-%b-%y",
     "%b %d, %Y",       # "Jan 15, 2026"
     "%B %d, %Y",       # "January 15, 2026"
+    "%b %d/%Y",        # "Jan 4/2021"
+    "%b %d/%y",        # "Jan 4/21" — PCLaw native export
+    "%B %d/%Y",        # "January 4/2021"
+    "%B %d/%y",        # "January 4/21"
+    "%b-%d/%y",        # "Jan-4/21"
+    "%b/%d/%y",        # "Jan/4/21"
     "%Y%m%d",
 )
 
@@ -289,8 +301,9 @@ def _classify_row(idx: int, row: dict) -> RowClassification:
             ),
             plain_fix=(
                 "Edit the date to YYYY-MM-DD (for example 2026-01-15) "
-                "or MM/DD/YYYY and re-upload. Excel serial numbers "
-                "between 20000 and 80000 are accepted."
+                "or MM/DD/YYYY and re-upload. The PCLaw export format "
+                "(for example Jan 4/21) and Excel serial numbers between "
+                "20000 and 80000 are also accepted."
             ),
         )
 
