@@ -23,7 +23,7 @@
          style="background:#fff8d6;border-bottom:1px solid #e6d77a;color:#5d4a00;text-align:center;padding:.45rem 1rem;font-size:.9rem;">
       <strong>Demo / staging environment.</strong>
       Do not use this site for a real PCLaw to QuickBooks migration &mdash;
-      go to <a href="https://www.cutovr.com" style="color:inherit;text-decoration:underline;">www.cutovr.com</a> instead.
+      go to <a href="{{ public_app_url }}" style="color:inherit;text-decoration:underline;">{{ public_app_url | replace('https://', '') | replace('http://', '') }}</a> instead.
     </div>
   {% endif %}
   <header class="site-header">

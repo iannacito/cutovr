@@ -280,6 +280,51 @@ def t8_source_journal_token_priority():
     print("T8 OK: source_journal_token reads memo > description > reference")
 
 
+# --- T9 ----------------------------------------------------------------------
+
+def t9_known_code_found_in_any_column():
+    """A known journal code is preferred wherever it appears in the row.
+
+    Cesar's 2026-06-03 GL carried the source-journal code (GB / SJ / CER)
+    in the reference column, not as the first word of the memo. The old
+    "first word of the first non-empty field" heuristic grabbed the memo's
+    leading word instead, so siblings that should have grouped didn't.
+    The strengthened extractor scans for a *known* code anywhere.
+    """
+    # Code only in reference; memo leads with a vendor name.
+    assert source_journal_token(
+        {"memo": "Payroll run", "reference": "GB 000123"}
+    ) == "GB"
+    # Code mid-string in reference.
+    assert source_journal_token({"reference": "Batch GB 000123"}) == "GB"
+    # SJ (Sales Journal) is now recognised.
+    assert source_journal_token({"reference": "SJ-4471"}) == "SJ"
+    # Two refs under the same code group even though their memos differ.
+    rows = [
+        _row("700", "1000", "Cash", "100.00", "0", memo="Acme deposit"),
+        _row("700", "5000", "Acc",  "0", "100.00", memo="Acme deposit"),
+    ]
+    for r in rows:
+        r["memo"] = "Acme Corp payment"      # memo no longer leads with code
+        r["reference"] = "SJ 8801"            # code lives in reference
+    rows += [
+        {**_row("701", "1000", "Cash", "0", "50.00", memo="Refund")},
+    ]
+    rows[-1]["reference"] = "SJ 8802"
+    rows += [
+        {**_row("702", "1000", "Cash", "50.00", "0", memo="Refund")},
+    ]
+    rows[-1]["reference"] = "SJ 8802"
+    grouped = group_rows_by_transaction(rows)
+    plan = plan_posting_groups(grouped)
+    # 701 (-50) and 702 (+50) are unbalanced individually but balance as a
+    # group under SJ; they get rescued. 700 already balances on its own.
+    assert "700" in plan["balanced_transactions"], plan["balanced_transactions"].keys()
+    assert any(g["token"] == "SJ" for g in plan["merged_groups"]), plan["merged_groups"]
+    assert plan["still_blocked"] == [], plan["still_blocked"]
+    print("T9 OK: known journal code is found in the reference column and groups siblings")
+
+
 if __name__ == "__main__":
     t1_cesar_payroll_rescued_by_grouping()
     t2_mixed_rescue_and_still_blocked()
@@ -289,5 +334,6 @@ if __name__ == "__main__":
     t6_plan_balanced_payloads_uses_grouping()
     t7_planner_refuses_unbalanced_left_over()
     t8_source_journal_token_priority()
+    t9_known_code_found_in_any_column()
     print()
     print("ALL gl_grouping SMOKE TESTS PASSED")

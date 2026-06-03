@@ -27,7 +27,7 @@ from typing import Iterable, Optional
 
 from csv_safety import sanitize_csv_cell
 from gl_grouping import plan_posting_groups
-from gl_row_quality import classify_gl_rows, is_blank_row
+from gl_row_quality import classify_gl_rows, is_blank_row, is_droppable_row
 from pclaw_pipeline import (
     GL_REQUIRED_COLUMNS,
     build_account_mapping_from_names,
@@ -99,7 +99,7 @@ def build_dry_run_preview(
 
     # Drop truly blank rows before grouping. They contribute nothing and,
     # left in place, get bucketed as their own zero-sum "transaction".
-    rows = [r for r in (rows or []) if not is_blank_row(r)]
+    rows = [r for r in (rows or []) if not is_droppable_row(r)]
     quality = classify_gl_rows(rows)
 
     grouped = group_rows_by_transaction(rows) if rows else OrderedDict()

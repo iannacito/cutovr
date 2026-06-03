@@ -71,14 +71,25 @@ from pclaw_pipeline import money
 
 
 # Source-journal tokens we recognise in PCLaw exports. Matching is
-# whitespace-tokenised and case-insensitive; the table is documentation
-# more than a gate (any non-empty leading token can be used as a key).
-# The list comes from PCLaw's own journal types — GB (General Bank), GL
-# (General Ledger / posting), GJ (General Journal), CER (Corrected
-# Entry Register), AR/AP (Accounts Receivable / Payable adjustments).
+# whitespace-tokenised and case-insensitive. The list comes from PCLaw's
+# own journal types — GB (General Bank), GL (General Ledger / posting),
+# GJ (General Journal), CER (Corrected Entry Register), SJ (Sales
+# Journal), AR/AP (Accounts Receivable / Payable adjustments), and the
+# disbursement/receipt registers.
+#
+# This is now a real gate: ``source_journal_token`` prefers a known code
+# found *anywhere* in a row's reference / memo / description, instead of
+# blindly taking the first whitespace word. A real PCLaw export writes
+# the journal code in the reference column ("GB 000123") or as a prefix
+# of the memo, and the field order varies between firms — Cesar's
+# 2026-06-03 GL had the code where the old "first word of the first
+# non-empty field" heuristic missed it, so balanced batches stopped
+# grouping. Looking for the code explicitly makes grouping deterministic
+# regardless of which column carries it.
 _KNOWN_SOURCE_JOURNALS: tuple[str, ...] = (
-    "GB", "GL", "GJ", "CER", "AR", "AP", "TR", "BR", "PJ", "CR", "CD",
+    "GB", "GL", "GJ", "CER", "SJ", "AR", "AP", "TR", "BR", "PJ", "CR", "CD",
 )
+_KNOWN_SOURCE_JOURNAL_SET: frozenset[str] = frozenset(_KNOWN_SOURCE_JOURNALS)
 
 
 def _row_money(row: dict, key: str) -> Decimal:
@@ -90,14 +101,55 @@ def _row_balance(row: dict) -> Decimal:
     return _row_money(row, "debit") - _row_money(row, "credit")
 
 
+def _clean_token(word: str) -> str:
+    """Upper-case a whitespace word and strip surrounding punctuation."""
+    return word.upper().strip(",.;:-/()[]")
+
+
 def source_journal_token(row: dict) -> Optional[str]:
     """Pick the PCLaw source-journal token from a row.
 
-    Priority is ``memo`` -> ``description`` -> ``reference``. We split
-    on whitespace and take the first token, upper-cased; an empty
-    string returns ``None`` so the caller can decide whether to fall
-    back to a vendor name or transaction reference instead.
+    Two-pass strategy so grouping is robust to which column the firm's
+    PCLaw export puts the journal code in:
+
+    1. Scan ``reference`` -> ``source_journal`` -> ``journal`` -> ``memo``
+       -> ``description`` for a *known* PCLaw journal code (GB, SJ, CER,
+       …) appearing as any whitespace word. A recognised code is the
+       most reliable grouping key, so we prefer it wherever it appears.
+    2. Fall back to the first whitespace word of the first non-empty
+       field (``memo`` -> ``description`` -> ``reference``) — preserves
+       the original behaviour for exports that use a firm-specific code
+       we don't recognise.
+
+    Returns ``None`` when no field carries any usable text.
     """
+    scan_keys = ("reference", "source_journal", "journal", "memo", "description")
+    for key in scan_keys:
+        raw = row.get(key)
+        if raw is None:
+            continue
+        for word in str(raw).split():
+            tok = _clean_token(word)
+            if tok in _KNOWN_SOURCE_JOURNAL_SET:
+                return tok
+            # "SJ-4471" / "GB000123" / "CER12345": a known code may be the
+            # leading letters of a word glued to a number or separator.
+            # Require the remainder to be non-alphabetic so an ordinary
+            # word like "CRedit" doesn't get mis-read as the CR journal.
+            lead = ""
+            for ch in tok:
+                if ch.isalpha():
+                    lead += ch
+                else:
+                    break
+            remainder = tok[len(lead):]
+            if (
+                lead in _KNOWN_SOURCE_JOURNAL_SET
+                and remainder
+                and not any(c.isalpha() for c in remainder)
+            ):
+                return lead
+
     for key in ("memo", "description", "reference"):
         raw = row.get(key)
         if raw is None:
@@ -105,10 +157,7 @@ def source_journal_token(row: dict) -> Optional[str]:
         text = str(raw).strip()
         if not text:
             continue
-        first = text.split()[0].upper()
-        # Strip a trailing punctuation character so "GB," and "GB."
-        # collapse to "GB".
-        first = first.rstrip(",.;:-")
+        first = _clean_token(text.split()[0])
         if first:
             return first
     return None

@@ -140,8 +140,43 @@ def t3_legacy_fallback_still_routes_through_firm_check():
     print("T3 OK: legacy fallback still routes through firm-mismatch check")
 
 
+def t4_callback_rehydrates_job_when_cache_cold():
+    """Cesar QA item 5: a worker restart between minting the OAuth state
+    and Intuit's redirect back wipes the in-memory ``jobs`` cache. The
+    callback must rehydrate the job from the DB instead of bouncing the
+    user with "could not match this connection" (which read like lost
+    progress / a logout). We use a fake ``code`` so the token exchange
+    still fails, but the job must be *found* — so we must NOT land on the
+    dashboard with the "could not match" flash.
+    """
+    c = appmod.app.test_client()
+    signup(c, "ColdCache Firm", "coldcache@example.test")
+    job_id = upload_job(c)
+    # Mint a real session-bound state.
+    c.get(f"/jobs/{job_id}/connect-qbo", follow_redirects=False)
+    with c.session_transaction() as s:
+        state_param = s.get("pending_oauth_state")
+    assert state_param, "connect-qbo must have set pending_oauth_state"
+    # Simulate the worker restart: drop the in-memory job cache entirely.
+    appmod.jobs.pop(job_id, None)
+    assert job_id not in appmod.jobs
+    r = c.get(
+        f"/oauth/callback?code=fake&state={state_param}&realmId=Z",
+        follow_redirects=True,
+    )
+    body = r.get_data(as_text=True)
+    # The job was found (rehydrated): we must NOT see the "could not match
+    # this QuickBooks connection back to a migration job" failure.
+    assert "could not match this QuickBooks connection" not in body, \
+        "cold-cache callback must rehydrate the job, not bounce as unmatched"
+    # And the job is back in the cache as a side effect of _get_job.
+    assert job_id in appmod.jobs, "callback should have rehydrated the job"
+    print("T4 OK: callback rehydrates the job from DB when the cache is cold")
+
+
 if __name__ == "__main__":
     t1_connect_mints_state_nonce()
     t2_callback_rejects_state_mismatch()
     t3_legacy_fallback_still_routes_through_firm_check()
+    t4_callback_rehydrates_job_when_cache_cold()
     print("\nALL OAUTH STATE SMOKE TESTS PASSED")

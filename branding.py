@@ -29,6 +29,12 @@ SUPPORT_EMAIL = _env("SUPPORT_EMAIL", "support@your-domain.example")
 SECURITY_EMAIL = _env("SECURITY_EMAIL", "security@your-domain.example")
 PRIVACY_CONTACT_EMAIL = _env("PRIVACY_CONTACT_EMAIL", SUPPORT_EMAIL)
 
+# Canonical public URL of the production app. Templates that need to point a
+# user at production (e.g. the demo-banner "go to the real site" link, terms /
+# privacy) read this so we never hard-code a stale *.onrender.com host. Prefer
+# the deploy's PUBLIC_APP_URL; fall back to the marketing domain.
+PUBLIC_APP_URL = _env("PUBLIC_APP_URL", "https://www.cutovr.com").rstrip("/")
+
 
 def is_placeholder_email(addr: str) -> bool:
     """Return True if the address is a deploy-default placeholder.
@@ -47,4 +53,5 @@ def context() -> dict:
         "support_email": SUPPORT_EMAIL,
         "security_email": SECURITY_EMAIL,
         "privacy_contact_email": PRIVACY_CONTACT_EMAIL,
+        "public_app_url": PUBLIC_APP_URL,
     }
