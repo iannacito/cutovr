@@ -3045,6 +3045,7 @@ def _process_uploaded_csv(
     user_email: str,
     user: dict,
     user_picked_report_type: Optional[str] = None,
+    supersede_prior: bool = True,
 ):
     """Run the existing single-file PCLaw upload pipeline.
 
@@ -3287,6 +3288,38 @@ def _process_uploaded_csv(
         temp_path.unlink(missing_ok=True)
 
     _save_job(job_id)
+
+    # Cesar QA item 4: a replacement upload must make the *old* report of
+    # the same type stop being "active". Otherwise Step 5 can keep
+    # importing the prior general ledger — it iterates the firm's GL jobs
+    # newest-first but prefers any job that already has a QuickBooks
+    # connection, so a fresh (not-yet-connected) replacement loses to the
+    # stale connected upload. We supersede only on a successful ingest so
+    # a rejected file never archives the user's good prior upload. The old
+    # job stays in the DB for operator/audit history.
+    #
+    # ``supersede_prior`` is False for the bulk path: a firm uploading
+    # several monthly general ledgers in one batch (Cesar QA item 12)
+    # intends *all* of them to stand, so the batch must not archive its
+    # own earlier files as it processes the later ones.
+    if supersede_prior and category != "error" and effective_report_type:
+        try:
+            superseded = demo_mode.supersede_prior_jobs(
+                db, user["firm_id"], effective_report_type, keep_job_id=job_id
+            )
+            if superseded:
+                for stale_id in list(jobs.keys()):
+                    stale = jobs.get(stale_id)
+                    if not stale or stale_id == job_id:
+                        continue
+                    if stale.get("firm_id") != user["firm_id"]:
+                        continue
+                    stale_rt = stale.get("report_type") or REPORT_GENERAL_LEDGER
+                    if stale_rt == effective_report_type:
+                        jobs.pop(stale_id, None)
+        except Exception:  # noqa: BLE001
+            pass
+
     return {
         "ok": category != "error",
         "job_id": job_id,
@@ -3414,6 +3447,10 @@ def _classify_and_process_files(files, *, company, user_email, user):
                 user_email=user_email,
                 user=user,
                 user_picked_report_type=picked,
+                # A bulk batch may legitimately contain several monthly
+                # general ledgers (Cesar QA item 12). Don't let processing
+                # the later files archive the earlier ones in the same batch.
+                supersede_prior=False,
             )
         except Exception as exc:  # noqa: BLE001
             processed = {
@@ -5228,7 +5265,13 @@ def oauth_callback():
     else:
         # Legacy fallback: state is the bare job_id.
         job_id = pending_job_id or state
-    job = jobs.get(job_id)
+    # Rehydrate from the DB (not just the in-memory cache): a redeploy or
+    # process restart between minting the OAuth state and Intuit's
+    # redirect back wipes the ``jobs`` cache, and we must not lose a
+    # connection — or bounce the user — just because the worker recycled
+    # mid-OAuth. (Cesar QA item 5: clicking through Match/Connect appeared
+    # to "log out" / drop the job.)
+    job = _get_job(job_id) if job_id else None
     if not job:
         flash(
             "We could not match this QuickBooks connection back to a "
@@ -6541,6 +6584,9 @@ def _render_account_mapping_error(*, job, qbo_conn, category, status_code, intui
             "demo_enabled": demo_enabled,
             "demo_start_url": demo_start_url,
         },
+        **_workflow_stepper_context(
+            job["firm_id"], force_current_stage=customer_workflow.STAGE_MATCH
+        ),
     )
 
 
@@ -6797,6 +6843,9 @@ def account_mapping(job_id):
         mapping_summary=summary,
         create_missing_offer=create_missing_offer,
         account_mapping_categories=ACCOUNT_MAPPING_CATEGORIES,
+        **_workflow_stepper_context(
+            job["firm_id"], force_current_stage=customer_workflow.STAGE_MATCH
+        ),
     )
 
 
@@ -6874,10 +6923,36 @@ _ACCOUNT_NAME_ALIASES: list[tuple[str, str]] = [
     # "Operating Account" / "Checking".
     ("operatingbank", "operatingaccount"),
     ("operatingbank", "checkingaccount"),
-    # AR / AP — long-form vs short-form.
+    # AR / AP — long-form vs short-form. The short tokens "ar"/"ap" are
+    # only ever matched as *whole normalized names*, never as substrings:
+    # "ar" is a substring of "salaries", "ap" of "capital", etc., so a
+    # naive `in` check used to map "Gross Salaries" / "Capital" onto an
+    # Accounts Receivable account (Cesar QA 2026-06-03). See
+    # ``_SHORT_ALIAS_TOKENS`` and the exact-only handling in ``_alias_match``.
     ("accountsreceivable", "ar"),
     ("accountspayable", "ap"),
 ]
+
+
+# Alias tokens so short they would false-match inside unrelated words when
+# tested with substring containment. These are only honoured on an exact
+# normalized-name equality, never as a substring.
+_SHORT_ALIAS_TOKENS: frozenset[str] = frozenset({"ar", "ap", "cr", "cd"})
+
+
+def _alias_token_in(token: str, name_norm: str) -> bool:
+    """True when ``token`` matches ``name_norm`` for aliasing purposes.
+
+    Long tokens match as substrings (the common "Operating Bank" inside
+    "Operating Bank Account" case). Short, ambiguous tokens ("ar", "ap")
+    only match when they are the *entire* normalized name, so "salaries"
+    (which contains "ar") never aliases onto Accounts Receivable.
+    """
+    if not token or not name_norm:
+        return False
+    if token in _SHORT_ALIAS_TOKENS:
+        return token == name_norm
+    return token == name_norm or token in name_norm
 
 
 def _alias_match(pclaw_norm: str, qbo_by_norm: dict) -> Optional[dict]:
@@ -6890,28 +6965,89 @@ def _alias_match(pclaw_norm: str, qbo_by_norm: dict) -> Optional[dict]:
          (e.g. "trustliability" -> QBO "trustaccountsliabilities").
       3. Same in reverse — QBO uses the longer form, PCLaw uses shorter.
 
-    Returns None when no deterministic alias hits.
+    Returns None when no deterministic alias hits. Short ambiguous tokens
+    ("ar"/"ap") only alias on whole-name equality — see ``_alias_token_in``.
     """
     if not pclaw_norm:
         return None
     for alias, canonical in _ACCOUNT_NAME_ALIASES:
         # PCLaw side carries the alias, QBO has canonical exactly or as
         # a containing substring.
-        if alias == pclaw_norm or alias in pclaw_norm:
+        if _alias_token_in(alias, pclaw_norm):
             if canonical in qbo_by_norm:
                 return qbo_by_norm[canonical]
             # Try every QBO name that *contains* canonical token.
             for qbo_norm, account in qbo_by_norm.items():
-                if canonical in qbo_norm:
+                if _alias_token_in(canonical, qbo_norm):
                     return account
         # Reverse direction — PCLaw uses canonical, QBO uses alias.
-        if canonical == pclaw_norm or canonical in pclaw_norm:
+        if _alias_token_in(canonical, pclaw_norm):
             if alias in qbo_by_norm:
                 return qbo_by_norm[alias]
             for qbo_norm, account in qbo_by_norm.items():
-                if alias in qbo_norm:
+                if _alias_token_in(alias, qbo_norm):
                     return account
     return None
+
+
+# QBO account types that must never receive a *guessed* auto-mapping
+# unless the PCLaw account is itself receivable/payable/clearing. These
+# are the high-blast-radius destinations: posting an expense to Accounts
+# Receivable silently corrupts the client ledger and the firm's books.
+# A user can still pick them by hand from the dropdown; we only refuse to
+# pre-select them on a name/alias guess.
+_SENSITIVE_QBO_TYPES: frozenset[str] = frozenset({
+    "Accounts Receivable",
+    "Accounts Payable",
+})
+
+
+def _infer_pclaw_account_type(pa: dict) -> Optional[str]:
+    """Best-effort QBO AccountType for a PCLaw account, or None.
+
+    Reuses the deterministic, pure type-mapper in ``coa_apply`` so the
+    Match screen's safety gate agrees with the create-missing planner.
+    """
+    from coa_apply import map_pclaw_account_to_qbo_type
+    try:
+        result = map_pclaw_account_to_qbo_type({
+            "account_name": pa.get("name") or "",
+            "account_number": pa.get("number") or "",
+        })
+    except Exception:  # noqa: BLE001 — gate is best-effort
+        return None
+    return result.get("account_type")
+
+
+def _auto_suggestion_type_safe(pa: dict, suggestion: dict, match_basis: str) -> bool:
+    """Reject a *guessed* auto-suggestion that crosses into a sensitive type.
+
+    Exact account-number matches are trusted (the firm deliberately gave
+    the QBO account that number). Name/alias guesses are not: a PCLaw
+    expense like "Gross Salaries-Prof" must not pre-fill an Accounts
+    Receivable account just because "salaries" contains the letters "ar"
+    or shares a fuzzy token. When the inferred PCLaw type is clearly
+    incompatible with a sensitive QBO type, we drop the suggestion and let
+    the row fall through to "needs review".
+    """
+    qbo_type = (suggestion or {}).get("AccountType")
+    if qbo_type not in _SENSITIVE_QBO_TYPES:
+        return True
+    if match_basis == "AcctNum":
+        return True
+    inferred = _infer_pclaw_account_type(pa)
+    # Unknown inferred type → be conservative and allow the suggestion only
+    # if the PCLaw name itself signals receivable/payable.
+    name_norm = _normalize_account_name(pa.get("name"))
+    if qbo_type == "Accounts Receivable":
+        if inferred == "Accounts Receivable":
+            return True
+        return "receivable" in name_norm
+    if qbo_type == "Accounts Payable":
+        if inferred == "Accounts Payable":
+            return True
+        return "payable" in name_norm
+    return True
 
 
 def _build_account_mapping_rows(
@@ -6983,6 +7119,13 @@ def _build_account_mapping_rows(
                     if alias_hit:
                         suggestion = alias_hit
                         match_basis = "Alias"
+            # Type-safety gate: never pre-fill a sensitive QBO account
+            # (Accounts Receivable / Payable) on a name/alias *guess* when
+            # the PCLaw account's inferred type is incompatible. The user
+            # can still choose it by hand; we just won't auto-select it.
+            if suggestion and not _auto_suggestion_type_safe(pa, suggestion, match_basis):
+                suggestion = None
+                match_basis = None
         num = (pa.get("number") or "").strip()
         name = (pa.get("name") or "").strip()
         key_num = num

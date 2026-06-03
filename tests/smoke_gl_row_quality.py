@@ -48,6 +48,8 @@ from gl_row_quality import (  # noqa: E402
     is_beginning_balance_token,
     is_blank_row,
     is_blank_value,
+    is_droppable_row,
+    is_zero_activity_row,
     parse_gl_date,
 )
 from migration_quality import (  # noqa: E402
@@ -260,6 +262,49 @@ def t6_preflight_ready_false_when_blockers_present():
     print("T6 OK: preflight.ready reflects blank/begin-bal/clean states")
 
 
+def t8_zero_activity_rows_are_dropped():
+    """PCLaw GL exports list every chart account, including ones with no
+    movement in the period, as a 0.00/0.00 row with no date. Those post
+    nothing. Before the fix they were flagged as "Row has an amount but no
+    transaction date" (Cesar QA 2026-06-03 — every account row showed up as
+    a phantom error, 50+ of them). They must be classified as zero_activity
+    and dropped, NOT surfaced as problem rows."""
+    rows = [
+        # Zero-activity account-listing rows: account, no date, no money.
+        {"transaction_id": "", "date": "", "account_number": "1560",
+         "account_name": "Art", "debit": "0.00", "credit": "0.00",
+         "description": ""},
+        {"transaction_id": "", "date": "", "account_number": "5115",
+         "account_name": "Payroll Expense", "debit": "0.00", "credit": "0.00",
+         "description": ""},
+        # A real balanced transaction so the file isn't empty.
+        {"transaction_id": "T1", "date": "Jan 4/21", "account_number": "1000",
+         "account_name": "Cash", "debit": "100.00", "credit": "0.00",
+         "description": ""},
+        {"transaction_id": "T1", "date": "Jan 4/21", "account_number": "4000",
+         "account_name": "Revenue", "debit": "0.00", "credit": "100.00",
+         "description": ""},
+    ]
+    # Unit-level checks on the helpers.
+    assert is_zero_activity_row(rows[0]), rows[0]
+    assert is_droppable_row(rows[0])
+    assert not is_zero_activity_row(rows[2]), "row with a date+amount is NOT zero-activity"
+    # A 0.00/0.00 row that DOES carry a date is a real (if empty) posting line,
+    # not a chart-listing artifact — it must not be swallowed as zero-activity.
+    dated_zero = {"transaction_id": "T2", "date": "2026-01-01",
+                  "account_number": "1560", "account_name": "Art",
+                  "debit": "0.00", "credit": "0.00", "description": ""}
+    assert not is_zero_activity_row(dated_zero), dated_zero
+
+    report = classify_gl_rows(rows)
+    # The two zero-activity rows fold into the dropped (blank) count, NOT
+    # into problem_rows.
+    assert report.blank_rows == 2, report.blank_rows
+    assert report.ok_rows == 2, report.ok_rows
+    assert not report.problem_rows, [r.to_dict() for r in report.problem_rows]
+    print("T8 OK: zero-activity 0.00/0.00 chart-listing rows dropped, not flagged")
+
+
 def t7_customer_status_filter_rewrites_qbo_tokens():
     import app as appmod  # local import to avoid top-of-file Flask boot cost.
     fn = appmod._customer_status
@@ -282,4 +327,5 @@ if __name__ == "__main__":
     t5_validation_report_csv_lists_problem_rows()
     t6_preflight_ready_false_when_blockers_present()
     t7_customer_status_filter_rewrites_qbo_tokens()
+    t8_zero_activity_rows_are_dropped()
     print("ALL GL row-quality tests OK")

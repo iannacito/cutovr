@@ -360,6 +360,17 @@ def gl_is_balanced(run_id: str) -> bool:
 
 DEMO_ARCHIVED_STATUS_PREFIX = "Archived (demo reset"
 
+# Marks a job whose report type was re-uploaded. When a lawyer uploads a
+# replacement general ledger (or other report) for the same firm, the
+# prior active job of that type is flipped to this status so it stops
+# being treated as the "current" workflow context. Without this, Step 5
+# could keep importing the *old* GL — it iterates firm GL jobs newest
+# first but prefers any job that already has a QuickBooks connection, so
+# a freshly uploaded (not-yet-connected) replacement loses to the stale
+# connected upload. (Cesar QA item 4.) The job stays in the DB for the
+# operator panel and audit history; it's just no longer "active".
+SUPERSEDED_STATUS_PREFIX = "Superseded (replaced by newer upload"
+
 
 def is_archived_demo_job(job: dict) -> bool:
     """True iff ``job`` was archived by a prior ``Start new demo`` reset.
@@ -375,13 +386,58 @@ def is_archived_demo_job(job: dict) -> bool:
     return status.startswith(DEMO_ARCHIVED_STATUS_PREFIX)
 
 
+def is_superseded_job(job: dict) -> bool:
+    """True iff ``job`` was replaced by a newer upload of the same type."""
+    status = (job.get("status") or "").strip()
+    return status.startswith(SUPERSEDED_STATUS_PREFIX)
+
+
 def filter_active_jobs(jobs) -> list:
     """Return only the jobs that should drive the dashboard/checklist.
 
-    Drops jobs archived by a demo reset; every other status (including
-    real production "Imported" / "Failed" rows) is left alone.
+    Drops jobs archived by a demo reset or superseded by a newer upload
+    of the same report type; every other status (including real
+    production "Imported" / "Failed" rows) is left alone.
     """
-    return [j for j in jobs if not is_archived_demo_job(j)]
+    return [
+        j for j in jobs
+        if not is_archived_demo_job(j) and not is_superseded_job(j)
+    ]
+
+
+def supersede_prior_jobs(db, firm_id: int, report_type: str,
+                         keep_job_id: str) -> int:
+    """Mark prior active jobs of ``report_type`` for a firm as superseded.
+
+    Called after a new report of the same type is successfully ingested,
+    so the fresh upload is unambiguously the active one. Returns the
+    number of jobs flipped. Skips ``keep_job_id`` (the new upload), jobs
+    already archived/superseded, and jobs of a different report type.
+    Best-effort: a single bad row never blocks the new upload.
+    """
+    try:
+        rows = db.list_jobs_for_firm(firm_id, limit=500) or []
+    except Exception:  # noqa: BLE001
+        return 0
+    superseded = 0
+    for job in rows:
+        if job.get("id") == keep_job_id:
+            continue
+        rt = (job.get("report_type") or "general_ledger")
+        if rt != report_type:
+            continue
+        status = (job.get("status") or "").strip()
+        if status.startswith(DEMO_ARCHIVED_STATUS_PREFIX) or \
+                status.startswith(SUPERSEDED_STATUS_PREFIX):
+            continue
+        try:
+            db.update_job_status(
+                job["id"], f"{SUPERSEDED_STATUS_PREFIX} {keep_job_id})"
+            )
+            superseded += 1
+        except Exception:  # noqa: BLE001
+            pass
+    return superseded
 
 
 def reset_demo_workspace(db, firm_id: int, run_id: str) -> dict:

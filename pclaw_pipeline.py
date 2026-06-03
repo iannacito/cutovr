@@ -142,31 +142,61 @@ def build_account_type_index(qbo_accounts_response):
 DEFAULT_CUSTOMER_NAME = "PCLaw Test Customer"
 DEFAULT_VENDOR_NAME = "PCLaw Test Vendor"
 
+# Header spellings PCLaw actually exports for the client / matter that owns
+# an A/R or A/P line, in priority order. Cesar QA item 9: a real PCLaw GL
+# export labels the client column "Client" / "Client Name" / "Matter" (and
+# carries it in "reference" on some report layouts), not the snake_case
+# "customer_name" the first cut looked for. Because the lookup was both
+# exact-match and snake_case-only, every A/R line fell through to the single
+# DEFAULT_CUSTOMER_NAME — so the import created only one customer. We match
+# case-insensitively and on the variants below so distinct clients/matters
+# become distinct QuickBooks customers.
+_CUSTOMER_KEY_CANDIDATES = (
+    "customer_name", "customer", "client_name", "client",
+    "client_matter", "matter_name", "matter", "client_id", "matter_id",
+    "payor", "payer", "received_from", "name", "reference",
+)
+_VENDOR_KEY_CANDIDATES = (
+    "vendor_name", "vendor", "payee", "supplier", "paid_to",
+    "name", "reference",
+)
+
+
+def _normalize_key(key):
+    """Lower-case a CSV header and collapse spaces / separators so
+    "Client Name", "client-name", and "client_name" all compare equal.
+    """
+    return "".join(ch for ch in str(key).lower() if ch.isalnum())
+
+
+def _first_entity_value(row, candidates):
+    """Return the first non-empty value in ``row`` whose header matches one
+    of ``candidates`` (compared after normalization), honoring the
+    candidate priority order rather than the row's column order.
+    """
+    normalized = {_normalize_key(k): v for k, v in row.items()}
+    for cand in candidates:
+        val = normalized.get(_normalize_key(cand))
+        if val is not None and str(val).strip():
+            return str(val).strip()
+    return None
+
 
 def derive_entity_hint(row, account_type):
     """Return ('Customer'|'Vendor', display_name) or None for a GL row.
 
     QBO requires an Entity on JournalEntry lines that post to A/R or A/P.
-    For A/R we pull (in order): customer_name, client_name, client_id,
-    matter_id, then DEFAULT_CUSTOMER_NAME. For A/P: vendor_name,
-    vendor, then DEFAULT_VENDOR_NAME.
+    The client/matter (A/R) or vendor (A/P) is read from the PCLaw header
+    variants in ``_CUSTOMER_KEY_CANDIDATES`` / ``_VENDOR_KEY_CANDIDATES``,
+    matched case-insensitively, falling back to the beginner-safe default
+    so the import never fails just because a row lacks an entity column.
     """
     if account_type == "Accounts Receivable":
-        name = (
-            row.get("customer_name")
-            or row.get("client_name")
-            or row.get("client_id")
-            or row.get("matter_id")
-            or DEFAULT_CUSTOMER_NAME
-        )
-        return ("Customer", str(name).strip() or DEFAULT_CUSTOMER_NAME)
+        name = _first_entity_value(row, _CUSTOMER_KEY_CANDIDATES)
+        return ("Customer", name or DEFAULT_CUSTOMER_NAME)
     if account_type == "Accounts Payable":
-        name = (
-            row.get("vendor_name")
-            or row.get("vendor")
-            or DEFAULT_VENDOR_NAME
-        )
-        return ("Vendor", str(name).strip() or DEFAULT_VENDOR_NAME)
+        name = _first_entity_value(row, _VENDOR_KEY_CANDIDATES)
+        return ("Vendor", name or DEFAULT_VENDOR_NAME)
     return None
 
 
@@ -271,6 +301,13 @@ def plan_balanced_payloads(rows, account_mapping, mapping_mode="number", account
     the firm can trace each PCLaw reference back to one QBO entry.
     """
     from gl_grouping import plan_posting_groups  # local import to avoid cycle
+    from gl_row_quality import is_droppable_row  # local import to avoid cycle
+
+    # Drop blank and zero-activity account-listing rows before grouping.
+    # A 0.00/0.00 row with an account but no date is a PCLaw chart-listing
+    # artifact that posts nothing; left in, it forms a phantom single-line
+    # "transaction" that trips the "fewer than 2 posting lines" blocker.
+    rows = [r for r in (rows or []) if not is_droppable_row(r)]
 
     grouped = group_rows_by_transaction(rows)
     plan = plan_posting_groups(grouped)

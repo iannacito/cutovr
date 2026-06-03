@@ -173,6 +173,38 @@ def is_blank_row(row: dict) -> bool:
     return True
 
 
+def is_zero_activity_row(row: dict) -> bool:
+    """True for an account-listing row with no date and no money.
+
+    PCLaw GL exports list every account, including those with no postings
+    in the period, as a 0.00/0.00 row with no date. These post nothing and
+    must not be grouped into phantom "fewer than 2 posting lines"
+    transactions or flagged as "fix the date". They are not *blank*
+    (they carry an account), so callers need this dedicated check.
+    """
+    if is_blank_row(row):
+        return False
+    has_date = not is_blank_value(row.get("date"))
+    if has_date:
+        return False
+    if is_beginning_balance_token(row.get("date")):
+        return False
+    debit = money(row.get("debit"))
+    credit = money(row.get("credit"))
+    if debit != 0 or credit != 0:
+        return False
+    has_account = bool(
+        (row.get("account_number") or "").strip()
+        or (row.get("account_name") or "").strip()
+    )
+    return has_account
+
+
+def is_droppable_row(row: dict) -> bool:
+    """True when a row contributes nothing to the import (blank or zero-activity)."""
+    return is_blank_row(row) or is_zero_activity_row(row)
+
+
 @dataclass
 class RowClassification:
     """How a single GL row should be treated for import + reporting."""
@@ -274,10 +306,27 @@ def _classify_row(idx: int, row: dict) -> RowClassification:
             ),
         )
 
+    # Zero-activity account listing line: an account name/number with no
+    # date and no debit/credit. PCLaw GL exports routinely include one such
+    # row per account in the chart (the "account header" that precedes its
+    # postings, or accounts with no movement in the period). These carry no
+    # money, so they post nothing — flagging them as "fix the date" sent
+    # lawyers chasing 50+ phantom errors (Cesar QA 2026-06-03, where every
+    # 0.00/0.00 account row showed "Row has an amount but no transaction
+    # date"). Treat them as non-blocking: there is nothing to import or fix.
+    if not raw_date and not has_amount:
+        return RowClassification(
+            index=idx, transaction_id=txn, parsed_date=None, raw_date=raw_date,
+            account_label=label, debit=debit_str, credit=credit_str,
+            kind="zero_activity",
+            reason="Account listing row with no date and no amount — nothing to import.",
+            plain_fix="",
+        )
+
     parsed = parse_gl_date(raw_date)
     if not raw_date:
-        # Real, signal-carrying row but no date at all. Most often this
-        # is a beginning-balance line that the firm forgot to date.
+        # Real, signal-carrying row (it has a non-zero amount) but no date.
+        # Most often this is a beginning-balance line the firm forgot to date.
         return RowClassification(
             index=idx, transaction_id=txn, parsed_date=None, raw_date=raw_date,
             account_label=label, debit=debit_str, credit=credit_str,
@@ -369,7 +418,10 @@ def classify_gl_rows(rows: Iterable[dict]) -> RowQualityReport:
     for idx, row in enumerate(rows, start=1):
         report.total_rows += 1
         cls = _classify_row(idx, row)
-        if cls.kind == "blank":
+        if cls.kind in ("blank", "zero_activity"):
+            # Zero-activity account listing rows carry no money and post
+            # nothing; fold them into the dropped-rows count rather than
+            # the user-facing "needs a fix" list.
             report.blank_rows += 1
             continue
         if cls.kind == "ok":
