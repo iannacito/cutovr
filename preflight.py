@@ -119,6 +119,65 @@ def build_preflight_summary(rows, fieldnames=None):
     return summary
 
 
+def evaluate_import_gate(rows, fieldnames=None):
+    """Deterministic go/no-go check run immediately before a QBO write.
+
+    This is the *last* safety gate before journal entries are posted. The
+    Step 5 page already blocks on the preflight summary attached at upload
+    time, but a direct POST to the import route could bypass that page —
+    so we recompute the same deterministic checks here against the exact
+    rows about to be posted. Fail closed.
+
+    Returns ``(ok, blockers)`` where ``blockers`` is a list of plain-English
+    ``{"headline", "action"}`` dicts. ``ok`` is True only when nothing is
+    actionable. No row contents, account numbers, or amounts are placed in
+    the blocker text — only safe, customer-facing guidance.
+    """
+    summary = build_preflight_summary(rows, fieldnames)
+    blockers = []
+
+    if summary["missing_required_columns"]:
+        blockers.append({
+            "headline": "Your file is missing one or more required columns.",
+            "action": "Re-export the general ledger from PCLaw using the "
+                      "sample template so every required column is present, "
+                      "then upload again.",
+        })
+    if summary["line_count"] == 0:
+        blockers.append({
+            "headline": "We didn't find any transactions to send.",
+            "action": "Check that you uploaded the general-ledger export "
+                      "(not an empty file) and try again.",
+        })
+    if summary["line_count"] and not summary["balanced"]:
+        blockers.append({
+            "headline": "Your debits and credits don't match.",
+            "action": "A balanced ledger needs debits to equal credits. "
+                      "Re-export the general ledger from PCLaw for a closed "
+                      "period and re-upload.",
+        })
+    if summary["rows_missing_account"]:
+        blockers.append({
+            "headline": "Some rows are missing an account.",
+            "action": "Open the validation report to see which rows need an "
+                      "account, fix them in the CSV, and re-upload.",
+        })
+    if summary["rows_missing_date"] or summary["rows_unparseable_date"]:
+        blockers.append({
+            "headline": "Some rows are missing a usable date.",
+            "action": "Make sure every row has a date your software can read "
+                      "(YYYY-MM-DD works well), then re-upload.",
+        })
+    if summary["beginning_balance_row_count"]:
+        blockers.append({
+            "headline": "Your file still contains beginning-balance rows.",
+            "action": "Move beginning balances to the Starting Balances step, "
+                      "then re-upload the general ledger.",
+        })
+
+    return (len(blockers) == 0, blockers)
+
+
 def friendly_validation_message(exc_or_msg):
     """Translate a raw ValueError / pipeline error into beginner-friendly copy.
 

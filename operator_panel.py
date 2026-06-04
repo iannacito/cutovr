@@ -421,3 +421,57 @@ def firm_detail(db, history, firm_id: int) -> Optional[dict]:
         "imports": imports,
         "audit": audit,
     }
+
+
+def job_audit_summary(db, history, job_id: str) -> Optional[dict]:
+    """Per-job status + audit summary for the operator support view.
+
+    Rolls up, for one migration job:
+      - the job row (status, canonical checkpoint, report type, timestamps),
+      - the firm it belongs to (for the breadcrumb),
+      - its import history (with reversals), and
+      - the audit events scoped to this job (target_id = job_id).
+
+    Read-only. Never selects encrypted blobs, tokens, or row contents — the
+    audit ``details`` are already sanitized at write time (counts and
+    reason codes only). Returns None if the job does not exist.
+    """
+    job = db.get_job(job_id)
+    if not job:
+        return None
+
+    firm = db.get_firm(job["firm_id"]) if job.get("firm_id") else None
+
+    imports = history.get_history_for_job(job_id)
+    for imp in imports:
+        if imp.get("notes"):
+            imp["notes"] = imp["notes"][:300]
+
+    with db._conn() as c:
+        audit = [
+            dict(r)
+            for r in c.execute(
+                "SELECT id, user_id, action, target_type, target_id, "
+                "       details, created_at "
+                "FROM audit_logs WHERE target_type = 'job' AND target_id = ? "
+                "ORDER BY id DESC LIMIT 100",
+                (job_id,),
+            ).fetchall()
+        ]
+
+    return {
+        "firm": firm,
+        "job": {
+            "id": job["id"],
+            "company": job.get("company"),
+            "source_file": job.get("source_file"),
+            "status": job.get("status"),
+            "checkpoint": job.get("checkpoint"),
+            "report_type": job.get("report_type"),
+            "qbo_connected": bool(job.get("qbo_connected")),
+            "created_at": job.get("created_at"),
+            "updated_at": job.get("updated_at"),
+        },
+        "imports": imports,
+        "audit": audit,
+    }

@@ -304,6 +304,27 @@ class QBOClient:
         items = result.get("QueryResponse", {}).get("Account", [])
         return items[0] if items else None
 
+    def find_journal_entry_by_doc_number(self, doc_number):
+        """Return the QBO JournalEntry dict matching DocNumber exactly, or None.
+
+        This is the idempotency probe for journal-entry writes. QBO's v3
+        API does not accept a client idempotency key, so to make a retry
+        after a *lost response* safe we stamp each entry with a stable,
+        deterministic DocNumber and check here whether one already exists
+        before posting. If it does, the previous attempt actually reached
+        Intuit and succeeded — we reuse that entry instead of creating a
+        duplicate.
+        """
+        if not doc_number:
+            return None
+        safe = self._escape_qbo_string(str(doc_number))
+        result = self.query(
+            f"SELECT Id, DocNumber, TxnDate FROM JournalEntry "
+            f"WHERE DocNumber = '{safe}'"
+        )
+        items = result.get("QueryResponse", {}).get("JournalEntry", [])
+        return items[0] if items else None
+
     def create_account(self, payload):
         """Create a QBO Account. Returns the parsed JSON response.
 
