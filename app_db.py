@@ -197,6 +197,16 @@ CREATE TABLE IF NOT EXISTS rate_limit_events (
 CREATE INDEX IF NOT EXISTS idx_ratelimit_bucket
     ON rate_limit_events(bucket_key, created_at);
 
+CREATE TABLE IF NOT EXISTS oauth_states (
+    state        TEXT PRIMARY KEY,
+    job_id       TEXT NOT NULL,
+    firm_id      INTEGER NOT NULL REFERENCES firms(id),
+    user_id      INTEGER NOT NULL REFERENCES users(id),
+    created_at   TEXT NOT NULL,
+    consumed_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_states_created ON oauth_states(created_at);
+
 CREATE TABLE IF NOT EXISTS cutover_settings (
     firm_id              INTEGER PRIMARY KEY REFERENCES firms(id) ON DELETE CASCADE,
     cutover_date         TEXT,
@@ -396,6 +406,89 @@ class AppDB:
                 "WHERE user_id = ? AND used_at IS NULL",
                 (_now(), user_id),
             )
+
+    # --- oauth states (durable, single-use CSRF + job binding) ------------
+
+    def create_oauth_state(
+        self, state: str, job_id: str, firm_id: int, user_id: int
+    ) -> None:
+        """Persist an outbound OAuth state so the callback can recover the
+        originating migration job even if the browser session is lost on
+        the Intuit round-trip.
+
+        ``state`` is the exact value sent as the ``state`` query parameter
+        to Intuit (``"<job_id>:<nonce>"``); Intuit echoes it back verbatim,
+        which makes it a durable, server-side key into this row. The row is
+        the source of truth for which job/firm an inbound callback belongs
+        to — independent of the session cookie.
+        """
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO oauth_states (state, job_id, firm_id, user_id, "
+                "                          created_at, consumed_at) "
+                "VALUES (?, ?, ?, ?, ?, NULL) "
+                "ON CONFLICT(state) DO UPDATE SET "
+                "    job_id=excluded.job_id, firm_id=excluded.firm_id, "
+                "    user_id=excluded.user_id, created_at=excluded.created_at, "
+                "    consumed_at=NULL",
+                (state, job_id, firm_id, user_id, _now()),
+            )
+
+    def consume_oauth_state(self, state: str, max_age_seconds: int) -> Optional[dict]:
+        """Atomically mark an OAuth state row as consumed and return it.
+
+        Single-use: the UPDATE only matches a row that has not already been
+        consumed, so a replayed callback (same ``state`` twice) returns
+        None on the second attempt. Time-limited: rows older than
+        ``max_age_seconds`` are treated as expired and rejected.
+
+        Returns the row dict (job_id, firm_id, user_id, ...) on success, or
+        None if the state is unknown, already consumed, or expired.
+        """
+        from datetime import timedelta
+        cutoff = (datetime.utcnow() - timedelta(seconds=max(1, max_age_seconds))).isoformat()
+        with self._conn() as c:
+            cur = c.execute(
+                "UPDATE oauth_states SET consumed_at = ? "
+                "WHERE state = ? AND consumed_at IS NULL AND created_at >= ?",
+                (_now(), state, cutoff),
+            )
+            if not cur.rowcount:
+                return None
+            row = c.execute(
+                "SELECT * FROM oauth_states WHERE state = ?", (state,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def peek_oauth_state(self, state: str) -> Optional[dict]:
+        """Return an OAuth state row without consuming it.
+
+        Used only to recover the originating job_id for a friendly
+        post-failure recovery link when the normal consume path could not
+        complete (e.g. the user was bounced to login). Never grants a
+        connection by itself.
+        """
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT * FROM oauth_states WHERE state = ?", (state,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def purge_expired_oauth_states(self, max_age_seconds: int) -> int:
+        """Delete consumed or expired OAuth state rows. Returns count.
+
+        These are short-lived, single-use CSRF tokens; once consumed or
+        past their window they have no value and should not linger on disk.
+        """
+        from datetime import timedelta
+        cutoff = (datetime.utcnow() - timedelta(seconds=max(1, max_age_seconds))).isoformat()
+        with self._conn() as c:
+            cur = c.execute(
+                "DELETE FROM oauth_states "
+                "WHERE consumed_at IS NOT NULL OR created_at < ?",
+                (cutoff,),
+            )
+            return cur.rowcount or 0
 
     # --- rate limiting ----------------------------------------------------
 
