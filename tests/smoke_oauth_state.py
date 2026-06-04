@@ -174,9 +174,133 @@ def t4_callback_rehydrates_job_when_cache_cold():
     print("T4 OK: callback rehydrates the job from DB when the cache is cold")
 
 
+def t5_connect_persists_durable_oauth_state():
+    """connect-qbo must write a durable oauth_states row keyed on the exact
+    `state` it sends to Intuit, recording the originating job_id + firm so
+    the callback can recover the job without the browser session.
+    """
+    c = appmod.app.test_client()
+    signup(c, "Durable Firm", "durable@example.test")
+    job_id = upload_job(c)
+    r = c.get(f"/jobs/{job_id}/connect-qbo", follow_redirects=False)
+    qs = parse_qs(urlparse(r.headers["Location"]).query)
+    state_param = qs.get("state", [""])[0]
+    row = appmod.db.peek_oauth_state(state_param)
+    assert row is not None, "connect-qbo must persist a durable oauth_states row"
+    assert row["job_id"] == job_id, row
+    user = appmod.db.get_user_by_email("durable@example.test")
+    assert row["firm_id"] == user["firm_id"], row
+    assert row["consumed_at"] is None, "freshly minted state must be unconsumed"
+    print("T5 OK: connect-qbo persists a durable oauth_states row")
+
+
+def t6_callback_recovers_job_when_session_pending_lost():
+    """THE BUG: user is still logged in, but the session lost
+    pending_oauth_state / pending_job_id between connect and the Intuit
+    redirect back (cookie dropped on the cross-site round-trip, different
+    worker, etc.). The durable oauth_states row must let the callback
+    resolve the correct job instead of bouncing with "could not match".
+    """
+    c = appmod.app.test_client()
+    signup(c, "LostSession Firm", "lostsession@example.test")
+    job_id = upload_job(c)
+    r = c.get(f"/jobs/{job_id}/connect-qbo", follow_redirects=False)
+    state_param = parse_qs(urlparse(r.headers["Location"]).query)["state"][0]
+    # Simulate the session losing ONLY the OAuth pending keys (still logged in).
+    with c.session_transaction() as s:
+        s.pop("pending_oauth_state", None)
+        s.pop("pending_job_id", None)
+    r2 = c.get(
+        f"/oauth/callback?code=fake&state={state_param}&realmId=Z",
+        follow_redirects=True,
+    )
+    body = r2.get_data(as_text=True)
+    assert "could not match this QuickBooks connection" not in body, \
+        "durable state must recover the job even when the session pending keys are gone"
+    print("T6 OK: callback recovers the job from durable state after session-key loss")
+
+
+def t7_durable_state_is_single_use():
+    """A consumed oauth_states row must not be redeemable a second time —
+    a replayed callback (same `state` twice) is rejected. This preserves
+    the CSRF single-use guarantee now that the binding lives in the DB.
+    """
+    c = appmod.app.test_client()
+    signup(c, "SingleUse Firm", "singleuse@example.test")
+    job_id = upload_job(c)
+    r = c.get(f"/jobs/{job_id}/connect-qbo", follow_redirects=False)
+    state_param = parse_qs(urlparse(r.headers["Location"]).query)["state"][0]
+    first = appmod.db.consume_oauth_state(state_param, 3600)
+    assert first is not None and first["job_id"] == job_id, first
+    second = appmod.db.consume_oauth_state(state_param, 3600)
+    assert second is None, "a consumed oauth_states row must not be redeemable again"
+    print("T7 OK: durable oauth_states row is single-use")
+
+
+def t8_callback_unmatched_offers_return_link():
+    """When the job truly cannot be resolved but we still know its id, the
+    recovery flash links back to the migration (no scary technical wording)
+    instead of dead-ending on the dashboard.
+    """
+    c = appmod.app.test_client()
+    signup(c, "Recovery Firm", "recovery@example.test")
+    job_id = upload_job(c)
+    r = c.get(f"/jobs/{job_id}/connect-qbo", follow_redirects=False)
+    state_param = parse_qs(urlparse(r.headers["Location"]).query)["state"][0]
+    # Make the job unresolvable: drop it from cache AND delete the DB row,
+    # but keep the durable oauth_states row (so job_id is known, job is not).
+    appmod.jobs.pop(job_id, None)
+    appmod.db.delete_job(job_id)
+    r2 = c.get(
+        f"/oauth/callback?code=fake&state={state_param}&realmId=Z",
+        follow_redirects=True,
+    )
+    body = r2.get_data(as_text=True)
+    # Friendly recovery copy + a link back to the migration.
+    assert "Go back to your migration" in body, body[:500]
+    assert f"/jobs/{job_id}" in body, "recovery flash should link back to the job"
+    # No scary internal phrasing.
+    assert "migration job. Please open the job and click Connect" not in body
+    print("T8 OK: unmatched callback offers a friendly return-to-migration link")
+
+
+def t9_no_session_branch_recovers_job_id_from_durable_state():
+    """When the session is entirely gone (no logged-in user), the no-session
+    branch should still recover the originating job_id from the durable
+    oauth_states row to drive the post-login redirect — and must NOT split
+    a nonce-bearing state into a broken job_id.
+    """
+    c = appmod.app.test_client()
+    signup(c, "NoSession Firm", "nosession@example.test")
+    job_id = upload_job(c)
+    r = c.get(f"/jobs/{job_id}/connect-qbo", follow_redirects=False)
+    state_param = parse_qs(urlparse(r.headers["Location"]).query)["state"][0]
+    # Fully clear the session (logged out / cookie dropped).
+    with c.session_transaction() as s:
+        s.clear()
+    r2 = c.get(
+        f"/oauth/callback?code=fake&state={state_param}&realmId=Z",
+        follow_redirects=False,
+    )
+    assert r2.status_code == 302
+    loc = r2.headers["Location"]
+    # Redirect to login carrying next=<the job page>, with the bare job_id
+    # (no ":nonce" suffix leaking into the path).
+    assert "/login" in loc, loc
+    assert job_id in loc, loc
+    assert f"{job_id}%3A" not in loc and f"{job_id}:" not in loc, \
+        f"job_id must not carry the nonce suffix: {loc}"
+    print("T9 OK: no-session branch recovers a clean job_id from durable state")
+
+
 if __name__ == "__main__":
     t1_connect_mints_state_nonce()
     t2_callback_rejects_state_mismatch()
     t3_legacy_fallback_still_routes_through_firm_check()
     t4_callback_rehydrates_job_when_cache_cold()
+    t5_connect_persists_durable_oauth_state()
+    t6_callback_recovers_job_when_session_pending_lost()
+    t7_durable_state_is_single_use()
+    t8_callback_unmatched_offers_return_link()
+    t9_no_session_branch_recovers_job_id_from_durable_state()
     print("\nALL OAUTH STATE SMOKE TESTS PASSED")

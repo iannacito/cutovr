@@ -72,7 +72,16 @@
           <section class="page" style="padding-bottom:0;">
             <div class="stack-sm">
               {% for category, message in messages %}
+                {# `info_html` carries a server-built recovery link (e.g. the
+                   OAuth "go back to your migration" message). The HTML is
+                   assembled with markupsafe.Markup in the view so any
+                   interpolated value is escaped; only the trusted anchor is
+                   raw. It renders with the same styling as `info`. #}
+                {% if category == 'info_html' %}
+                <div class="flash info">{{ message|safe }}</div>
+                {% else %}
                 <div class="flash {{ category }}">{{ message }}</div>
+                {% endif %}
               {% endfor %}
             </div>
           </section>

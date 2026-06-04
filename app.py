@@ -5042,6 +5042,16 @@ def trust_reconciliation_csv(job_id):
     )
 
 
+_oauth_log = logging.getLogger("qbo_oauth")
+
+# How long a minted OAuth `state` row stays valid. The window only has to
+# cover a human completing Intuit's hosted sign-in + 2FA + company picker,
+# which can run several minutes; 1 hour is generous without leaving stale
+# single-use tokens redeemable for long. Past this, the callback rejects
+# the state and asks the user to reconnect.
+OAUTH_STATE_MAX_AGE_SECONDS = 60 * 60
+
+
 @app.route("/jobs/<job_id>/connect-qbo")
 @login_required
 def connect_qbo(job_id):
@@ -5085,9 +5095,29 @@ def connect_qbo(job_id):
     # callback whose state matches the value we just minted (in the same
     # browser session) is accepted.
     nonce = secrets.token_urlsafe(32)
+    state = f"{job_id}:{nonce}"
     session["pending_job_id"] = job_id
-    session["pending_oauth_state"] = f"{job_id}:{nonce}"
-    auth_url = qbo_auth.get_authorization_url(state=session["pending_oauth_state"])
+    session["pending_oauth_state"] = state
+    # Durable, server-side record of this outbound OAuth attempt. The
+    # session cookie is best-effort: a browser that drops the cookie on
+    # the cross-site redirect back from Intuit (SameSite tightening,
+    # privacy mode, a slow round-trip past the cookie expiry) would leave
+    # the callback with only the `state` query parameter to work with.
+    # Persisting the state -> job mapping means the callback can always
+    # recover the correct migration job from the DB, regardless of session
+    # survival or which worker handles the redirect. Intuit echoes `state`
+    # back verbatim, so it is a reliable key. Single-use + firm checks on
+    # the callback side preserve the CSRF guarantee the nonce provides.
+    try:
+        db.create_oauth_state(
+            state=state, job_id=job_id,
+            firm_id=_user["firm_id"], user_id=_user["id"],
+        )
+    except Exception as e:  # noqa: BLE001
+        # A DB hiccup here must not block the connect — the session path
+        # still works in the common case. Log for ops and continue.
+        _oauth_log.warning("could not persist oauth_state for job %s: %s", job_id, e)
+    auth_url = qbo_auth.get_authorization_url(state=state)
     return redirect(auth_url)
 
 
@@ -5099,6 +5129,46 @@ def _support_suffix():
     if not addr or branding.is_placeholder_email(addr):
         return ""
     return f" If this keeps happening, contact {addr}."
+
+
+def _flash_unmatched_oauth_recovery(job_id):
+    """Flash a plain-English recovery message when the OAuth callback could
+    not attach the QuickBooks connection to a migration job.
+
+    Lawyers are not accountants — the copy stays simple and the recovery
+    path is a single clear action. When we still know the job_id (even if
+    its in-memory cache was cold), we render a direct link back to that
+    migration. Otherwise we tell the user, without jargon, to go back to
+    their migration and reconnect. ``flash`` messages are auto-escaped by
+    Jinja, so ``url_for`` output here is safe to embed.
+    """
+    from markupsafe import Markup
+    href = None
+    if job_id:
+        try:
+            href = url_for("job_detail", job_id=job_id)
+        except Exception:  # noqa: BLE001
+            href = None
+    if href:
+        # Markup.format auto-escapes its arguments, so href and the support
+        # suffix are escaped while the constant copy stays trusted.
+        flash(
+            Markup(
+                "QuickBooks finished connecting, but we need you to confirm "
+                "it on your migration. Open your migration and click Connect "
+                "to QuickBooks again — nothing was sent to QuickBooks. "
+                '<a href="{href}">Go back to your migration</a>.{suffix}'
+            ).format(href=href, suffix=_support_suffix()),
+            "info_html",
+        )
+    else:
+        flash(
+            "QuickBooks finished connecting, but we could not tell which "
+            "migration it belongs to. Go back to your migration and click "
+            "Connect to QuickBooks again — nothing was sent to QuickBooks."
+            + _support_suffix(),
+            "info",
+        )
 
 
 def _sandbox_hint():
@@ -5142,7 +5212,21 @@ def oauth_callback():
         next_url = None
         return_job_id = ""
         if state:
-            return_job_id = state.split(":", 1)[0] if ":" in state else state
+            # Prefer the durable oauth_states row (authoritative job_id we
+            # recorded at mint time); fall back to parsing the prefix off
+            # the echoed state. We only *peek* here — without a verified
+            # session there is no firm to attach a connection to, so we do
+            # not consume the state or exchange the code; the next-URL just
+            # drives the post-login redirect back to the right migration.
+            durable = None
+            try:
+                durable = db.peek_oauth_state(state)
+            except Exception:  # noqa: BLE001
+                durable = None
+            if durable and durable.get("job_id"):
+                return_job_id = durable["job_id"]
+            else:
+                return_job_id = state.split(":", 1)[0] if ":" in state else state
             # url_for is the only thing we trust to build the path; if
             # the job_id has any unusual characters the redirect_for_login
             # validator below will still strip them out.
@@ -5234,18 +5318,54 @@ def oauth_callback():
         )
         return redirect(url_for("dashboard"))
 
-    # Verify the OAuth `state` parameter against the per-session nonce we
-    # minted in /jobs/<id>/connect-qbo. Without this check, the only thing
-    # tying the callback to the user's session is the trailing firm_id
-    # comparison below; a state mismatch should be a hard stop with no
-    # token exchange. We tolerate older sessions (no pending_oauth_state)
-    # by falling back to the previous behavior so an in-flight upgrade
-    # doesn't break a connect that started before the deploy. New connects
-    # always set pending_oauth_state.
+    # Resolve which migration job this callback belongs to, and validate
+    # the `state` against a server-side record (CSRF + single-use).
+    #
+    # Source of truth is the DURABLE oauth_states row keyed on the exact
+    # `state` value Intuit echoes back — not the session cookie. The
+    # session is fragile across the cross-site Intuit round-trip (cookie
+    # dropped under SameSite tightening / privacy mode / a slow round-trip
+    # past the cookie expiry, or a different worker), and when it is lost
+    # the only thing we still have is the `state` query parameter. Keying
+    # the lookup on the DB row means we can always recover the right job
+    # and still enforce the nonce: the `state` is the table's primary key,
+    # so it matches only if it is exactly the value we minted, and
+    # `consume_oauth_state` flips it to consumed atomically so a replayed
+    # callback (same `state` twice) is rejected.
+    #
+    # The session values are still popped (and used as a corroborating
+    # fallback) so an in-flight connect that started on a build without the
+    # durable table — or one whose DB write failed — still works.
     expected_state = session.pop("pending_oauth_state", None)
     pending_job_id = session.pop("pending_job_id", None)
-    if expected_state is not None:
-        if not state or not secrets.compare_digest(str(expected_state), str(state)):
+
+    job_id = None
+    durable = None
+    if state:
+        durable = db.consume_oauth_state(state, OAUTH_STATE_MAX_AGE_SECONDS)
+    if durable:
+        # Durable record found and atomically consumed. Trust its job_id;
+        # confirm the row belongs to the logged-in user's firm before we
+        # go any further (defense against a tampered/foreign state value).
+        if durable.get("firm_id") != user["firm_id"]:
+            db.audit(
+                action="oauth_callback_firm_mismatch",
+                firm_id=user["firm_id"], user_id=user["id"],
+                target_type="job", target_id=durable.get("job_id") or "",
+            )
+            flash(
+                "We could not match this QuickBooks connection back to a "
+                "migration job in your firm. Please open the job and click "
+                "Connect to QuickBooks again." + _support_suffix(),
+                "error",
+            )
+            return redirect(url_for("dashboard"))
+        job_id = durable.get("job_id")
+    elif expected_state is not None:
+        # No durable row (legacy in-flight connect, or DB write failed at
+        # mint time) but we have a session nonce — fall back to the
+        # session-bound check exactly as before.
+        if not secrets.compare_digest(str(expected_state), str(state or "")):
             db.audit(
                 action="oauth_callback_state_mismatch",
                 firm_id=user["firm_id"], user_id=user["id"],
@@ -5259,12 +5379,21 @@ def oauth_callback():
                 "error",
             )
             return redirect(url_for("dashboard"))
-        # state has the form "<job_id>:<nonce>"; trust the prefix here
-        # because we just verified it matches our own session value.
+        # state has the form "<job_id>:<nonce>"; the prefix is the job_id.
         job_id = pending_job_id or expected_state.split(":", 1)[0]
     else:
-        # Legacy fallback: state is the bare job_id.
-        job_id = pending_job_id or state
+        # No durable row and no session nonce. The `state` Intuit echoed is
+        # the value we minted: "<job_id>:<nonce>". Recover the job_id from
+        # the prefix (NOT the whole string — using the full "id:nonce" as a
+        # job_id was the original "could not match" bug). The firm check
+        # below still gates the connection, and a state with no DB row and
+        # no session means we cannot verify the nonce, so we only allow
+        # this to drive the lookup — never to skip the firm check.
+        if pending_job_id:
+            job_id = pending_job_id
+        elif state:
+            job_id = state.split(":", 1)[0] if ":" in state else state
+
     # Rehydrate from the DB (not just the in-memory cache): a redeploy or
     # process restart between minting the OAuth state and Intuit's
     # redirect back wipes the ``jobs`` cache, and we must not lose a
@@ -5273,13 +5402,10 @@ def oauth_callback():
     # to "log out" / drop the job.)
     job = _get_job(job_id) if job_id else None
     if not job:
-        flash(
-            "We could not match this QuickBooks connection back to a "
-            "migration job. Please open the job and click Connect to "
-            "QuickBooks again."
-            + _support_suffix(),
-            "error",
-        )
+        # Last resort: we could not resolve a job. Offer the simplest
+        # possible recovery — a direct link back to the migration when we
+        # at least know its id — instead of scary technical wording.
+        _flash_unmatched_oauth_recovery(job_id)
         return redirect(url_for("dashboard"))
     if job.get("firm_id") != user["firm_id"]:
         # Should not happen unless the OAuth state was tampered with.

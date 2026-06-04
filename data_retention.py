@@ -195,11 +195,20 @@ def run_cleanup(
     """
     days = _retention_days() if days is None else max(1, int(days))
     tokens = purge_expired_reset_tokens(db)
+    # OAuth state rows are single-use, short-lived CSRF tokens. Once
+    # consumed or older than an hour they have no value; clear them so the
+    # table stays small. Best-effort: not every DB build has the method.
+    oauth_states = 0
+    try:
+        oauth_states = db.purge_expired_oauth_states(60 * 60)
+    except AttributeError:
+        oauth_states = 0
     archived = purge_archived_job_files(db, upload_dir, output_dir, days=days)
     orphans = purge_orphaned_upload_files(db, upload_dir, output_dir, days=days)
     return {
         "retention_days": days,
         "expired_reset_tokens_removed": tokens,
+        "expired_oauth_states_removed": oauth_states,
         "archived_job_files": archived,
         "orphaned_upload_files": orphans,
     }
