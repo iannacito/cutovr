@@ -113,7 +113,41 @@ def c1b_current_advances_with_progress():
     stages = cw.build_customer_stages(items)
     cur = cw.current_stage(stages)
     assert cur is not None and cur.key == cw.STAGE_MATCH, cur and cur.key
-    print("OK  C1b stepper current advances as steps complete")
+    # Dashboard context: Match is current but the user is not on the Match
+    # page, so the CTA invites them onto it — and must never self-reference
+    # "Step 3" the way the old "Proceed to Step 3: Match accounts" label
+    # did on the page itself (Cesar 2026-06-03 QA).
+    assert "Step 3" not in cur.cta_label, (
+        "Match-stage CTA must not self-reference Step 3", cur.cta_label,
+    )
+    assert "Match accounts" in cur.cta_label, cur.cta_label
+
+    # On the Match page itself (on_match_page=True) the stepper CTA is
+    # suppressed: the page owns its own forward action (Save / Proceed to
+    # Step 4), so a stepper CTA would only self-reference or duplicate it.
+    stages_on_page = cw.build_customer_stages(
+        items, force_current_stage=cw.STAGE_MATCH, on_match_page=True,
+    )
+    cur_on_page = cw.current_stage(stages_on_page)
+    assert cur_on_page is not None and cur_on_page.key == cw.STAGE_MATCH
+    assert cur_on_page.cta_label == "", (
+        "Match-stage stepper CTA must be suppressed on the Match page",
+        cur_on_page.cta_label,
+    )
+    assert cur_on_page.cta_url == "", cur_on_page.cta_url
+
+    # But when matching is blocked, the stepper keeps its actionable
+    # create-missing CTA even on the page.
+    stages_blocked = cw.build_customer_stages(
+        items, force_current_stage=cw.STAGE_MATCH, on_match_page=True,
+        match_blocked=True,
+    )
+    cur_blocked = cw.current_stage(stages_blocked)
+    assert cur_blocked is not None and cur_blocked.key == cw.STAGE_MATCH
+    assert "Create missing" in cur_blocked.cta_label, cur_blocked.cta_label
+
+    print("OK  C1b stepper current advances; Match CTA = 'Match accounts' "
+          "off-page, suppressed on-page, create-missing when blocked")
 
 
 def c2_all_complete():
