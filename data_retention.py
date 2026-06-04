@@ -51,8 +51,15 @@ DEFAULT_RETENTION_DAYS = 7
 
 
 def _retention_days() -> int:
+    # UPLOAD_RETENTION_DAYS is the documented, customer-facing name for the
+    # window ("Files can be automatically deleted after processing");
+    # RETENTION_DAYS is the original name and stays supported so existing
+    # deploys keep working. UPLOAD_RETENTION_DAYS wins when both are set.
+    raw = os.environ.get("UPLOAD_RETENTION_DAYS")
+    if raw is None:
+        raw = os.environ.get("RETENTION_DAYS", str(DEFAULT_RETENTION_DAYS))
     try:
-        n = int(os.environ.get("RETENTION_DAYS", str(DEFAULT_RETENTION_DAYS)))
+        n = int(raw)
     except (TypeError, ValueError):
         return DEFAULT_RETENTION_DAYS
     return max(1, n)
@@ -203,3 +210,44 @@ def run_cleanup(
         "archived_job_files": archived,
         "orphaned_upload_files": orphans,
     }
+
+
+def main(argv=None) -> int:
+    """CLI entrypoint for scheduled retention cleanup.
+
+    Resolves the same storage paths and database the web app uses (via the
+    UPLOAD_DIR / OUTPUT_DIR / APP_DB environment variables) and runs the
+    safe cleanup sweep, printing a JSON report. Intended for cron / a
+    scheduled task on the deploy host, e.g.::
+
+        python -m data_retention            # nightly cleanup
+        UPLOAD_RETENTION_DAYS=30 python -m data_retention
+
+    Exit code is 0 on a clean sweep and 1 if any per-item errors occurred,
+    so a scheduler can alert on failures. Never touches active jobs or any
+    QuickBooks Online data.
+    """
+    import json
+
+    from app_db import AppDB
+
+    base_dir = Path(__file__).resolve().parent
+    upload_dir = Path(os.environ.get("UPLOAD_DIR") or (base_dir / "uploads"))
+    output_dir = Path(os.environ.get("OUTPUT_DIR") or (base_dir / "processed"))
+    app_db_path = os.environ.get("APP_DB", str(base_dir / "data" / "app.sqlite3"))
+
+    db = AppDB(app_db_path)
+    report = run_cleanup(db, upload_dir, output_dir)
+    print(json.dumps(report, indent=2))
+
+    errors = (
+        report["archived_job_files"]["errors"]
+        + report["orphaned_upload_files"]["errors"]
+    )
+    return 1 if errors else 0
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(main(sys.argv[1:]))

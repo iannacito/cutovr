@@ -1,0 +1,94 @@
+{% extends "_base.html" %}
+{% block title %}Operator: job {{ job.id }}{% endblock %}
+{% block content %}
+<section class="page">
+  <div class="hero">
+    <p class="eyebrow">Operator &middot; Job</p>
+    <h1>{{ job.company or "Migration job" }}</h1>
+    <p>Read-only per-job status and audit summary. No tokens, no secrets, no actions triggered from this view.</p>
+    <p>
+      {% if firm %}
+        <a class="btn" href="{{ url_for('operator_firm_detail', firm_id=firm.id) }}">&larr; Back to {{ firm.name }}</a>
+      {% else %}
+        <a class="btn" href="{{ url_for('operator_dashboard') }}">&larr; Back to operator panel</a>
+      {% endif %}
+    </p>
+  </div>
+
+  <section class="card">
+    <p class="eyebrow">Status</p>
+    <ul class="stack-sm">
+      <li>Job ID: <code>{{ job.id }}</code></li>
+      <li>Report type: <code>{{ job.report_type or 'general_ledger' }}</code></li>
+      <li>Checkpoint: <span class="badge">{{ job.checkpoint or '—' }}</span></li>
+      <li>Status: <strong>{{ job.status or '—' }}</strong></li>
+      <li>QuickBooks connected: {% if job.qbo_connected %}yes{% else %}no{% endif %}</li>
+      <li>Source file: {{ job.source_file or '—' }}</li>
+      <li>Created: <code>{{ job.created_at[:19].replace("T", " ") if job.created_at else '—' }}</code></li>
+      <li>Updated: <code>{{ job.updated_at[:19].replace("T", " ") if job.updated_at else '—' }}</code></li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <p class="eyebrow">Imports ({{ imports|length }})</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>When (UTC)</th>
+            <th>Txns</th>
+            <th>Status</th>
+            <th>Reversal</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for h in imports %}
+            <tr>
+              <td>{{ h.id }}</td>
+              <td>{{ h.created_at[:19].replace("T", " ") }}</td>
+              <td>{{ h.transaction_count }}</td>
+              <td><span class="badge {% if h.status == 'success' %}success{% elif h.status == 'partial' %}warning{% else %}error{% endif %}">{{ h.status }}</span></td>
+              <td>
+                {% if h.reversal %}
+                  <span class="badge {% if h.reversal.status == 'success' %}success{% else %}error{% endif %}">Rev {{ h.reversal.status }}</span>
+                {% else %}
+                  <span class="muted">&mdash;</span>
+                {% endif %}
+              </td>
+              <td>{% if h.notes %}<code style="font-size:.8em;">{{ h.notes }}</code>{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="6" class="muted">No imports recorded for this job.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <p class="eyebrow">Job audit trail ({{ audit|length }})</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>#</th><th>When (UTC)</th><th>User</th><th>Action</th><th>Detail</th></tr>
+        </thead>
+        <tbody>
+          {% for a in audit %}
+            <tr>
+              <td>{{ a.id }}</td>
+              <td>{{ a.created_at[:19].replace("T", " ") }}</td>
+              <td>{% if a.user_id %}#{{ a.user_id }}{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
+              <td><code>{{ a.action }}</code></td>
+              <td>{% if a.details %}<code style="font-size:.8em;">{{ a.details[:200] }}</code>{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" class="muted">No audit entries for this job.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</section>
+{% endblock %}

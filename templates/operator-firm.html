@@ -97,7 +97,7 @@
         <tbody>
           {% for j in jobs %}
             <tr>
-              <td><code style="font-size:.8em;">{{ j.id }}</code></td>
+              <td><a href="{{ url_for('operator_job_detail', job_id=j.id) }}"><code style="font-size:.8em;">{{ j.id }}</code></a></td>
               <td>{{ j.company or '—' }}</td>
               <td>{{ j.source_file or '—' }}</td>
               <td><span class="badge">{{ j.status }}</span></td>

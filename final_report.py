@@ -63,6 +63,13 @@ class ReconcileSummary:
     warnings: List[str] = field(default_factory=list)
     overall_status: str = STATUS_PENDING
     generated_at: str = ""
+    # Validation gate outcome for this migration. ``validation_passed`` is
+    # True only when every GL job cleared its pre-import checks (no open
+    # blockers). ``validation_open_items`` counts jobs still flagged
+    # ``needs_attention`` so the report can show "everything passed" vs
+    # "a few items still need a look" without leaking row detail.
+    validation_passed: bool = True
+    validation_open_items: int = 0
 
     @property
     def is_complete(self) -> bool:
@@ -376,6 +383,18 @@ def build_reconciliation_summary(
         if s.get("balanced") is not None and balanced is None:
             balanced = bool(s.get("balanced"))
 
+    # Validation pass/fail roll-up. A job carries open validation items
+    # when its canonical checkpoint is "needs_attention" or it still lists
+    # import-gate blockers. We count those so the report can state plainly
+    # whether the migration cleared its checks.
+    validation_open_items = 0
+    for j in jobs_list:
+        if (j.get("report_type") or "general_ledger") != "general_ledger":
+            continue
+        if j.get("checkpoint") == "needs_attention" or j.get("import_gate_blockers"):
+            validation_open_items += 1
+    validation_passed = validation_open_items == 0
+
     warnings: List[str] = []
     if balanced is False:
         warnings.append(
@@ -404,6 +423,8 @@ def build_reconciliation_summary(
         warnings=warnings,
         overall_status=overall,
         generated_at=generated_at or datetime.utcnow().strftime("%Y-%m-%d %H:%MZ"),
+        validation_passed=validation_passed,
+        validation_open_items=validation_open_items,
     )
 
 
@@ -464,6 +485,13 @@ def build_report_text(summary: ReconcileSummary) -> str:
         lines.append(
             "  Debits and credits balanced: "
             + ("yes" if summary.import_balanced else "NO")
+        )
+    if summary.validation_passed:
+        lines.append("  Pre-import checks: all passed")
+    else:
+        lines.append(
+            f"  Pre-import checks: {summary.validation_open_items} item(s) "
+            "still need a look"
         )
     lines.append("")
 
@@ -617,6 +645,11 @@ def build_report_pdf(
             "Debits and credits balanced",
             "Yes" if summary.import_balanced else "No",
         ])
+    number_rows.append([
+        "Pre-import checks",
+        "All passed" if summary.validation_passed
+        else f"{summary.validation_open_items} item(s) to review",
+    ])
     story.append(Paragraph("By the numbers", h2))
     nt = Table(number_rows, colWidths=[3.5 * inch, 3.0 * inch])
     nt.setStyle(TableStyle([

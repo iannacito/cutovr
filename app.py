@@ -16,6 +16,7 @@ from app_db import AppDB
 import branding
 import data_retention
 import demo_mode
+import job_checkpoints
 import operator_panel
 import readiness
 from pclaw_parser import parse_pclaw_csv, export_qbo_csv
@@ -36,7 +37,11 @@ from qbo_auth import QBOAuthHandler
 from qbo_client import QBOClient, QBOError
 from encryption import encrypt_file, decrypt_file, encrypt_token, decrypt_token
 from import_history import ImportHistory, sha256_of_file
-from preflight import build_preflight_summary, friendly_validation_message
+from preflight import (
+    build_preflight_summary,
+    evaluate_import_gate,
+    friendly_validation_message,
+)
 from migration_quality import (
     build_dry_run_preview,
     render_validation_csv,
@@ -733,6 +738,33 @@ def _save_job(job_id):
     if not job:
         return
     db.save_job_state(job_id, job)
+
+
+def _record_checkpoint(job, job_id, target):
+    """Advance a job's canonical, resumable checkpoint and audit the move.
+
+    ``job["status"]`` stays the customer-facing prose; this records the
+    stable machine stage (uploaded/parsed/matched/reviewed/importing/
+    completed/needs_attention) used to resume the job at the right step
+    after a refresh/login and to drive the operator per-job summary.
+
+    Never moves a job backwards along the linear order (see
+    ``job_checkpoints.advance``). Persistence is the caller's job — this
+    only mutates the in-memory dict and writes the audit row, so callers
+    can batch it with their existing ``_save_job`` call.
+    """
+    if job is None:
+        return
+    current = job.get("checkpoint")
+    new = job_checkpoints.advance(current, target)
+    if new == current:
+        return
+    job["checkpoint"] = new
+    _audit(
+        "checkpoint",
+        target_type="job", target_id=job_id,
+        details=f"{current or 'none'} -> {new}",
+    )
 
 
 # Refresh the access token if it expires within this many seconds. 5 minutes
@@ -3287,6 +3319,24 @@ def _process_uploaded_csv(
     finally:
         temp_path.unlink(missing_ok=True)
 
+    # Record the canonical checkpoint for GL uploads so the job is
+    # resumable at the right step after a refresh/login. A clean parse
+    # lands on ``parsed`` (ready to connect QuickBooks / match accounts);
+    # a parse error or preflight blocker lands on ``needs_attention``.
+    # Other report types (COA/TB/Trust) are validation artifacts and keep
+    # their existing status without a GL checkpoint.
+    _job_for_cp = jobs.get(job_id)
+    if _job_for_cp is not None and effective_report_type == REPORT_GENERAL_LEDGER:
+        if category == "error":
+            _record_checkpoint(_job_for_cp, job_id, job_checkpoints.NEEDS_ATTENTION)
+        else:
+            pf = _job_for_cp.get("preflight") or {}
+            _record_checkpoint(
+                _job_for_cp, job_id,
+                job_checkpoints.PARSED if pf.get("ready", False)
+                else job_checkpoints.NEEDS_ATTENTION,
+            )
+
     _save_job(job_id)
 
     # Cesar QA item 4: a replacement upload must make the *old* report of
@@ -5747,6 +5797,42 @@ def _import_to_qbo_impl(job_id):
             # ``rows`` came from the durable snapshot (or a reparse +
             # backfill) above; nothing to load here.
 
+            # === Final pre-write validation gate ============================
+            # Last deterministic go/no-go before any journal entry is
+            # posted. The Step 5 page already blocks on the preflight
+            # summary, but a direct POST to this route could bypass that
+            # page — so we re-run the same checks against the exact rows
+            # about to be posted. Fail closed: never post an unbalanced,
+            # incomplete, or date-broken ledger to QuickBooks.
+            gate_ok, gate_blockers = evaluate_import_gate(rows, fieldnames)
+            if not gate_ok:
+                job["status"] = "Needs attention"
+                _record_checkpoint(job, job_id, "needs_attention")
+                job["import_gate_blockers"] = gate_blockers
+                _save_job(job_id)
+                _log_validation_context(
+                    "import_blocked_by_validation_gate",
+                    job,
+                    preflight=build_preflight_summary(rows, fieldnames),
+                    extra=f"blockers={len(gate_blockers)}",
+                )
+                _audit(
+                    "import_blocked",
+                    target_type="job", target_id=job_id,
+                    details=f"validation gate: {len(gate_blockers)} blocker(s)",
+                )
+                next_action = " ".join(
+                    b["action"] for b in gate_blockers[:2]
+                )
+                flash(
+                    "We found a few items to fix before sending this to "
+                    f"QuickBooks. {next_action}",
+                    "error",
+                )
+                return redirect(url_for("job_detail", job_id=job_id))
+            # Clear any stale blockers from a prior attempt.
+            job["import_gate_blockers"] = None
+
             # === Duplicate-import prevention =================================
             # Block if this exact file content has already been imported into
             # this exact realm successfully. We also check transaction_ids in
@@ -5829,6 +5915,7 @@ def _import_to_qbo_impl(job_id):
                     environment=QBO_ENVIRONMENT,
                 )
                 job["status"] = "Import blocked: unmapped accounts"
+                _record_checkpoint(job, job_id, job_checkpoints.NEEDS_ATTENTION)
                 _audit("import_blocked", target_type="job", target_id=job_id,
                        details=(
                            f"unmapped accounts: {sorted(unmapped)} "
@@ -5914,10 +6001,35 @@ def _import_to_qbo_impl(job_id):
             txn_ids = posted_ids
             created = []
             created_transactions = []
+            # Mark the job as actively importing so a refresh/login during
+            # a long batch resumes on Step 5 rather than looking idle.
+            _record_checkpoint(job, job_id, job_checkpoints.IMPORTING)
+            _save_job(job_id)
             try:
                 for txn_id, payload in zip(txn_ids, payloads):
-                    resp = qbo.create_journal_entry(payload)
-                    je = resp.get("JournalEntry", {})
+                    # Idempotency probe: if a previous attempt's POST
+                    # actually reached QuickBooks but the response was lost
+                    # (network blip mid-batch), a stable DocNumber lets us
+                    # find that entry and reuse it instead of double-posting.
+                    # Best-effort: a probe failure must not block the import,
+                    # so we fall through to a normal create on any error.
+                    existing_je = None
+                    doc_number = payload.get("DocNumber")
+                    if doc_number:
+                        try:
+                            existing_je = qbo.find_journal_entry_by_doc_number(doc_number)
+                        except Exception:  # noqa: BLE001 — probe is advisory
+                            existing_je = None
+                    if existing_je:
+                        je = existing_je
+                        _audit(
+                            "import_idempotent_reuse",
+                            target_type="job", target_id=job_id,
+                            details=f"reused existing JE for DocNumber {doc_number}",
+                        )
+                    else:
+                        resp = qbo.create_journal_entry(payload)
+                        je = resp.get("JournalEntry", {})
                     created.append({
                         "Id": je.get("Id"),
                         "DocNumber": je.get("DocNumber"),
@@ -5972,6 +6084,8 @@ def _import_to_qbo_impl(job_id):
                             "posted_count": len(created),
                             "total_count": len(txn_ids),
                         }
+                        _record_checkpoint(job, job_id, job_checkpoints.NEEDS_ATTENTION)
+                        _save_job(job_id)
                         _audit(
                             "import_partial",
                             target_type="job",
@@ -6012,6 +6126,7 @@ def _import_to_qbo_impl(job_id):
             job["unmapped_accounts"] = None
             job["unmapped_account_guidance"] = None
             job["last_error"] = None
+            _record_checkpoint(job, job_id, job_checkpoints.COMPLETED)
             _save_job(job_id)
             _audit("import_success", target_type="job", target_id=job_id,
                    details=f"{len(created)} JEs, debit=${source_debit}, credit=${source_credit}")
@@ -6064,6 +6179,7 @@ def _import_to_qbo_impl(job_id):
     except QBOError as e:
         job["status"] = "Import failed (QuickBooks error)"
         job["last_error"] = qbo_error_hint.parse(str(e), intuit_tid=e.intuit_tid)
+        _record_checkpoint(job, job_id, job_checkpoints.NEEDS_ATTENTION)
         _save_job(job_id)
         _audit(
             "import_failed",
@@ -6087,6 +6203,7 @@ def _import_to_qbo_impl(job_id):
             "status_code": None,
             "intuit_tid": None,
         }
+        _record_checkpoint(job, job_id, job_checkpoints.NEEDS_ATTENTION)
         _save_job(job_id)
         _audit("import_failed", target_type="job", target_id=job_id, details=str(e))
         flash(f"Import failed: {e}", "error")
@@ -6099,6 +6216,7 @@ def _import_to_qbo_impl(job_id):
             "status_code": None,
             "intuit_tid": None,
         }
+        _record_checkpoint(job, job_id, job_checkpoints.NEEDS_ATTENTION)
         _save_job(job_id)
         _audit("import_failed", target_type="job", target_id=job_id, details=str(e))
         flash(f"Import failed: {e}", "error")
@@ -8640,6 +8758,16 @@ def operator_firm_detail(firm_id):
     if not detail:
         abort(404)
     return render_template("operator-firm.html", **detail)
+
+
+@app.route("/operator/job/<job_id>")
+@operator_required
+def operator_job_detail(job_id):
+    """Per-job status + audit summary for support. Read-only; no secrets."""
+    summary = operator_panel.job_audit_summary(db, history, job_id)
+    if not summary:
+        abort(404)
+    return render_template("operator-job.html", **summary)
 
 
 @app.route("/operator/cleanup", methods=["POST"])

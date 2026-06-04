@@ -220,6 +220,26 @@ def find_unmapped_accounts(rows, account_mapping, mapping_mode):
     return unmapped
 
 
+def idempotency_doc_number(transaction_id):
+    """Stable, short DocNumber for a PCLaw transaction reference.
+
+    QuickBooks caps DocNumber at 21 characters and we want it to be the
+    *same* value every time we (re)post the same PCLaw transaction, so a
+    retry after a lost response can find the entry already in QBO instead
+    of creating a duplicate. We prefix a short, readable tag and append a
+    hash of the full reference so distinct references never collide even
+    when their human-readable prefixes are truncated to the same string.
+    """
+    import hashlib
+
+    ref = str(transaction_id or "").strip()
+    digest = hashlib.sha1(ref.encode("utf-8")).hexdigest()[:8].upper()
+    # Keep up to 11 readable chars from the reference, then "-" + 8-char
+    # hash = at most 20 chars, comfortably under QBO's 21-char limit.
+    readable = "".join(ch for ch in ref if ch.isalnum())[:11] or "PCLAW"
+    return f"{readable}-{digest}"
+
+
 def build_journal_entry_payload(
     transaction_id, rows, account_mapping, mapping_mode="number", account_type_index=None
 ):
@@ -283,6 +303,10 @@ def build_journal_entry_payload(
 
     return {
         "TxnDate": normalize_txn_date(first_row["date"], transaction_id),
+        # Deterministic DocNumber makes a retry after a lost response
+        # idempotent: the import route probes QBO for this DocNumber before
+        # posting and reuses any existing entry instead of double-posting.
+        "DocNumber": idempotency_doc_number(transaction_id),
         "PrivateNote": (
             f"Imported from PCLaw via pclaw-qbo | transaction_id={transaction_id}"
         ),

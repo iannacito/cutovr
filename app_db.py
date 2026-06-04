@@ -130,6 +130,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     verification_json TEXT,
     last_import_id  INTEGER,
     status          TEXT,
+    checkpoint      TEXT,
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL
 );
@@ -276,6 +277,13 @@ class AppDB:
         # instance whose uploads/ tree was wiped would 500 on the
         # decrypt_file call at the top of /jobs/<id>/import-to-qbo.
         add_col("jobs", "gl_rows_json TEXT")
+        # Canonical migration checkpoint (durable, resumable foundation).
+        # One of: uploaded | parsed | matched | reviewed | importing |
+        # completed | needs_attention. Distinct from the free-text status
+        # string, which is customer-facing prose; checkpoint is a stable
+        # machine value used to resume a job at the correct step after a
+        # refresh / re-login and to drive the operator per-job summary.
+        add_col("jobs", "checkpoint TEXT")
 
         # cutover_settings: AR/AP migration strategy (Task 4 in the
         # migration-workflow completion PR). Default empty so existing
@@ -511,6 +519,7 @@ class AppDB:
             ("output_file", "output_file"),
             ("encrypted_output", "encrypted_output"),
             ("last_import_id", "last_import_id"),
+            ("checkpoint", "checkpoint"),
         ]:
             if key in job_dict:
                 fields.append(db_col)
@@ -605,6 +614,8 @@ class AppDB:
         # report_type defaults to general_ledger for legacy rows.
         rt = row["report_type"] if "report_type" in row.keys() else None
         out["report_type"] = rt or "general_ledger"
+        # Canonical resumable checkpoint (may be None for legacy rows).
+        out["checkpoint"] = row["checkpoint"] if "checkpoint" in row.keys() else None
         # decode JSON sub-objects
         for src, dst in [
             ("summary_json", "summary"),
