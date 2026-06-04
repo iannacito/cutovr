@@ -22,23 +22,29 @@
   'CostOfGoodsSold': 'Cost of goods sold',
   'NonPosting': 'Non-posting',
 } %}
-{# Step rail: Step 3 (Match accounts) is a workflow step, so it carries the
-   same progress stepper every other step page shows. Cesar's 2026-06-03 QA
-   noted the steps "weren't showing" on this page, leaving lawyers unsure
-   where they were in the migration. #}
-{% include "_workflow_stepper.html" %}
-<section class="detail-page">
+<section class="page" data-testid="account-mapping-page">
+  {# Step rail: Step 3 (Match accounts) is a workflow step, so it carries the
+     same progress stepper every other step page shows. Cesar's 2026-06-03 QA
+     noted the steps "weren't showing" on this page, leaving lawyers unsure
+     where they were in the migration. The stepper is included *inside* the
+     `.page` container — the same as every other step page — so its nav row,
+     rail, and progress bar share the page's contained width instead of
+     bleeding to the viewport edges (Cesar 2026-06-03: the Step 3 buttons
+     looked "stretched" because the stepper rendered full-bleed above the
+     contained hero). #}
+  {% include "_workflow_stepper.html" %}
+
   <a href="{{ url_for('job_detail', job_id=job.id) }}" class="back-link">&larr; Back to migration</a>
 
-  <header>
+  <div class="hero">
     <p class="eyebrow">Step 3 of 6 &middot; Match accounts</p>
-    <h1 class="display" style="font-size:clamp(1.8rem,3.5vw,2.6rem);">Match your PCLaw accounts to QuickBooks.</h1>
+    <h1>Match your PCLaw accounts to QuickBooks.</h1>
     <p class="muted" style="max-width:60ch;">
       Pick the matching QuickBooks account for each PCLaw account in
       <strong>{{ qbo_connection.company_name or 'your QuickBooks company' }}</strong>.
       You only do this once.
     </p>
-  </header>
+  </div>
 
   {# Top action bar. Cesar's 2026-06-03 QA: after matching a long account
      list the only Save / Proceed buttons were at the very bottom, so the
@@ -52,10 +58,14 @@
       {% if mapping_summary
             and mapping_summary.matched_saved == mapping_summary.total
             and mapping_summary.total > 0 %}
+        {# Top forward action. Distinct, shorter label than the footer's
+           full forward CTA so the page never prints the same CTA phrase
+           twice (Cesar 2026-06-03 QA — the doubled, stretched CTAs). Same
+           destination as the footer. #}
         <a class="btn btn-primary btn-lg"
            href="{{ url_for('import_job_entry') }}"
            data-testid="step3-top-proceed-to-step4">
-          Proceed to Step 4: Review import &rarr;
+          Review import &rarr;
         </a>
       {% else %}
         <button class="btn btn-primary btn-lg" type="submit"

@@ -284,7 +284,15 @@ def _stage_cta(
             return ("Upload another report", u("dashboard", "/dashboard") + "#intake")
         return ("Upload your reports", u("dashboard", "/dashboard") + "#intake")
     if stage_key == STAGE_MATCH:
-        return ("Proceed to Step 3: Match accounts",
+        # Dashboard / checklist context: Match is the current stage but the
+        # user is *not* on the Match page yet, so the CTA invites them onto
+        # it. The label is a plain "Match accounts" rather than the old
+        # "Proceed to Step 3: Match accounts" — on the Match page itself
+        # that read as self-referential (Cesar 2026-06-03 QA), and
+        # build_customer_stages now suppresses this CTA entirely when the
+        # user is already on the page (on_match_page=True), letting the
+        # page's own forward CTA to Step 4 stand alone.
+        return ("Match accounts",
                 u("match_accounts_entry", "/match-accounts"))
     if stage_key == STAGE_REVIEW:
         return ("Proceed to Step 4: Review import",
@@ -392,6 +400,7 @@ def build_customer_stages(
     force_current_stage: Optional[str] = None,
     review_blocker: Optional[str] = None,
     review_job_id: Optional[str] = None,
+    on_match_page: bool = False,
 ) -> List[WorkflowStage]:
     """Project the detailed checklist into the 6-stage customer stepper.
 
@@ -561,6 +570,21 @@ def build_customer_stages(
                     )
             stage.cta_label = "Create missing QuickBooks accounts"
             break
+
+    # On the Match page itself, suppress the stepper-level Match CTA — but
+    # never when matching is blocked, where the stepper's
+    # "Create missing QuickBooks accounts" CTA is the page's actionable
+    # next step. Otherwise the page already owns its own forward action
+    # (the top + footer "Proceed to Step 4" / "Save matches" buttons), so a
+    # stepper CTA would either self-reference Step 3 or duplicate the Step 4
+    # button. Cesar 2026-06-03 QA flagged both the self-referential
+    # "Proceed to Step 3" label and the stretched, doubled CTAs.
+    if on_match_page and not match_blocked:
+        for stage in stages:
+            if stage.key == STAGE_MATCH and stage.status == STAGE_STATUS_CURRENT:
+                stage.cta_label = ""
+                stage.cta_url = ""
+                break
 
     # Review-stage CTA override. When the user is on the Step 4 review
     # page, the stepper-level CTA must reflect the *actual* blocker the

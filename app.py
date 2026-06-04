@@ -6585,7 +6585,8 @@ def _render_account_mapping_error(*, job, qbo_conn, category, status_code, intui
             "demo_start_url": demo_start_url,
         },
         **_workflow_stepper_context(
-            job["firm_id"], force_current_stage=customer_workflow.STAGE_MATCH
+            job["firm_id"], force_current_stage=customer_workflow.STAGE_MATCH,
+            on_match_page=True,
         ),
     )
 
@@ -6844,7 +6845,8 @@ def account_mapping(job_id):
         create_missing_offer=create_missing_offer,
         account_mapping_categories=ACCOUNT_MAPPING_CATEGORIES,
         **_workflow_stepper_context(
-            job["firm_id"], force_current_stage=customer_workflow.STAGE_MATCH
+            job["firm_id"], force_current_stage=customer_workflow.STAGE_MATCH,
+            on_match_page=True,
         ),
     )
 
@@ -8570,6 +8572,7 @@ def _workflow_stepper_context(
     force_current_stage=None,
     review_blocker=None,
     review_job_id=None,
+    on_match_page=False,
 ):
     """Compute the 6-stage customer-facing workflow stepper for a firm.
 
@@ -8598,6 +8601,7 @@ def _workflow_stepper_context(
         force_current_stage=force_current_stage,
         review_blocker=review_blocker,
         review_job_id=review_job_id,
+        on_match_page=on_match_page,
     )
     current = customer_workflow.current_stage(stages)
     return {

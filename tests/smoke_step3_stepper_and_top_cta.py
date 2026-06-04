@@ -208,10 +208,75 @@ def t3_top_proceed_when_all_matched():
     print("T3 OK: top action becomes the Step 4 CTA once every account is matched")
 
 
+def t4_stepper_cta_is_not_self_referential():
+    """The stepper CTA on the Step 3 page must never say "Proceed to Step 3".
+
+    Cesar's 2026-06-03 QA: the top-right stepper CTA read "Proceed to
+    Step 3: Match accounts" while the lawyer was already on Step 3, and
+    it linked back to the same page. The stepper CTA is the forward
+    "next action" button, so on the Match page it must point at Step 4
+    (or, when matching is blocked, the create-missing flow) — never at
+    Step 3 itself.
+    """
+    client = appmod.app.test_client()
+    snapshot = [{"number": "5000", "name": "Rent Expense"}]
+    qbo = _FakeQBO([])
+    job_id, _ = _make_job(client, "s3t4@example.test", "S3T4 LLP",
+                          snapshot=snapshot)
+    with mock.patch.object(
+        appmod, "_get_qbo_client",
+        return_value=(qbo, appmod.qbo_connections[job_id]),
+    ):
+        r = client.get(f"/jobs/{job_id}/account-mapping",
+                       follow_redirects=False)
+    assert r.status_code == 200, r.status_code
+    body = r.get_data(as_text=True)
+    assert "Proceed to Step 3" not in body, (
+        "Step 3 page must not render a self-referential "
+        "'Proceed to Step 3' CTA"
+    )
+    print("T4 OK: no self-referential 'Proceed to Step 3' CTA on the page")
+
+
+def t5_stepper_inside_contained_page():
+    """The stepper renders *inside* the `.page` container, not full-bleed.
+
+    Cesar's 2026-06-03 QA: the Step 3 buttons looked "stretched" because
+    the stepper rendered full-bleed above the contained hero — every
+    other step page nests the stepper inside its `.page` container so the
+    nav row shares the page's max-width. We assert the contained page
+    wrapper exists and that the stepper markup appears *after* the
+    page-wrapper open tag (i.e. nested inside it).
+    """
+    client = appmod.app.test_client()
+    snapshot = [{"number": "5000", "name": "Rent Expense"}]
+    qbo = _FakeQBO([])
+    job_id, _ = _make_job(client, "s3t5@example.test", "S3T5 LLP",
+                          snapshot=snapshot)
+    with mock.patch.object(
+        appmod, "_get_qbo_client",
+        return_value=(qbo, appmod.qbo_connections[job_id]),
+    ):
+        r = client.get(f"/jobs/{job_id}/account-mapping",
+                       follow_redirects=False)
+    body = r.get_data(as_text=True)
+    page_idx = body.find('data-testid="account-mapping-page"')
+    stepper_idx = body.find('class="workflow-stepper"')
+    assert page_idx != -1, "Step 3 must use the contained `.page` wrapper"
+    assert stepper_idx != -1, "Step 3 must render the workflow stepper"
+    assert page_idx < stepper_idx, (
+        "stepper must be nested *inside* the contained page wrapper, "
+        "not rendered full-bleed above it"
+    )
+    print("T5 OK: stepper is nested inside the contained `.page` wrapper")
+
+
 def main():
     t1_stepper_rendered_with_match_current()
     t2_top_save_button_targets_main_form()
     t3_top_proceed_when_all_matched()
+    t4_stepper_cta_is_not_self_referential()
+    t5_stepper_inside_contained_page()
     print("\nALL STEP-3 STEPPER + TOP-CTA SMOKE TESTS PASSED")
 
 
