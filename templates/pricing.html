@@ -47,7 +47,9 @@
           <button type="submit" class="btn btn-secondary btn-lg pricing-tier__cta">Buy Essential</button>
         </form>
         {% else %}
-        <a class="btn btn-secondary btn-lg pricing-tier__cta" href="{{ url_for('signup') }}">Start with Essential</a>
+        <a class="btn btn-secondary btn-lg pricing-tier__cta"
+           data-testid="pricing-cta-essential"
+           href="{{ url_for('intake_form', plan='essential') }}">Get started with Essential</a>
         {% endif %}
       </article>
 
@@ -71,7 +73,9 @@
           <button type="submit" class="btn btn-primary btn-lg pricing-tier__cta">Buy Standard</button>
         </form>
         {% else %}
-        <a class="btn btn-primary btn-lg pricing-tier__cta" href="{{ url_for('signup') }}">Start with Standard</a>
+        <a class="btn btn-primary btn-lg pricing-tier__cta"
+           data-testid="pricing-cta-standard"
+           href="{{ url_for('intake_form', plan='standard') }}">Get started with Standard</a>
         {% endif %}
       </article>
 
@@ -88,7 +92,9 @@
           <li>Larger file volume</li>
           <li>Final reconciliation report</li>
         </ul>
-        <a class="btn btn-secondary btn-lg pricing-tier__cta" href="{{ url_for('quote_request') }}">Request a quote</a>
+        <a class="btn btn-secondary btn-lg pricing-tier__cta"
+           data-testid="pricing-cta-complete"
+           href="{{ url_for('quote_request') }}">Request a quote</a>
       </article>
     </div>
 

@@ -3010,6 +3010,8 @@ def _render_intake_form(plan_slug, *, form, prefill_email="", prefill_firm="",
         upload_tagline=intake.UPLOAD_GUIDANCE_TAGLINE,
         plan_slug=plan_slug,
         plan_label=intake.plan_label(plan_slug),
+        plan_detail=intake.plan_detail(plan_slug),
+        plan_price=intake.plan_price_display(plan_slug),
         selectable_plans=[
             {"slug": s, "label": intake.PLAN_LABELS[s]}
             for s in intake.SELECTABLE_PLANS
@@ -3078,6 +3080,11 @@ def intake_submit():
     user = current_user()
     reference = "INT-" + secrets.token_hex(4).upper()
 
+    # Stripe-ready, not Stripe-collecting: the intake form never takes a card
+    # and never marks anything paid. Payment always starts pending and is only
+    # flipped to "paid" by a genuine Stripe success/webhook path.
+    payment_status = intake.PAYMENT_PENDING
+
     intake_id = db.create_intake_submission(
         reference=reference,
         firm_name=firm_name,
@@ -3091,13 +3098,14 @@ def intake_submit():
         uploads_json=json.dumps(staged),
         firm_id=(user["firm_id"] if user else None),
         user_id=(user["id"] if user else None),
+        payment_status=payment_status,
     )
 
     _audit(
         "intake_submitted",
         target_type="intake",
         target_id=reference,
-        details=f"plan={plan_slug or 'none'} files={len(staged)}",
+        details=f"plan={plan_slug or 'none'} files={len(staged)} payment={payment_status}",
     )
 
     email_status = _send_intake_emails(
@@ -3112,6 +3120,7 @@ def intake_submit():
         clio_date=clio_date,
         uploads=staged,
         intake_id=intake_id,
+        payment_status=payment_status,
     )
     db.set_intake_email_status(intake_id, email_status)
 
@@ -3123,6 +3132,7 @@ def intake_submit():
 def _send_intake_emails(
     *, reference, firm_name, first_name, last_name, position, phone,
     email, plan_slug, clio_date, uploads, intake_id,
+    payment_status=intake.PAYMENT_PENDING,
 ):
     """Send customer + internal intake emails. Returns a status string.
 
@@ -3142,6 +3152,8 @@ def _send_intake_emails(
 
     cust_subject, cust_body = intake.customer_email_bodies(
         first_name=first_name, app_name=app_name, support_email=support,
+        plan=plan_slug, clio_migration_date=clio_date, uploads=uploads,
+        payment_status=payment_status,
     )
     if not email_sender.send_email(to=email, subject=cust_subject, body_text=cust_body):
         ok = False
@@ -3169,6 +3181,7 @@ def _send_intake_emails(
             clio_migration_date=clio_date,
             uploads=uploads,
             admin_link=admin_link,
+            payment_status=payment_status,
         )
         for addr in recipients:
             if not email_sender.send_email(
@@ -3184,7 +3197,19 @@ def _send_intake_emails(
 def intake_success():
     """Clean confirmation page after a successful intake submission."""
     reference = (session.get("intake_done_ref") or "").strip()[:32]
-    return render_template("intake-success.html", reference=reference)
+    payment_status = intake.PAYMENT_PENDING
+    if reference:
+        rec = db.get_intake_by_reference(reference)
+        if rec:
+            payment_status = intake.normalize_payment_status(
+                rec.get("payment_status")
+            )
+    return render_template(
+        "intake-success.html",
+        reference=reference,
+        payment_paid=intake.is_paid(payment_status),
+        payment_status_label=intake.payment_status_label(payment_status),
+    )
 
 
 @app.route("/favicon.ico")
@@ -9208,6 +9233,9 @@ def operator_intake_list():
             "phone": r.get("phone"),
             "email": r.get("email"),
             "plan_label": intake.plan_label(r.get("plan")),
+            "plan_price": intake.plan_price_display(r.get("plan")),
+            "payment_status": intake.normalize_payment_status(r.get("payment_status")),
+            "payment_status_label": intake.payment_status_label(r.get("payment_status")),
             "clio_migration_date": r.get("clio_migration_date"),
             "upload_count": len(uploads),
             "upload_names": [u.get("filename") for u in uploads if u.get("filename")],

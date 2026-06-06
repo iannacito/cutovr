@@ -14,6 +14,17 @@
       You can always send us more files later. The more complete your files
       are, the smoother your migration will be.
     </p>
+    {% if payment_paid %}
+    <p class="note" data-testid="intake-success-payment">
+      <strong>Payment received.</strong> This is your confirmation of payment;
+      a full receipt will follow from our payment processor.
+    </p>
+    {% else %}
+    <p class="note" data-testid="intake-success-payment">
+      Your request is saved. Secure card payment will be connected shortly &mdash;
+      we'll email you a secure link to complete it. You have not been charged yet.
+    </p>
+    {% endif %}
     <div class="landing-cta__buttons">
       {% if user %}
         <a class="btn btn-primary btn-lg" href="{{ url_for('dashboard') }}">Continue to your migration</a>

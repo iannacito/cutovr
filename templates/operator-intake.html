@@ -18,6 +18,7 @@
             <th>Firm</th>
             <th>Contact</th>
             <th>Plan</th>
+            <th>Payment</th>
             <th>Clio date</th>
             <th>Files</th>
             <th>Email</th>
@@ -34,7 +35,17 @@
               {% if s.position %}<small class="muted">{{ s.position }}</small><br>{% endif %}
               <small class="muted">{{ s.email }}{% if s.phone %} &middot; {{ s.phone }}{% endif %}</small>
             </td>
-            <td>{{ s.plan_label }}</td>
+            <td>
+              {{ s.plan_label }}
+              {% if s.plan_price %}<br><small class="muted">{{ s.plan_price }}</small>{% endif %}
+            </td>
+            <td data-testid="operator-intake-payment">
+              {% if s.payment_status == 'paid' %}
+              <strong style="color:var(--ok, #1a7f37);">Paid</strong>
+              {% else %}
+              <span class="muted">{{ s.payment_status_label }}</span>
+              {% endif %}
+            </td>
             <td>{{ s.clio_migration_date or '—' }}</td>
             <td>
               {{ s.upload_count }}

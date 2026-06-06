@@ -129,9 +129,19 @@ def t3_checkout_graceful_when_stripe_not_configured():
     assert 'action="/pricing/checkout/' not in body, (
         "checkout forms should not render when Stripe is not configured"
     )
-    # CTAs still work — they fall back to signup links.
-    assert "Start with Essential" in body
-    assert "Start with Standard" in body
+    # CTAs still work — when Stripe is unconfigured they route into the
+    # plan-specific intake/purchase flow rather than dead-ending. The intake
+    # view is registered at both /intake and /onboarding/start; url_for picks
+    # the canonical /onboarding/start, with the plan preselected via ?plan=.
+    # Essential + Standard route into the purchase/intake flow. Complete is
+    # quote-based and keeps its dedicated quote-request CTA (checked in T6).
+    assert "plan=essential" in body and "plan=standard" in body, body[:600]
+    for slug in ("essential", "standard"):
+        assert (f'/intake?plan={slug}' in body
+                or f'/onboarding/start?plan={slug}' in body), \
+            f"pricing CTA for {slug} must route into intake flow"
+    assert "Get started with Essential" in body
+    assert "Get started with Standard" in body
 
     # POSTing the endpoint when unconfigured should NOT 500. It should
     # redirect back to /pricing with a flashed message.

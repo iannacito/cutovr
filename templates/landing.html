@@ -49,6 +49,31 @@
   </div>
 </section>
 
+<!-- Platform preview ------------------------------------------------- -->
+<section class="landing-section landing-section--preview" id="see-how-it-works"
+         data-testid="landing-preview">
+  <div class="landing-section__inner">
+    <p class="eyebrow">See how it works</p>
+    <h2 class="h-serif landing-section__title">See how {{ app_name }} works.</h2>
+    <p class="muted landing-section__lede">
+      A short look at the guided migration &mdash; upload, match, review, and
+      send to QuickBooks, one calm screen at a time.
+    </p>
+    <figure class="landing-preview__media" data-testid="landing-preview-media"
+            style="margin:var(--space-5) auto 0;max-width:54rem;aspect-ratio:16/9;
+                   display:flex;align-items:center;justify-content:center;
+                   border:1px solid var(--color-line);border-radius:var(--radius-lg, 16px);
+                   background:var(--color-surface-muted, #f5f5f7);">
+      <figcaption class="muted" style="text-align:center;padding:var(--space-4);">
+        A walkthrough video is on the way.<br>
+        <span style="font-size:.85rem;">In the meantime, the
+          <a href="{{ url_for('onboarding') }}">onboarding guide</a>
+          shows every step.</span>
+      </figcaption>
+    </figure>
+  </div>
+</section>
+
 <!-- What we move ----------------------------------------------------- -->
 <section class="landing-section landing-section--coverage" id="coverage">
   <div class="landing-section__inner">
@@ -256,25 +281,29 @@
     </p>
 
     <div class="landing-pricing">
-      <article class="landing-pricing__card">
+      <a class="landing-pricing__card" data-testid="landing-plan-essential"
+         href="{{ url_for('intake_form', plan='essential') }}">
         <p class="landing-pricing__eyebrow">Essential</p>
         <h3 class="landing-pricing__name">Current Year</h3>
         <p class="landing-pricing__amount">$999</p>
         <p class="landing-pricing__sub">Just this year.</p>
-      </article>
-      <article class="landing-pricing__card landing-pricing__card--featured">
+      </a>
+      <a class="landing-pricing__card landing-pricing__card--featured"
+         data-testid="landing-plan-standard"
+         href="{{ url_for('intake_form', plan='standard') }}">
         <p class="landing-pricing__badge">Most common</p>
         <p class="landing-pricing__eyebrow">Standard</p>
         <h3 class="landing-pricing__name">Up to 3 Years</h3>
         <p class="landing-pricing__amount">$1,499</p>
         <p class="landing-pricing__sub">The default for most firms.</p>
-      </article>
-      <article class="landing-pricing__card">
+      </a>
+      <a class="landing-pricing__card" data-testid="landing-plan-complete"
+         href="{{ url_for('intake_form', plan='complete') }}">
         <p class="landing-pricing__eyebrow">Complete</p>
         <h3 class="landing-pricing__name">3+ years of history</h3>
         <p class="landing-pricing__amount">Quote</p>
         <p class="landing-pricing__sub">A deeper historical record.</p>
-      </article>
+      </a>
     </div>
 
     <p class="landing-pricing__footnote">

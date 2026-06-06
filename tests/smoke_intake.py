@@ -72,9 +72,33 @@ def t1_form_renders():
         "Chart of Accounts", "General Ledger", "Trial Balance",
         "Trust Listing",
         "Upload whatever you have",
+        # Guided one-page section headers.
+        "Your firm", "Migration date", "Upload your PCLaw reports", "Payment",
+        # Stripe-ready payment panel copy (no raw card fields).
+        "Payment will be completed securely by card",
+        "Continue to secure payment",
     ):
         assert needle in body, f"missing {needle!r} in /intake"
-    print("T1 OK: /intake renders with all fields + report guidance")
+    # No raw card-collection inputs should ever render here.
+    assert 'name="card_number"' not in body and "cardnumber" not in body.lower(), \
+        "intake must not collect raw card details"
+    print("T1 OK: /intake renders with all fields + report guidance + payment panel")
+
+
+def t1b_plan_preselection_shows_details():
+    c = appmod.app.test_client()
+    # Essential: price + included summary.
+    body = c.get("/intake?plan=essential").get_data(as_text=True)
+    assert "$999" in body, "Essential price not shown"
+    assert "What's included" in body, "included summary missing"
+    assert 'name="plan" value="essential"' in body, "plan not preselected"
+    # Standard: $1,499.
+    body = c.get("/intake?plan=standard").get_data(as_text=True)
+    assert "$1,499" in body, "Standard price not shown"
+    # Complete: quote-based wording, no charge today.
+    body = c.get("/intake?plan=complete").get_data(as_text=True)
+    assert "Quote" in body and "quote-based" in body, "Complete quote wording missing"
+    print("T1b OK: plan preselection shows price + what's included")
 
 
 def t2_missing_required_fields_rejected():
@@ -103,13 +127,18 @@ def t3_complete_submission_succeeds():
     body = r.get_data(as_text=True)
     assert "You're all set" in body, body[:400]
     assert "INT-" in body, "reference not shown on success page"
+    # Payment is pending (Stripe not collecting here) — must NOT claim paid
+    # and must NOT show a receipt.
+    assert "have not been charged yet" in body, body[:600]
+    assert "Payment received" not in body, "must not falsely confirm payment"
     rows = appmod.db.recent_intake_submissions(limit=5)
     assert rows, "no intake record stored"
     rec = rows[0]
     assert rec["firm_name"] == "Smith & Hart LLP"
     assert rec["plan"] == "standard"
     assert rec["clio_migration_date"] == "2026-03-05"
-    print("T3 OK: complete submission stores record + shows success page")
+    assert rec["payment_status"] == "pending", rec["payment_status"]
+    print("T3 OK: complete submission stores record + pending payment + success page")
 
 
 def t4_email_fallback_when_smtp_unconfigured():
@@ -153,9 +182,15 @@ def t5_emails_attempted_when_configured(monkeypatch_env=True):
     assert "Smith & Hart LLP" in internal["body"]
     assert "Standard" in internal["body"]
     assert "2026-03-05" in internal["body"]
+    # Internal email carries payment status; customer email says pending and
+    # is NOT a receipt.
+    assert "Payment status:" in internal["body"] and "Pending" in internal["body"]
+    customer = [m for m in sent if m["to"] == "cust@firm.test"][0]
+    assert "not been charged yet" in customer["body"], customer["body"]
+    assert "this is not a receipt" in customer["body"]
     rec = appmod.db.recent_intake_submissions(limit=1)[0]
     assert rec["email_status"] == "sent", rec["email_status"]
-    print("T5 OK: customer + internal emails attempted; status=sent")
+    print("T5 OK: customer + internal emails attempted; status=sent; payment pending")
 
 
 def t6_internal_recipients_resolution():
@@ -191,11 +226,37 @@ def t8_operator_intake_list():
     assert r.status_code == 200, r.status_code
     body = r.get_data(as_text=True)
     assert "Smith &amp; Hart LLP" in body or "Smith & Hart LLP" in body, body[:600]
-    print("T8 OK: operator intake list shows stored submissions")
+    # Operator view surfaces payment status so the team knows who has paid.
+    assert "Payment" in body, "operator view missing payment column"
+    assert "Pending" in body, "operator view should show pending status"
+    print("T8 OK: operator intake list shows stored submissions + payment status")
+
+
+def t9_paid_path_emits_receipt_wording():
+    # Direct unit check of the honest-receipt logic: only a genuine "paid"
+    # status yields receipt/confirmation wording.
+    _, paid_body = intake.customer_email_bodies(
+        first_name="Jordan", app_name="Cutovr", support_email="support@cutovr.test",
+        plan="standard", clio_migration_date="2026-03-05", uploads=[],
+        payment_status=intake.PAYMENT_PAID,
+    )
+    assert "confirmation of payment" in paid_body
+    assert "not a receipt" not in paid_body
+    _, pending_body = intake.customer_email_bodies(
+        first_name="Jordan", app_name="Cutovr", support_email="support@cutovr.test",
+        plan="standard", payment_status=intake.PAYMENT_PENDING,
+    )
+    assert "not been charged yet" in pending_body
+    assert "confirmation of payment" not in pending_body
+    # is_paid is strict.
+    assert intake.is_paid("paid") and not intake.is_paid("pending")
+    assert not intake.is_paid(None) and not intake.is_paid("bogus")
+    print("T9 OK: receipt wording only when genuinely paid")
 
 
 if __name__ == "__main__":
     t1_form_renders()
+    t1b_plan_preselection_shows_details()
     t2_missing_required_fields_rejected()
     t3_complete_submission_succeeds()
     t4_email_fallback_when_smtp_unconfigured()
@@ -203,4 +264,5 @@ if __name__ == "__main__":
     t6_internal_recipients_resolution()
     t7_success_page_links_to_intake()
     t8_operator_intake_list()
+    t9_paid_path_emits_receipt_wording()
     print("\nALL INTAKE SMOKE TESTS PASSED")

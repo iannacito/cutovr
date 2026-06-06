@@ -224,6 +224,7 @@ CREATE TABLE IF NOT EXISTS intake_submissions (
     uploads_json        TEXT,
     job_id              TEXT,
     email_status        TEXT,
+    payment_status      TEXT NOT NULL DEFAULT 'pending',
     created_at          TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_intake_firm ON intake_submissions(firm_id);
@@ -332,6 +333,11 @@ class AppDB:
         add_col("qbo_connections", "expires_at TEXT")
         add_col("qbo_connections", "company_info_error TEXT")
         add_col("qbo_connections", "updated_at TEXT")
+
+        # Post-purchase intake: payment status. We are Stripe-ready but do not
+        # collect cards at intake time, so existing/new rows default to
+        # 'pending' and are only flipped to 'paid' by a real Stripe path.
+        add_col("intake_submissions", "payment_status TEXT NOT NULL DEFAULT 'pending'")
 
     @contextmanager
     def _conn(self):
@@ -1050,6 +1056,7 @@ class AppDB:
         firm_id: Optional[int] = None,
         user_id: Optional[int] = None,
         job_id: Optional[str] = None,
+        payment_status: str = "pending",
     ) -> int:
         """Persist a post-purchase onboarding intake record. Returns its id."""
         with self._conn() as c:
@@ -1057,8 +1064,8 @@ class AppDB:
                 "INSERT INTO intake_submissions ("
                 "  reference, firm_id, user_id, firm_name, first_name, last_name, "
                 "  position, phone, email, plan, clio_migration_date, uploads_json, "
-                "  job_id, email_status, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)",
+                "  job_id, email_status, payment_status, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
                 (
                     reference, firm_id, user_id, firm_name.strip(),
                     first_name.strip(), last_name.strip(),
@@ -1067,7 +1074,9 @@ class AppDB:
                     email.strip().lower(),
                     (plan or "").strip() or None,
                     (clio_migration_date or "").strip() or None,
-                    uploads_json, job_id, _now(),
+                    uploads_json, job_id,
+                    (payment_status or "pending").strip().lower(),
+                    _now(),
                 ),
             )
             return cur.lastrowid
@@ -1078,6 +1087,26 @@ class AppDB:
                 "UPDATE intake_submissions SET email_status = ? WHERE id = ?",
                 (status, intake_id),
             )
+
+    def set_intake_payment_status(self, intake_id: int, status: str) -> None:
+        """Update the payment status of an intake record.
+
+        Only a genuine Stripe success/webhook path should ever set this to
+        'paid'. The intake form itself always stores 'pending'.
+        """
+        with self._conn() as c:
+            c.execute(
+                "UPDATE intake_submissions SET payment_status = ? WHERE id = ?",
+                ((status or "pending").strip().lower(), intake_id),
+            )
+
+    def get_intake_by_reference(self, reference: str) -> Optional[dict]:
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT * FROM intake_submissions WHERE reference = ?",
+                ((reference or "").strip(),),
+            ).fetchone()
+            return dict(row) if row else None
 
     def get_intake_submission(self, intake_id: int) -> Optional[dict]:
         with self._conn() as c:
