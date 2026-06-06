@@ -1,0 +1,124 @@
+{% extends "_base.html" %}
+{% block title %}Get started &mdash; {{ app_name }}{% endblock %}
+{% block meta_description %}Tell us a little about your firm and upload your PCLaw reports. We'll take it from there.{% endblock %}
+{% block content %}
+<section class="page">
+  <div class="stack">
+
+    <header class="stack-sm" style="max-width:42rem;">
+      <p class="eyebrow">Welcome aboard</p>
+      <h1 class="display">Let's get your migration started.</h1>
+      <p class="lede">
+        A couple of quick details and your PCLaw files &mdash; that's all we
+        need to begin. This takes about two minutes.
+      </p>
+      {% if plan_slug %}
+      <p class="note" data-testid="intake-plan-context">
+        Plan: <strong>{{ plan_label }}</strong>
+      </p>
+      {% endif %}
+    </header>
+
+    <article class="card">
+      <form method="post" action="{{ url_for('intake_submit') }}"
+            class="stack-sm" enctype="multipart/form-data" novalidate
+            data-testid="intake-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <label>
+          <span>Law firm name</span>
+          <input type="text" name="firm_name" required
+                 value="{{ form.firm_name or prefill_firm or '' }}"
+                 placeholder="Smith &amp; Hart LLP" autofocus>
+        </label>
+
+        <div class="form-grid">
+          <label>
+            <span>First name</span>
+            <input type="text" name="first_name" required
+                   value="{{ form.first_name or '' }}" placeholder="Jordan">
+          </label>
+          <label>
+            <span>Last name</span>
+            <input type="text" name="last_name" required
+                   value="{{ form.last_name or '' }}" placeholder="Smith">
+          </label>
+        </div>
+
+        <div class="form-grid">
+          <label>
+            <span>Phone number</span>
+            <input type="text" name="phone"
+                   value="{{ form.phone or '' }}" placeholder="(555) 123-4567">
+          </label>
+          <label>
+            <span>Email</span>
+            <input type="email" name="email" required
+                   value="{{ form.email or prefill_email or '' }}"
+                   placeholder="you@firm.com">
+          </label>
+        </div>
+
+        <div class="form-grid">
+          <label>
+            <span>Your position at the firm</span>
+            <input type="text" name="position"
+                   value="{{ form.position or '' }}"
+                   placeholder="Office manager, partner, paralegal…">
+          </label>
+          <label>
+            <span>Clio migration date</span>
+            <input type="date" name="clio_migration_date"
+                   value="{{ form.clio_migration_date or '' }}">
+            <small class="note">The date you moved (or plan to move) to Clio. Not sure? Leave it blank.</small>
+          </label>
+        </div>
+
+        {% if not plan_slug %}
+        <label>
+          <span>Which plan did you purchase?</span>
+          <select name="plan">
+            <option value="">I'm not sure / decide later</option>
+            {% for p in selectable_plans %}
+            <option value="{{ p.slug }}">{{ p.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        {% else %}
+        <input type="hidden" name="plan" value="{{ plan_slug }}">
+        {% endif %}
+
+        <hr style="border:none;border-top:1px solid var(--line);margin:var(--space-4) 0;">
+
+        <div class="stack-sm">
+          <h2 style="font-size:1.1rem;margin:0;">Upload your PCLaw reports</h2>
+          <p class="note" data-testid="intake-upload-tagline">{{ upload_tagline }}</p>
+
+          <aside class="card card--inset" data-testid="intake-report-guidance">
+            <p style="margin-top:0;font-weight:600;">Helpful reports to export from PCLaw</p>
+            <ul style="margin:0;padding-left:1.2rem;font-size:.92rem;line-height:1.6;">
+              {% for r in recommended_reports %}
+              <li><strong>{{ r.title }}</strong> &mdash; {{ r.help }}</li>
+              {% endfor %}
+            </ul>
+          </aside>
+
+          <label>
+            <span>Choose files</span>
+            <input type="file" name="report_files" multiple
+                   data-testid="intake-file-input">
+            <small class="note">You can select several files at once. No file? You can add them later &mdash; just submit and we'll be in touch.</small>
+          </label>
+        </div>
+
+        <button class="btn btn-primary btn-lg full-width" type="submit"
+                style="margin-top:.5rem;">Submit and finish</button>
+        <p class="note" style="margin-top:.5rem;">
+          Your files are encrypted as soon as they reach us. We never share your data.
+        </p>
+      </form>
+    </article>
+
+  </div>
+</section>
+{% endblock %}

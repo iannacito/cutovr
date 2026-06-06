@@ -18,6 +18,17 @@
     </ul>
   </section>
 
+  <section class="card" data-testid="operator-intake-link">
+    <p class="eyebrow">Onboarding</p>
+    <h2>Intake submissions</h2>
+    <p class="muted" style="max-width:64ch;">
+      Post-purchase onboarding forms: firm + contact details, Clio migration
+      date, plan, and uploaded report summaries. Read-only.
+    </p>
+    <a class="btn btn-secondary" href="{{ url_for('operator_intake_list') }}"
+       data-testid="operator-intake-link-btn">View intake submissions</a>
+  </section>
+
   <section class="card" data-testid="operator-retention">
     <p class="eyebrow">Data retention</p>
     <h2>Cleanup</h2>

@@ -8,9 +8,11 @@ from functools import wraps
 from typing import Optional
 import os, secrets
 import hashlib
+import json
 import logging
 import re
 import requests
+import encryption
 
 from app_db import AppDB
 import branding
@@ -99,6 +101,7 @@ import customer_workflow
 import final_report
 import bulk_upload
 import stripe_checkout
+import intake
 from rate_limit import RateLimiter, client_ip
 import csv as _csv
 from io import StringIO
@@ -2761,9 +2764,14 @@ def pricing_checkout_success():
     rely on it for fulfillment (that should be webhook-driven), but we
     do show a friendly confirmation page.
     """
+    # Forward any plan hint to the onboarding intake so the form can show
+    # plan context. Stripe's success_url doesn't carry the plan today, but if
+    # a future webhook/redirect appends ?plan=, we honor it cleanly.
+    plan_slug = intake.normalize_plan(request.args.get("plan"))
     return render_template(
         "pricing-checkout-success.html",
         session_id=(request.args.get("session_id") or "").strip()[:128],
+        intake_url=url_for("intake_form", plan=plan_slug) if plan_slug else url_for("intake_form"),
     )
 
 
@@ -2897,6 +2905,286 @@ def onboarding_sample_report_csv(report_type):
             "Cache-Control": "no-store",
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Post-purchase onboarding intake.
+#
+# A brief, lawyer-friendly form a customer fills in right after they buy a
+# plan. It collects firm/contact details, their Clio migration date, and an
+# optional batch of PCLaw report files, then:
+#   - stores the intake record (durable, operator-visible),
+#   - emails the customer their next steps,
+#   - emails the internal team the purchase/intake summary.
+#
+# Public (no login) so it works straight off a Stripe success redirect before
+# the customer has a workspace. It never touches the six-step migration
+# workflow — uploaded files are staged separately and the success page links
+# into the existing migration upload flow as the clear next step.
+# ---------------------------------------------------------------------------
+
+# Hard cap on intake attachments. Each file is still bounded by
+# MAX_CONTENT_LENGTH on the whole request; this caps the count.
+_INTAKE_MAX_FILES = 20
+
+
+def _intake_plan_from_request():
+    """Best-effort plan slug from the URL/session, for the success redirect.
+
+    Reads ?plan=, then ?session_id-derived nothing (we don't call Stripe here
+    without secrets), then a stashed session value. Returns a known slug or
+    None so the template can show plan context cleanly without guessing.
+    """
+    raw = (request.args.get("plan") or "").strip().lower()
+    slug = intake.normalize_plan(raw)
+    if slug:
+        return slug
+    return intake.normalize_plan(session.get("intake_plan"))
+
+
+def _stage_intake_uploads(files):
+    """Encrypt and stage intake attachments; return a metadata list.
+
+    Each accepted file is written to UPLOAD_DIR as an encrypted blob with a
+    random prefix so nothing readable lands on disk. We do NOT push these
+    through the CSV parsing pipeline — intake is pre-workspace and may include
+    non-CSV exports. The returned dicts carry only non-sensitive metadata
+    (original name, size, stored blob name); file contents never appear in
+    emails, flashes, or audit logs.
+    """
+    staged = []
+    for f in files[:_INTAKE_MAX_FILES]:
+        original = (f.filename or "").strip()
+        if not original:
+            continue
+        safe_name = secure_filename(original) or "upload"
+        prefix = secrets.token_urlsafe(8)
+        temp_path = UPLOAD_DIR / f"intake_temp_{prefix}_{safe_name}"
+        enc_path = UPLOAD_DIR / f"intake_{prefix}_{safe_name}.enc"
+        try:
+            f.save(temp_path)
+            size = temp_path.stat().st_size
+            encryption.encrypt_file(temp_path, enc_path)
+        except Exception:
+            logging.exception("Failed to stage an intake upload")
+            continue
+        finally:
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+        staged.append({
+            "filename": original,
+            "stored": enc_path.name,
+            "size_bytes": size,
+            "report_label": "",
+        })
+    return staged
+
+
+@app.route("/intake", methods=["GET"])
+@app.route("/onboarding/start", methods=["GET"])
+def intake_form():
+    """Render the post-purchase onboarding intake form."""
+    plan_slug = _intake_plan_from_request()
+    if plan_slug:
+        # Stash so a page refresh / validation re-render keeps plan context.
+        session["intake_plan"] = plan_slug
+    user = current_user()
+    firm = db.get_firm(user["firm_id"]) if user else None
+    return _render_intake_form(
+        plan_slug,
+        form={},
+        prefill_email=(user.get("email") if user else ""),
+        prefill_firm=(firm.get("name") if firm else ""),
+    )
+
+
+def _render_intake_form(plan_slug, *, form, prefill_email="", prefill_firm="",
+                        status=200):
+    """Render the intake form. Shared by the GET view and the validation
+    re-render so the template context stays identical."""
+    return render_template(
+        "intake.html",
+        recommended_reports=intake.RECOMMENDED_REPORTS,
+        upload_tagline=intake.UPLOAD_GUIDANCE_TAGLINE,
+        plan_slug=plan_slug,
+        plan_label=intake.plan_label(plan_slug),
+        selectable_plans=[
+            {"slug": s, "label": intake.PLAN_LABELS[s]}
+            for s in intake.SELECTABLE_PLANS
+        ],
+        prefill_email=form.get("email", "") or prefill_email,
+        prefill_firm=form.get("firm_name", "") or prefill_firm,
+        form=form,
+    ), status
+
+
+def _intake_form_error(message, form, plan_slug):
+    flash(message, "error")
+    return _render_intake_form(plan_slug, form=form, status=400)
+
+
+@app.route("/intake", methods=["POST"])
+@app.route("/onboarding/start", methods=["POST"])
+def intake_submit():
+    """Validate + persist an intake submission, then send notifications.
+
+    Email sending never blocks a successful intake: if SMTP isn't configured
+    or a send fails, we still store the record and show the success page, and
+    record the email outcome on the record for operator visibility.
+    """
+    def _f(name, limit=200):
+        return (request.form.get(name) or "").strip()[:limit]
+
+    firm_name = _f("firm_name")
+    first_name = _f("first_name", 100)
+    last_name = _f("last_name", 100)
+    position = _f("position", 120)
+    phone = _f("phone", 60)
+    email = _f("email", 254)
+    clio_date = _f("clio_migration_date", 40)
+    plan_slug = intake.normalize_plan(_f("plan", 60)) or _intake_plan_from_request()
+
+    form = {
+        "firm_name": firm_name, "first_name": first_name,
+        "last_name": last_name, "position": position,
+        "phone": phone, "email": email,
+        "clio_migration_date": clio_date,
+    }
+
+    missing = [
+        label for value, label in (
+            (firm_name, "law firm name"),
+            (first_name, "first name"),
+            (last_name, "last name"),
+            (email, "email"),
+        ) if not value
+    ]
+    if missing:
+        return _intake_form_error(
+            "Please fill in your " + ", ".join(missing) + ".",
+            form, plan_slug,
+        )
+    if "@" not in email or "." not in email.split("@")[-1]:
+        return _intake_form_error(
+            "That email address doesn't look right. Please check it.",
+            form, plan_slug,
+        )
+
+    files = request.files.getlist("report_files") or []
+    staged = _stage_intake_uploads(files)
+
+    user = current_user()
+    reference = "INT-" + secrets.token_hex(4).upper()
+
+    intake_id = db.create_intake_submission(
+        reference=reference,
+        firm_name=firm_name,
+        first_name=first_name,
+        last_name=last_name,
+        email=email,
+        position=position,
+        phone=phone,
+        plan=plan_slug,
+        clio_migration_date=clio_date,
+        uploads_json=json.dumps(staged),
+        firm_id=(user["firm_id"] if user else None),
+        user_id=(user["id"] if user else None),
+    )
+
+    _audit(
+        "intake_submitted",
+        target_type="intake",
+        target_id=reference,
+        details=f"plan={plan_slug or 'none'} files={len(staged)}",
+    )
+
+    email_status = _send_intake_emails(
+        reference=reference,
+        firm_name=firm_name,
+        first_name=first_name,
+        last_name=last_name,
+        position=position,
+        phone=phone,
+        email=email,
+        plan_slug=plan_slug,
+        clio_date=clio_date,
+        uploads=staged,
+        intake_id=intake_id,
+    )
+    db.set_intake_email_status(intake_id, email_status)
+
+    session.pop("intake_plan", None)
+    session["intake_done_ref"] = reference
+    return redirect(url_for("intake_success"))
+
+
+def _send_intake_emails(
+    *, reference, firm_name, first_name, last_name, position, phone,
+    email, plan_slug, clio_date, uploads, intake_id,
+):
+    """Send customer + internal intake emails. Returns a status string.
+
+    Never raises — email is best-effort. Returns one of:
+      "sent"        both attempted sends succeeded (or no internal recipients)
+      "partial"     customer or internal send failed
+      "skipped"     SMTP not configured
+    """
+    if not email_sender.is_smtp_configured():
+        logging.info("Intake %s stored; SMTP not configured, skipping emails", reference)
+        return "skipped"
+
+    app_name = branding.APP_NAME
+    support = branding.SUPPORT_EMAIL
+
+    ok = True
+
+    cust_subject, cust_body = intake.customer_email_bodies(
+        first_name=first_name, app_name=app_name, support_email=support,
+    )
+    if not email_sender.send_email(to=email, subject=cust_subject, body_text=cust_body):
+        ok = False
+
+    admin_link = None
+    try:
+        admin_link = (
+            _checkout_base_url() + url_for("operator_intake_list")
+        )
+    except Exception:
+        admin_link = None
+
+    recipients = intake.internal_recipients(support)
+    if recipients:
+        int_subject, int_body = intake.internal_email_bodies(
+            app_name=app_name,
+            reference=reference,
+            firm_name=firm_name,
+            first_name=first_name,
+            last_name=last_name,
+            position=position,
+            phone=phone,
+            email=email,
+            plan=plan_slug,
+            clio_migration_date=clio_date,
+            uploads=uploads,
+            admin_link=admin_link,
+        )
+        for addr in recipients:
+            if not email_sender.send_email(
+                to=addr, subject=int_subject, body_text=int_body
+            ):
+                ok = False
+
+    return "sent" if ok else "partial"
+
+
+@app.route("/intake/success")
+@app.route("/onboarding/done")
+def intake_success():
+    """Clean confirmation page after a successful intake submission."""
+    reference = (session.get("intake_done_ref") or "").strip()[:32]
+    return render_template("intake-success.html", reference=reference)
 
 
 @app.route("/favicon.ico")
@@ -8894,6 +9182,39 @@ def operator_job_detail(job_id):
     if not summary:
         abort(404)
     return render_template("operator-job.html", **summary)
+
+
+@app.route("/operator/intake")
+@operator_required
+def operator_intake_list():
+    """Read-only list of post-purchase onboarding intake submissions.
+
+    Support/operators use this to see who has come through onboarding,
+    their Clio migration date, plan, and what reports they uploaded. Shows
+    metadata only — never decrypts or serves the uploaded file contents.
+    """
+    rows = db.recent_intake_submissions(limit=100)
+    submissions = []
+    for r in rows:
+        try:
+            uploads = json.loads(r.get("uploads_json") or "[]")
+        except (ValueError, TypeError):
+            uploads = []
+        submissions.append({
+            "reference": r.get("reference"),
+            "firm_name": r.get("firm_name"),
+            "contact": f"{r.get('first_name', '')} {r.get('last_name', '')}".strip(),
+            "position": r.get("position"),
+            "phone": r.get("phone"),
+            "email": r.get("email"),
+            "plan_label": intake.plan_label(r.get("plan")),
+            "clio_migration_date": r.get("clio_migration_date"),
+            "upload_count": len(uploads),
+            "upload_names": [u.get("filename") for u in uploads if u.get("filename")],
+            "email_status": r.get("email_status"),
+            "created_at": r.get("created_at"),
+        })
+    return render_template("operator-intake.html", submissions=submissions)
 
 
 @app.route("/operator/cleanup", methods=["POST"])

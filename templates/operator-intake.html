@@ -1,0 +1,57 @@
+{% extends "_base.html" %}
+{% block title %}Intake submissions &mdash; Operator{% endblock %}
+{% block content %}
+<section class="page">
+  <div class="hero">
+    <p class="eyebrow">Internal &middot; Operator view</p>
+    <h1>Onboarding <em>intake</em>.</h1>
+    <p>Post-purchase onboarding submissions. Read-only. Uploaded file contents are never shown here &mdash; only names and counts.</p>
+  </div>
+
+  <section class="card">
+    {% if submissions %}
+    <div class="table-wrap">
+      <table data-testid="operator-intake-table">
+        <thead>
+          <tr>
+            <th>Reference</th>
+            <th>Firm</th>
+            <th>Contact</th>
+            <th>Plan</th>
+            <th>Clio date</th>
+            <th>Files</th>
+            <th>Email</th>
+            <th>Received</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in submissions %}
+          <tr>
+            <td><code>{{ s.reference }}</code></td>
+            <td>{{ s.firm_name }}</td>
+            <td>
+              {{ s.contact }}<br>
+              {% if s.position %}<small class="muted">{{ s.position }}</small><br>{% endif %}
+              <small class="muted">{{ s.email }}{% if s.phone %} &middot; {{ s.phone }}{% endif %}</small>
+            </td>
+            <td>{{ s.plan_label }}</td>
+            <td>{{ s.clio_migration_date or '—' }}</td>
+            <td>
+              {{ s.upload_count }}
+              {% if s.upload_names %}
+              <br><small class="muted">{{ s.upload_names | join(', ') }}</small>
+              {% endif %}
+            </td>
+            <td><code>{{ s.email_status or '—' }}</code></td>
+            <td><small class="muted">{{ s.created_at }}</small></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="muted" data-testid="operator-intake-empty">No intake submissions yet.</p>
+    {% endif %}
+  </section>
+</section>
+{% endblock %}
