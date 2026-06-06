@@ -41,6 +41,57 @@ PLAN_LABELS = {
 SELECTABLE_PLANS = ("essential", "standard", "complete")
 
 
+# ---------------------------------------------------------------------------
+# Plan pricing + what's included
+#
+# Single source of truth for the customer-facing price/quote and the plain
+# list of what each base plan covers, shown on the purchase/intake page. The
+# numbers mirror the /pricing cards and stripe_checkout's plan registry:
+#   Essential  $999    Current year
+#   Standard   $1,499  Up to 3 years (most common)
+#   Complete   Quote   3+ years of history (quote-based, not Stripe)
+# ---------------------------------------------------------------------------
+
+PLAN_DETAILS = {
+    "essential": {
+        "name": "Essential",
+        "tagline": "Current year",
+        "price_display": "$999",
+        "is_quote": False,
+        "includes": (
+            "Guided upload of your PCLaw reports",
+            "QuickBooks connection",
+            "Account matching with a preview before anything posts",
+            "Final migration report",
+        ),
+    },
+    "standard": {
+        "name": "Standard",
+        "tagline": "Up to 3 years",
+        "price_display": "$1,499",
+        "is_quote": False,
+        "includes": (
+            "Everything in Essential",
+            "Up to 3 years of history",
+            "Trust balance support",
+            "Final migration report",
+        ),
+    },
+    "complete": {
+        "name": "Complete",
+        "tagline": "3+ years of history",
+        "price_display": "Quote",
+        "is_quote": True,
+        "includes": (
+            "Everything in Standard",
+            "3 or more years of history",
+            "Larger file volume",
+            "Final reconciliation report",
+        ),
+    },
+}
+
+
 def plan_label(slug: Optional[str]) -> str:
     """Human label for a plan slug, or a neutral fallback."""
     if not slug:
@@ -54,6 +105,57 @@ def normalize_plan(slug: Optional[str]) -> Optional[str]:
         return None
     s = slug.strip().lower()
     return s if s in PLAN_LABELS else None
+
+
+def plan_detail(slug: Optional[str]) -> Optional[dict]:
+    """Return the pricing/includes dict for a base plan slug, or None."""
+    if not slug:
+        return None
+    return PLAN_DETAILS.get(slug.strip().lower())
+
+
+def plan_price_display(slug: Optional[str]) -> str:
+    """Customer-facing price/quote string for a plan, or empty if unknown."""
+    detail = plan_detail(slug)
+    return detail["price_display"] if detail else ""
+
+
+# ---------------------------------------------------------------------------
+# Payment status
+#
+# We are Stripe-ready but NOT collecting card details here. An intake is only
+# ever "paid" when a real Stripe success/webhook path confirms it — never from
+# the intake form itself. Everything submitted through /intake starts as
+# "pending" so customer/internal copy and receipts stay honest.
+# ---------------------------------------------------------------------------
+
+PAYMENT_PENDING = "pending"
+PAYMENT_PAID = "paid"
+PAYMENT_UNPAID = "unpaid"
+
+_PAYMENT_STATUS_LABELS = {
+    PAYMENT_PAID: "Paid",
+    PAYMENT_PENDING: "Pending — secure card payment to be connected",
+    PAYMENT_UNPAID: "Unpaid",
+}
+
+
+def normalize_payment_status(value: Optional[str]) -> str:
+    """Coerce any stored/incoming value to a known status, defaulting pending."""
+    s = (value or "").strip().lower()
+    if s in (PAYMENT_PAID, PAYMENT_PENDING, PAYMENT_UNPAID):
+        return s
+    return PAYMENT_PENDING
+
+
+def payment_status_label(value: Optional[str]) -> str:
+    """Human label for a payment status."""
+    return _PAYMENT_STATUS_LABELS[normalize_payment_status(value)]
+
+
+def is_paid(value: Optional[str]) -> bool:
+    """True only when payment is genuinely confirmed paid."""
+    return normalize_payment_status(value) == PAYMENT_PAID
 
 
 # ---------------------------------------------------------------------------
@@ -161,8 +263,34 @@ def _upload_summary_lines(uploads: list[dict]) -> list[str]:
     return lines
 
 
+def _payment_block_customer(payment_status: Optional[str]) -> str:
+    """Customer-facing payment/receipt paragraph.
+
+    Receipt/confirmation wording appears ONLY when payment is genuinely
+    paid. Otherwise we plainly say payment is still being set up — we never
+    imply a charge happened when it didn't.
+    """
+    if is_paid(payment_status):
+        return (
+            "Payment\n"
+            "  Your payment has been received — thank you. This email is your\n"
+            "  confirmation of payment. A full receipt will follow from our\n"
+            "  payment processor.\n"
+        )
+    return (
+        "Payment\n"
+        "  Your request is saved. Secure card payment will be connected\n"
+        "  shortly — we'll email you a secure link to complete it. You have\n"
+        "  not been charged yet, so this is not a receipt.\n"
+    )
+
+
 def customer_email_bodies(
-    *, first_name: str, app_name: str, support_email: Optional[str]
+    *, first_name: str, app_name: str, support_email: Optional[str],
+    plan: Optional[str] = None,
+    clio_migration_date: Optional[str] = None,
+    uploads: Optional[list[dict]] = None,
+    payment_status: Optional[str] = None,
 ) -> tuple[str, str]:
     """Build (subject, body_text) for the customer's next-steps email."""
     name = (first_name or "").strip() or "there"
@@ -174,15 +302,35 @@ def customer_email_bodies(
             f"us at {support_email}.\n"
         )
     reports = "\n".join(f"  • {r['title']}" for r in RECOMMENDED_REPORTS)
+
+    plan_line = ""
+    if normalize_plan(plan):
+        plan_line = f"Your plan\n  {plan_label(plan)} — {plan_price_display(plan)}\n\n"
+
+    clio_line = ""
+    if (clio_migration_date or "").strip():
+        clio_line = (
+            f"Your Clio migration date\n  {clio_migration_date.strip()}\n\n"
+        )
+
+    uploads = uploads or []
+    upload_summary = "\n".join(_upload_summary_lines(uploads))
+    upload_line = (
+        f"Files you sent us ({len(uploads)})\n{upload_summary}\n\n"
+    )
+
+    payment_block = _payment_block_customer(payment_status) + "\n"
+
     body = f"""Hi {name},
 
 Thanks for choosing {app_name}. We've received your onboarding details and
 any files you uploaded.
 
-What happens next
+{plan_line}{clio_line}{upload_line}{payment_block}What happens next
   1. Our team reviews your information and your PCLaw reports.
   2. We prepare your move into QuickBooks.
-  3. We'll email you the next step.
+  3. We start your migration on your Clio migration date.
+  4. We'll email you the next step.
 
 You don't need to do anything else right now.
 
@@ -213,11 +361,14 @@ def internal_email_bodies(
     clio_migration_date: Optional[str],
     uploads: list[dict],
     admin_link: Optional[str] = None,
+    payment_status: Optional[str] = None,
 ) -> tuple[str, str]:
     """Build (subject, body_text) for the internal team notification."""
     subject = f"[{app_name}] New intake: {firm_name} ({reference})"
     contact_name = f"{first_name} {last_name}".strip()
     upload_lines = _upload_summary_lines(uploads)
+    plan_price = plan_price_display(plan)
+    plan_line = plan_label(plan) + (f"  ({plan_price})" if plan_price else "")
     lines = [
         f"New post-purchase intake received.",
         "",
@@ -227,7 +378,8 @@ def internal_email_bodies(
         f"Position:         {position or '(not given)'}",
         f"Phone:            {phone or '(not given)'}",
         f"Email:            {email}",
-        f"Plan / service:   {plan_label(plan)}",
+        f"Plan / service:   {plan_line}",
+        f"Payment status:   {payment_status_label(payment_status)}",
         f"Clio migration:   {clio_migration_date or '(not given)'}",
         "",
         f"Uploaded reports ({len(uploads)}):",

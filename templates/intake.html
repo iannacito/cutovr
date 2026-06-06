@@ -12,85 +12,120 @@
         A couple of quick details and your PCLaw files &mdash; that's all we
         need to begin. This takes about two minutes.
       </p>
-      {% if plan_slug %}
-      <p class="note" data-testid="intake-plan-context">
-        Plan: <strong>{{ plan_label }}</strong>
+    </header>
+
+    {% if plan_detail %}
+    {# Selected plan summary: name, price/quote, and what's included, in
+       plain language. Shown when the customer arrived from a plan card. #}
+    <article class="card card--inset" data-testid="intake-plan-summary">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:1rem;flex-wrap:wrap;">
+        <div>
+          <p class="eyebrow" style="margin:0;">Your plan</p>
+          <h2 style="margin:.2rem 0 0;font-size:1.25rem;">
+            {{ plan_detail.name }} <span class="muted" style="font-weight:400;">&middot; {{ plan_detail.tagline }}</span>
+          </h2>
+        </div>
+        <p style="margin:0;font-size:1.4rem;font-weight:700;" data-testid="intake-plan-price">
+          {{ plan_detail.price_display }}
+        </p>
+      </div>
+      <p style="margin:.75rem 0 .25rem;font-weight:600;">What's included</p>
+      <ul style="margin:0;padding-left:1.2rem;font-size:.92rem;line-height:1.6;">
+        {% for item in plan_detail.includes %}
+        <li>{{ item }}</li>
+        {% endfor %}
+      </ul>
+      {% if plan_detail.is_quote %}
+      <p class="note" style="margin-top:.75rem;">
+        Complete is quote-based. We'll confirm your price by email before any
+        payment &mdash; nothing is charged today.
       </p>
       {% endif %}
-    </header>
+    </article>
+    {% endif %}
 
     <article class="card">
       <form method="post" action="{{ url_for('intake_submit') }}"
-            class="stack-sm" enctype="multipart/form-data" novalidate
+            class="stack" enctype="multipart/form-data" novalidate
             data-testid="intake-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
-        <label>
-          <span>Law firm name</span>
-          <input type="text" name="firm_name" required
-                 value="{{ form.firm_name or prefill_firm or '' }}"
-                 placeholder="Smith &amp; Hart LLP" autofocus>
-        </label>
+        {# Section 1 — Your firm #}
+        <section class="stack-sm" data-testid="intake-section-firm">
+          <h2 style="font-size:1.1rem;margin:0;">Your firm</h2>
+          <label>
+            <span>Law firm name</span>
+            <input type="text" name="firm_name" required
+                   value="{{ form.firm_name or prefill_firm or '' }}"
+                   placeholder="Smith &amp; Hart LLP" autofocus>
+          </label>
 
-        <div class="form-grid">
-          <label>
-            <span>First name</span>
-            <input type="text" name="first_name" required
-                   value="{{ form.first_name or '' }}" placeholder="Jordan">
-          </label>
-          <label>
-            <span>Last name</span>
-            <input type="text" name="last_name" required
-                   value="{{ form.last_name or '' }}" placeholder="Smith">
-          </label>
-        </div>
+          <div class="form-grid">
+            <label>
+              <span>First name</span>
+              <input type="text" name="first_name" required
+                     value="{{ form.first_name or '' }}" placeholder="Jordan">
+            </label>
+            <label>
+              <span>Last name</span>
+              <input type="text" name="last_name" required
+                     value="{{ form.last_name or '' }}" placeholder="Smith">
+            </label>
+          </div>
 
-        <div class="form-grid">
-          <label>
-            <span>Phone number</span>
-            <input type="text" name="phone"
-                   value="{{ form.phone or '' }}" placeholder="(555) 123-4567">
-          </label>
-          <label>
-            <span>Email</span>
-            <input type="email" name="email" required
-                   value="{{ form.email or prefill_email or '' }}"
-                   placeholder="you@firm.com">
-          </label>
-        </div>
+          <div class="form-grid">
+            <label>
+              <span>Phone number</span>
+              <input type="text" name="phone"
+                     value="{{ form.phone or '' }}" placeholder="(555) 123-4567">
+            </label>
+            <label>
+              <span>Email</span>
+              <input type="email" name="email" required
+                     value="{{ form.email or prefill_email or '' }}"
+                     placeholder="you@firm.com">
+            </label>
+          </div>
 
-        <div class="form-grid">
           <label>
             <span>Your position at the firm</span>
             <input type="text" name="position"
                    value="{{ form.position or '' }}"
                    placeholder="Office manager, partner, paralegal…">
           </label>
+
+          {% if not plan_slug %}
+          <label>
+            <span>Which plan did you purchase?</span>
+            <select name="plan">
+              <option value="">I'm not sure / decide later</option>
+              {% for p in selectable_plans %}
+              <option value="{{ p.slug }}">{{ p.label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          {% else %}
+          <input type="hidden" name="plan" value="{{ plan_slug }}">
+          {% endif %}
+        </section>
+
+        <hr style="border:none;border-top:1px solid var(--line);margin:0;">
+
+        {# Section 2 — Migration date #}
+        <section class="stack-sm" data-testid="intake-section-migration-date">
+          <h2 style="font-size:1.1rem;margin:0;">Migration date</h2>
           <label>
             <span>Clio migration date</span>
             <input type="date" name="clio_migration_date"
                    value="{{ form.clio_migration_date or '' }}">
-            <small class="note">The date you moved (or plan to move) to Clio. Not sure? Leave it blank.</small>
+            <small class="note">The date you moved (or plan to move) to Clio. We start your migration on this date. Not sure? Leave it blank and we'll confirm with you.</small>
           </label>
-        </div>
+        </section>
 
-        {% if not plan_slug %}
-        <label>
-          <span>Which plan did you purchase?</span>
-          <select name="plan">
-            <option value="">I'm not sure / decide later</option>
-            {% for p in selectable_plans %}
-            <option value="{{ p.slug }}">{{ p.label }}</option>
-            {% endfor %}
-          </select>
-        </label>
-        {% else %}
-        <input type="hidden" name="plan" value="{{ plan_slug }}">
-        {% endif %}
+        <hr style="border:none;border-top:1px solid var(--line);margin:0;">
 
-        <hr style="border:none;border-top:1px solid var(--line);margin:var(--space-4) 0;">
-
-        <div class="stack-sm">
+        {# Section 3 — Upload your PCLaw reports #}
+        <section class="stack-sm" data-testid="intake-section-upload">
           <h2 style="font-size:1.1rem;margin:0;">Upload your PCLaw reports</h2>
           <p class="note" data-testid="intake-upload-tagline">{{ upload_tagline }}</p>
 
@@ -109,10 +144,28 @@
                    data-testid="intake-file-input">
             <small class="note">You can select several files at once. No file? You can add them later &mdash; just submit and we'll be in touch.</small>
           </label>
-        </div>
+        </section>
+
+        <hr style="border:none;border-top:1px solid var(--line);margin:0;">
+
+        {# Section 4 — Payment (Stripe-ready, no card fields collected here) #}
+        <section class="stack-sm" data-testid="intake-section-payment">
+          <h2 style="font-size:1.1rem;margin:0;">Payment</h2>
+          <div class="card card--inset" data-testid="intake-payment-panel">
+            <p style="margin-top:0;">
+              Payment will be completed securely by card.
+            </p>
+            <p class="note" style="margin-bottom:0;">
+              We don't collect your card details on this page. When you submit,
+              your request is saved and secure card payment will be connected
+              shortly &mdash; you won't be charged yet.
+            </p>
+          </div>
+        </section>
 
         <button class="btn btn-primary btn-lg full-width" type="submit"
-                style="margin-top:.5rem;">Submit and finish</button>
+                data-testid="intake-submit-cta"
+                style="margin-top:.5rem;">Continue to secure payment</button>
         <p class="note" style="margin-top:.5rem;">
           Your files are encrypted as soon as they reach us. We never share your data.
         </p>
