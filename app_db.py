@@ -208,6 +208,27 @@ CREATE TABLE IF NOT EXISTS oauth_states (
 );
 CREATE INDEX IF NOT EXISTS idx_oauth_states_created ON oauth_states(created_at);
 
+CREATE TABLE IF NOT EXISTS intake_submissions (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    reference           TEXT NOT NULL UNIQUE,
+    firm_id             INTEGER REFERENCES firms(id),
+    user_id            INTEGER REFERENCES users(id),
+    firm_name           TEXT NOT NULL,
+    first_name          TEXT NOT NULL,
+    last_name           TEXT NOT NULL,
+    position            TEXT,
+    phone               TEXT,
+    email               TEXT NOT NULL,
+    plan                TEXT,
+    clio_migration_date TEXT,
+    uploads_json        TEXT,
+    job_id              TEXT,
+    email_status        TEXT,
+    created_at          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_intake_firm ON intake_submissions(firm_id);
+CREATE INDEX IF NOT EXISTS idx_intake_created ON intake_submissions(created_at);
+
 CREATE TABLE IF NOT EXISTS cutover_settings (
     firm_id              INTEGER PRIMARY KEY REFERENCES firms(id) ON DELETE CASCADE,
     cutover_date         TEXT,
@@ -1008,5 +1029,67 @@ class AppDB:
             rows = c.execute(
                 "SELECT * FROM audit_logs WHERE firm_id = ? ORDER BY id DESC LIMIT ?",
                 (firm_id, limit),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    # --- post-purchase intake submissions ---------------------------------
+
+    def create_intake_submission(
+        self,
+        *,
+        reference: str,
+        firm_name: str,
+        first_name: str,
+        last_name: str,
+        email: str,
+        position: Optional[str] = None,
+        phone: Optional[str] = None,
+        plan: Optional[str] = None,
+        clio_migration_date: Optional[str] = None,
+        uploads_json: Optional[str] = None,
+        firm_id: Optional[int] = None,
+        user_id: Optional[int] = None,
+        job_id: Optional[str] = None,
+    ) -> int:
+        """Persist a post-purchase onboarding intake record. Returns its id."""
+        with self._conn() as c:
+            cur = c.execute(
+                "INSERT INTO intake_submissions ("
+                "  reference, firm_id, user_id, firm_name, first_name, last_name, "
+                "  position, phone, email, plan, clio_migration_date, uploads_json, "
+                "  job_id, email_status, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)",
+                (
+                    reference, firm_id, user_id, firm_name.strip(),
+                    first_name.strip(), last_name.strip(),
+                    (position or "").strip() or None,
+                    (phone or "").strip() or None,
+                    email.strip().lower(),
+                    (plan or "").strip() or None,
+                    (clio_migration_date or "").strip() or None,
+                    uploads_json, job_id, _now(),
+                ),
+            )
+            return cur.lastrowid
+
+    def set_intake_email_status(self, intake_id: int, status: str) -> None:
+        with self._conn() as c:
+            c.execute(
+                "UPDATE intake_submissions SET email_status = ? WHERE id = ?",
+                (status, intake_id),
+            )
+
+    def get_intake_submission(self, intake_id: int) -> Optional[dict]:
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT * FROM intake_submissions WHERE id = ?", (intake_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def recent_intake_submissions(self, limit: int = 50) -> list:
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT * FROM intake_submissions ORDER BY id DESC LIMIT ?",
+                (limit,),
             ).fetchall()
             return [dict(r) for r in rows]
