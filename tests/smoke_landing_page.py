@@ -44,10 +44,12 @@ def t1_landing_renders_with_marketing_content():
     body = r.get_data(as_text=True)
 
     must_contain = [
-        # Hero / value prop
+        # Hero / value prop — leads with hands-off, handled-for-you
+        # convenience (not speed/cost).
         "PCLaw",
-        "QuickBooks Online",
-        "under an hour",
+        "QuickBooks",
+        "handled for you",
+        "Answer a few simple questions",
         # Coverage section makes clear it's not GL-only
         "More than just the General Ledger",
         "Chart of Accounts",

@@ -52,12 +52,16 @@ def t1_landing_consultant_compare():
     body = r.get_data(as_text=True)
     assert "landing-consultant-compare" in body, \
         "landing should expose consultant compare block via data-testid"
-    assert "$3,000" in body and "$4,000" in body, \
-        "landing consultant compare should anchor traditional cost range"
-    assert "1&ndash;3 weeks" in body or "1-3 weeks" in body, \
-        "landing should anchor consultant duration (1-3 weeks)"
+    # Positioning leads with hands-off convenience: the consultant
+    # comparison is framed around the manual back-and-forth a firm avoids,
+    # not a speed/cost headline. Cost stays present only as a secondary,
+    # plain-English note ("a fraction of the cost", "thousands").
+    assert "handled for you" in body, \
+        "landing compare should lead with hands-off, handled-for-you framing"
+    assert "fraction of the cost" in body, \
+        "landing should keep cost as a secondary note, not the headline"
     assert "From $999" in body, "landing should anchor Cutovr from-price"
-    print("T1 OK: landing has consultant comparison with cost + duration")
+    print("T1 OK: landing consultant comparison leads with hands-off framing")
 
 
 def t2_landing_price_anchor():
@@ -69,12 +73,16 @@ def t2_landing_price_anchor():
     print("T2 OK: landing has hero price anchor")
 
 
-def t3_landing_under_an_hour_qualifier():
+def t3_landing_scope_qualifier():
     r = _get("/")
     body = r.get_data(as_text=True)
+    # The hero qualifier scopes the offer to supported PCLaw CSV exports
+    # and reinforces the hands-off promise ("we do the work") rather than
+    # leading with a turnaround-time claim.
     assert "landing-hour-qualifier" in body
     assert "supported PCLaw CSV exports" in body
-    print("T3 OK: landing has 'under an hour' qualifier copy")
+    assert "we do the work" in body
+    print("T3 OK: landing scope qualifier reinforces hands-off framing")
 
 
 def t4_landing_no_public_sandbox_claim():
@@ -115,10 +123,13 @@ def t6_about_page_renders():
     assert r.status_code == 200, r.status_code
     body = r.get_data(as_text=True)
     assert "about-page" in body
-    assert "$3,000" in body and "$4,000" in body, \
-        "/about should anchor consultant cost"
+    # /about leads with the hands-off value proposition; the consultant
+    # comparison stays as supporting context (not a cost headline).
+    assert "hands-off" in body.lower(), \
+        "/about should lead with the hands-off value proposition"
+    assert "consultant" in body, "/about should keep consultant context"
     assert "QuickBooks" in body
-    print("T6 OK: /about renders with consultant-cost framing")
+    print("T6 OK: /about leads with hands-off framing, keeps consultant context")
 
 
 def t7_quote_request_get():
@@ -244,7 +255,7 @@ if __name__ == "__main__":
     try:
         t1_landing_consultant_compare()
         t2_landing_price_anchor()
-        t3_landing_under_an_hour_qualifier()
+        t3_landing_scope_qualifier()
         t4_landing_no_public_sandbox_claim()
         t5_security_page_renders()
         t6_about_page_renders()

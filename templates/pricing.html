@@ -1,6 +1,6 @@
 {% extends "_base.html" %}
 {% block title %}{{ app_name }} &mdash; Pricing{% endblock %}
-{% block meta_description %}Simple, fixed-price PCLaw to QuickBooks Online migration. Pricing is based on how much history you want to bring over.{% endblock %}
+{% block meta_description %}Simple, fixed-price PCLaw to QuickBooks Online migration, handled for you. Choose how much history you want us to move over.{% endblock %}
 {% block content %}
 
 {# Compact hero: one line of context above the cards. Apple/Japanese
@@ -8,9 +8,9 @@
 <section class="pricing-hero pricing-hero--compact">
   <div class="pricing-hero__inner">
     <p class="eyebrow">Pricing</p>
-    <h1 class="display pricing-hero__title">Pay for the history you bring over.</h1>
+    <h1 class="display pricing-hero__title">Choose how much history we handle.</h1>
     <p class="pricing-hero__lede">
-      One firm. One migration. Pick the package that matches how far back you want to go.
+      One firm. One migration. Pick how far back you want us to take it &mdash; we handle the rest.
     </p>
   </div>
 </section>
@@ -105,13 +105,13 @@
       <div class="grid-two" style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-5);margin-top:var(--space-3);">
         <div>
           <p class="kicker muted">Traditional consultant-led migration</p>
-          <p style="font-weight:600;font-size:1.1rem;">~$3,000&ndash;$4,000 &middot; 1&ndash;3 weeks</p>
-          <p class="muted" style="font-size:.85rem;">Hourly billing, calendar coordination, file exchanges, and one-off spreadsheets.</p>
+          <p style="font-weight:600;font-size:1.1rem;">Hands-on for you, week after week</p>
+          <p class="muted" style="font-size:.85rem;">Hourly billing, calendar coordination, file exchanges, and one-off spreadsheets &mdash; often running into the thousands.</p>
         </div>
         <div>
           <p class="kicker">{{ app_name }}</p>
-          <p style="font-weight:600;font-size:1.1rem;">From $999 &middot; often under an hour</p>
-          <p class="muted" style="font-size:.85rem;">Flat fee. Self-serve guided workflow. No subscription. Timing depends on file size and history.</p>
+          <p style="font-weight:600;font-size:1.1rem;">Handled for you &middot; from $999</p>
+          <p class="muted" style="font-size:.85rem;">A guided workflow that does the work for you. Flat fee, no subscription &mdash; typically a fraction of a consultant&rsquo;s cost.</p>
         </div>
       </div>
     </div>
@@ -131,8 +131,8 @@
         </li>
         <li class="pricing-addons__item">
           <div>
-            <h3>Priority turnaround</h3>
-            <p>Front-of-the-line review when you're up against a deadline.</p>
+            <h3>Priority handling</h3>
+            <p>We move your migration to the front of the line when you're up against a deadline.</p>
           </div>
           <p class="pricing-addons__price">$299</p>
         </li>
@@ -191,10 +191,12 @@
       <details class="pricing-faq__item">
         <summary>What happens after I pay?</summary>
         <p>
-          You get immediate access to the guided migration workflow.
-          Upload your files, review what we found, connect QuickBooks,
-          and send when you're ready. If anything looks wrong, the
-          migration can be reversed in one click.
+          You upload your PCLaw reports and answer a few simple
+          questions &mdash; that's your part. From there the guided
+          workflow handles the accounting-heavy steps: we prepare your
+          data, match it to QuickBooks, and walk you through a review
+          before anything posts. If anything looks wrong, the migration
+          can be reversed in one click.
         </p>
       </details>
     </div>
@@ -206,11 +208,11 @@
   <div class="landing-cta__inner">
     <p class="eyebrow">Ready when you are</p>
     <h2 class="display landing-cta__title">
-      Move PCLaw to QuickBooks <em>cleanly</em>.
+      Let {{ app_name }} <em>handle the migration</em>.
     </h2>
     <p class="landing-cta__lede">
-      Create a workspace, upload your PCLaw exports, and review every
-      step before anything is sent to QuickBooks.
+      Create a workspace, upload your PCLaw exports, and answer a few
+      simple questions. You review and confirm; we handle the rest.
     </p>
     <div class="landing-cta__buttons">
       <a class="btn btn-primary btn-lg" href="{{ url_for('signup') }}">Start your migration</a>
