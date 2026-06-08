@@ -4,7 +4,13 @@
 <section class="page">
   {% include "_workflow_stepper.html" %}
 
-  {% set at_upload_stage = workflow_current and workflow_current.key == 'upload' %}
+  {# ``at_upload_stage`` is normally derived from the live workflow stage,
+     but the dashboard route can force it on (e.g. when the customer clicks
+     "Back to Step 2" from Match accounts via ?step=upload) so the page
+     renders the clean single-action upload view instead of the busy
+     post-Step-2 dashboard. Fall back to the stage when not supplied. #}
+  {% set at_upload_stage = at_upload_stage if at_upload_stage is defined
+       else (workflow_current and workflow_current.key == 'upload') %}
 
   {% if next_step and not at_upload_stage %}
     <div class="next-card">

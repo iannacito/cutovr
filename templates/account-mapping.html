@@ -32,9 +32,13 @@
      bleeding to the viewport edges (Cesar 2026-06-03: the Step 3 buttons
      looked "stretched" because the stepper rendered full-bleed above the
      contained hero). #}
+  {# The workflow stepper above already renders the single, canonical
+     "Back to Step 2: Upload reports" link. A second, differently-worded
+     "Back to migration" link here (pointing at the job-detail page) gave
+     Step 3 two competing back buttons going to two different places —
+     the confusing back navigation from the June 5 meeting (item 3).
+     Removed so each page has exactly one clear way back. #}
   {% include "_workflow_stepper.html" %}
-
-  <a href="{{ url_for('job_detail', job_id=job.id) }}" class="back-link">&larr; Back to migration</a>
 
   <div class="hero">
     <p class="eyebrow">Step 3 of 6 &middot; Match accounts</p>
@@ -358,6 +362,12 @@
                     <span class="badge">Auto-match</span>
                   {% else %}
                     <span class="badge error">Unmatched</span>
+                    {% if r.unmatched_reason %}
+                    <p class="muted" data-testid="row-unmatched-reason-{{ r.idx }}"
+                       style="margin:.35rem 0 0;font-size:.8rem;max-width:40ch;">
+                      {{ r.unmatched_reason }}
+                    </p>
+                    {% endif %}
                     {# Row-level "Add to QuickBooks" CTA. Three states:
                        (1) creatable=True -> simple Add button, the safe
                            type was inferred from the name / COA upload.
@@ -463,7 +473,7 @@
   <div class="actions-row" data-testid="step3-nav-footer"
        style="margin-top:var(--space-6);">
     <a class="btn"
-       href="{{ url_for('dashboard') }}#intake"
+       href="{{ url_for('dashboard') }}?step=upload#intake"
        data-testid="step3-back-to-step2">
       &larr; Back to Step 2: Upload reports
     </a>

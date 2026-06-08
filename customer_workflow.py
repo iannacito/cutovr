@@ -347,7 +347,7 @@ def _stage_back_link(
         STAGE_UPLOAD:    ("Back to Step 1: Setup",
                           u("cutover_setup", "/cutover")),
         STAGE_MATCH:     ("Back to Step 2: Upload reports",
-                          u("dashboard", "/dashboard") + "#intake"),
+                          u("dashboard", "/dashboard") + "?step=upload#intake"),
         STAGE_REVIEW:    ("Back to Step 3: Match accounts",
                           u("match_accounts_entry", "/match-accounts")),
         STAGE_IMPORT:    ("Back to Step 4: Review import",
