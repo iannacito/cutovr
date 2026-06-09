@@ -2848,6 +2848,7 @@ def onboarding_preview_page():
     (/intake) is untouched. A sample copyable "reports we need" email is
     rendered with placeholder dates so reviewers see the customer-facing copy.
     """
+    example_clio_date = "2026-07-01"
     sample_email = onboarding_preview.build_reports_email(
         firm_name="Smith & Hart LLP",
         tb_beginning_date="2024-12-31",
@@ -2856,6 +2857,11 @@ def onboarding_preview_page():
         start_date="2025-01-01",
         end_date="2026-03-31",
         include_trust_ledger=False,
+    )
+    confirmation_email = onboarding_preview.build_confirmation_email(
+        firm_name="Smith & Hart LLP",
+        clio_migration_date=example_clio_date,
+        contact_email="you@yourfirm.com",
     )
     # Stripe state controls the payment CTA wording. We never render card
     # fields here — when Stripe isn't configured the CTA shows a safe
@@ -2869,9 +2875,18 @@ def onboarding_preview_page():
         sections=onboarding_preview.PREVIEW_SECTIONS,
         plan_cards=onboarding_preview.PLAN_CARDS,
         pricing_basis_note=onboarding_preview.PRICING_BASIS_NOTE,
+        firm_fields=onboarding_preview.FIRM_FIELDS,
+        firm_field_groups=onboarding_preview.FIRM_FIELD_GROUPS,
+        payment_heading=onboarding_preview.PAYMENT_HEADING,
+        payment_reassurance=onboarding_preview.PAYMENT_REASSURANCE,
         reports=onboarding_preview.REPORTS_CHECKLIST,
         what_happens_next=onboarding_preview.WHAT_HAPPENS_NEXT,
         secure_access_note=onboarding_preview.SECURE_ACCESS_NOTE,
+        confirmation_summary=onboarding_preview.confirmation_summary(
+            example_clio_date
+        ),
+        confirmation_email=confirmation_email,
+        example_clio_date=example_clio_date,
         resource_links=onboarding_preview.RESOURCE_LINKS,
         sample_email=sample_email,
         stripe_enabled=stripe_enabled,

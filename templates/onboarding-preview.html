@@ -27,11 +27,11 @@
       <p style="margin:0;">{{ semi_managed_note }}</p>
     </article>
 
-    {# Guided sections. Each step leads with a large, obvious "Step N" label
-       and a big heading so the page reads as a walkthrough, not a checklist. #}
+    {# Pre-payment steps: choose a plan, then tell us about the firm and pay.
+       Reports are intentionally NOT here — they come after payment. #}
     <ol class="stack" style="list-style:none;margin:0;padding:0;gap:var(--space-6);"
         data-testid="onboarding-preview-sections">
-      {% for s in sections %}
+      {% for s in sections if not s.after_payment %}
       <li class="card" data-testid="onboarding-preview-section-{{ s.key }}">
         <p class="eyebrow" style="margin:0 0 .35rem;font-size:.95rem;letter-spacing:.12em;"
            data-testid="onboarding-preview-step-label-{{ s.key }}">Step {{ s.step }}</p>
@@ -77,7 +77,119 @@
         </p>
         {% endif %}
 
-        {# Step 3 expands into the full reports checklist. #}
+        {# Step 2 expands into firm/account details + secure payment. The form
+           is preview-only: it never submits, and the password is a plain,
+           non-credential placeholder so nothing is collected or stored. #}
+        {% if s.key == "firm" %}
+        <div class="stack" style="margin-top:var(--space-5);gap:var(--space-5);"
+             data-testid="onboarding-preview-firm-details">
+          {% for group in firm_field_groups %}
+          <fieldset style="border:1px solid var(--line);border-radius:.6rem;padding:1rem 1.1rem;margin:0;">
+            <legend class="eyebrow" style="padding:0 .4rem;">{{ group.title }}</legend>
+            <div class="form-grid" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;">
+              {% for f in firm_fields if f.group == group.key %}
+              <label class="field" style="display:flex;flex-direction:column;gap:.3rem;{% if f.type in ('date',) %}grid-column:1 / -1;{% endif %}"
+                     data-testid="onboarding-preview-field-{{ f.key }}">
+                <span style="font-weight:600;font-size:.9rem;">{{ f.label }}</span>
+                {% if f.type == "preview-password" %}
+                {# Deliberately NOT type=password and NOT named "password":
+                   the preview must never collect a credential. #}
+                <input type="text" inputmode="text"
+                       name="preview_{{ f.key }}_display"
+                       autocomplete="off" disabled
+                       placeholder="Set after payment"
+                       data-testid="onboarding-preview-input-{{ f.key }}"
+                       style="padding:.55rem .6rem;border:1px solid var(--line);border-radius:.4rem;background:var(--surface,#f7f7f5);">
+                {% else %}
+                <input type="{{ f.type }}"
+                       name="preview_{{ f.key }}"
+                       autocomplete="{{ f.autocomplete }}" disabled
+                       data-testid="onboarding-preview-input-{{ f.key }}"
+                       style="padding:.55rem .6rem;border:1px solid var(--line);border-radius:.4rem;background:var(--surface,#f7f7f5);">
+                {% endif %}
+                {% if f.help %}<span class="muted" style="font-size:.8rem;">{{ f.help }}</span>{% endif %}
+              </label>
+              {% endfor %}
+            </div>
+          </fieldset>
+          {% endfor %}
+          <p class="note" style="margin:0;" data-testid="onboarding-preview-firm-note">
+            These fields are an example of what the live flow will ask for.
+            In this preview they're disabled &mdash; nothing is entered, sent,
+            or stored.
+          </p>
+        </div>
+
+        {# Payment is part of Step 2. Stripe Checkout only — no card fields
+           are ever rendered here. When Stripe isn't configured the CTA shows
+           a safe pending state and makes clear nothing is charged. #}
+        <div class="card card--inset" style="margin-top:var(--space-5);"
+             data-testid="onboarding-preview-payment">
+          <p class="eyebrow" style="margin:0 0 .35rem;">Pay securely</p>
+          <h3 style="margin:0;font-size:1.3rem;">{{ payment_heading }}</h3>
+          <p class="muted" style="margin:.5rem 0 1rem;" data-testid="onboarding-preview-selected-plan">
+            {% if stripe_enabled %}
+            Select a plan above, then continue to secure card payment, handled by Stripe.
+            {% else %}
+            Select a plan above. Secure card payment will be handled by Stripe once
+            it's connected.
+            {% endif %}
+          </p>
+
+          {% if stripe_enabled %}
+          <button type="button" class="btn btn-primary btn-lg full-width"
+                  data-testid="onboarding-preview-pay-cta"
+                  data-stripe-state="ready">
+            Continue to secure payment
+          </button>
+          {% else %}
+          <button type="button" class="btn btn-primary btn-lg full-width"
+                  data-testid="onboarding-preview-pay-cta"
+                  data-stripe-state="pending" disabled
+                  style="opacity:.7;cursor:not-allowed;">
+            Continue to secure payment
+          </button>
+          <p class="note" style="margin:.5rem 0 0;text-align:center;"
+             data-testid="onboarding-preview-stripe-pending">
+            Stripe Checkout will open here once payment is connected. This is a
+            preview &mdash; no card details are collected and nothing is charged.
+          </p>
+          {% endif %}
+          <p class="note" style="margin:.6rem 0 0;text-align:center;font-weight:600;"
+             data-testid="onboarding-preview-payment-reassurance">
+            {{ payment_reassurance }}
+          </p>
+        </div>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ol>
+
+    {# ───────── After payment ─────────
+       Everything below only becomes available once payment is complete. In
+       this preview it's wrapped in a clearly-labelled band so reviewers see
+       the sequence without the reports reading as a pre-payment requirement. #}
+    <div class="card card--quiet" data-testid="onboarding-preview-after-payment-band"
+         style="border-style:dashed;">
+      <p class="eyebrow" style="margin:0;letter-spacing:.14em;"
+         data-testid="onboarding-preview-after-payment-label">After payment</p>
+      <p class="muted" style="margin:.4rem 0 0;font-size:1.02rem;">
+        Once payment is complete, Cutovr tells you exactly which reports you
+        need for your plan and you upload them here. You don't see this until
+        you've chosen a plan, entered your details, and paid.
+      </p>
+    </div>
+
+    <ol class="stack" style="list-style:none;margin:0;padding:0;gap:var(--space-6);"
+        data-testid="onboarding-preview-after-payment-sections">
+      {% for s in sections if s.after_payment %}
+      <li class="card" data-testid="onboarding-preview-section-{{ s.key }}">
+        <p class="eyebrow" style="margin:0 0 .35rem;font-size:.95rem;letter-spacing:.12em;"
+           data-testid="onboarding-preview-step-label-{{ s.key }}">Step {{ s.step }}</p>
+        <h2 style="margin:0;font-size:1.6rem;line-height:1.2;">{{ s.title }}</h2>
+        <p class="muted" style="margin:.5rem 0 0;font-size:1.05rem;">{{ s.summary }}</p>
+
+        {# Step 3: plan-specific reports checklist + upload area. #}
         {% if s.key == "reports" %}
         <ul style="margin:1.25rem 0 0;padding-left:1.2rem;line-height:1.7;font-size:1.02rem;"
             data-testid="onboarding-preview-reports">
@@ -90,10 +202,29 @@
           </li>
           {% endfor %}
         </ul>
-        {% endif %}
 
-        {# Step 4 expands into add-ons + secure-access copy. #}
-        {% if s.key == "addons" %}
+        {# Upload area — preview only: the dropzone is disabled and the form
+           never submits. This is the part the live flow automates. #}
+        <div class="card card--inset" style="margin-top:1.25rem;"
+             data-testid="onboarding-preview-upload">
+          <p style="margin:0;font-weight:600;">Upload your reports</p>
+          <p class="muted" style="margin:.4rem 0 .75rem;">
+            Drag your PCLaw exports in, or choose files. We'll tell you if
+            anything is missing &mdash; this upload is the automated part.
+          </p>
+          <div class="dropzone" aria-disabled="true"
+               data-testid="onboarding-preview-dropzone"
+               style="border:2px dashed var(--line);border-radius:.6rem;padding:1.5rem;text-align:center;color:var(--muted,#777);background:var(--surface,#f7f7f5);">
+            Drop files here (preview &mdash; uploads are disabled)
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm" disabled
+                  data-testid="onboarding-preview-upload-cta"
+                  style="margin-top:.75rem;opacity:.7;cursor:not-allowed;">
+            Choose files
+          </button>
+        </div>
+
+        {# Trust ledger / secure-access note lives with the reports step. #}
         <div class="card card--inset" style="margin-top:1.25rem;"
              data-testid="onboarding-preview-secure-access">
           <p style="margin:0;font-weight:600;">Trust ledger &amp; secure access</p>
@@ -101,7 +232,7 @@
         </div>
         {% endif %}
 
-        {# Step 5 expands into the what-happens-next steps. #}
+        {# Step 4: what happens next + the confirmation the firm receives. #}
         {% if s.key == "next" %}
         <ol style="margin:1.25rem 0 0;padding-left:1.2rem;line-height:1.8;font-size:1.02rem;"
             data-testid="onboarding-preview-next">
@@ -109,12 +240,26 @@
           <li>{{ step }}</li>
           {% endfor %}
         </ol>
+
+        <div class="card card--inset" style="margin-top:1.25rem;"
+             data-testid="onboarding-preview-confirmation">
+          <p class="eyebrow" style="margin:0 0 .35rem;">After you upload</p>
+          <p style="margin:0;font-weight:600;" data-testid="onboarding-preview-confirmation-summary">
+            {{ confirmation_summary }}
+          </p>
+          <p class="muted" style="margin:.6rem 0 .4rem;">
+            We send a confirmation email that looks like this:
+          </p>
+          <pre data-testid="onboarding-preview-confirmation-email"
+               style="white-space:pre-wrap;background:var(--surface,#f7f7f5);border:1px solid var(--line);border-radius:.5rem;padding:1rem;font-family:'JetBrains Mono',monospace;font-size:.9rem;line-height:1.6;overflow:auto;">{{ confirmation_email }}</pre>
+        </div>
         {% endif %}
       </li>
       {% endfor %}
     </ol>
 
-    {# Copyable "Reports we need" email / checklist. #}
+    {# Copyable "Reports we need" email / checklist — an example of the
+       plan-specific list the customer receives after payment. #}
     <article class="card" data-testid="onboarding-preview-email">
       <div class="card-head" style="display:flex;justify-content:space-between;align-items:baseline;gap:1rem;flex-wrap:wrap;">
         <div>
@@ -126,53 +271,14 @@
                 data-testid="onboarding-preview-copy-btn">Copy checklist</button>
       </div>
       <p class="muted" style="margin:.4rem 0 .75rem;">
-        Plain English, ready to send. Dates below are examples &mdash; we fill
-        in your firm's real dates from your migration period.
+        Plain English, ready to send &mdash; this is what you receive after
+        payment. Dates below are examples; we fill in your firm's real dates
+        from your migration period.
       </p>
       <pre id="reports-email"
            data-testid="onboarding-preview-email-body"
            style="white-space:pre-wrap;background:var(--surface,#f7f7f5);border:1px solid var(--line);border-radius:.5rem;padding:1rem;font-family:'JetBrains Mono',monospace;font-size:.9rem;line-height:1.6;overflow:auto;">{{ sample_email }}</pre>
     </article>
-
-    {# Payment CTA — Stripe Checkout, no card fields collected here. When
-       Stripe isn't configured the CTA is a safe pending state. The selected
-       plan name is reflected here via progressive enhancement. #}
-    <div class="card" data-testid="onboarding-preview-payment">
-      <p class="eyebrow" style="margin:0 0 .35rem;">Final step</p>
-      <h2 style="margin:0;font-size:1.4rem;">Secure payment</h2>
-      <p class="muted" style="margin:.5rem 0 1rem;" data-testid="onboarding-preview-selected-plan">
-        {% if stripe_enabled %}
-        Select a plan above, then continue to secure card payment, handled by Stripe.
-        {% else %}
-        Select a plan above. Secure card payment will be handled by Stripe once
-        it's connected.
-        {% endif %}
-      </p>
-
-      {% if stripe_enabled %}
-      <button type="button" class="btn btn-primary btn-lg full-width"
-              data-testid="onboarding-preview-pay-cta"
-              data-stripe-state="ready">
-        Continue to secure payment
-      </button>
-      <p class="note" style="margin:.5rem 0 0;text-align:center;">
-        You'll be taken to Stripe's secure checkout. We never see or store your
-        card details.
-      </p>
-      {% else %}
-      <button type="button" class="btn btn-primary btn-lg full-width"
-              data-testid="onboarding-preview-pay-cta"
-              data-stripe-state="pending" disabled
-              style="opacity:.7;cursor:not-allowed;">
-        Continue to secure payment
-      </button>
-      <p class="note" style="margin:.5rem 0 0;text-align:center;"
-         data-testid="onboarding-preview-stripe-pending">
-        Stripe Checkout will open here once payment is connected. This is a
-        preview &mdash; no card details are collected and nothing is charged.
-      </p>
-      {% endif %}
-    </div>
 
     {# App-hosted instruction guides — kept visually quiet so they don't
        compete with the onboarding flow. These replace the old internal
