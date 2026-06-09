@@ -1,21 +1,22 @@
 {% extends "_base.html" %}
-{% block title %}{{ app_name }} &mdash; PCLaw to QuickBooks Online migration in under an hour{% endblock %}
+{% block title %}{{ app_name }} &mdash; PCLaw to QuickBooks migration, handled for you{% endblock %}
 {% block content %}
 
 <!-- Hero ------------------------------------------------------------- -->
 <section class="landing-hero">
   <div class="landing-hero__inner">
-    <p class="eyebrow">PCLaw &rarr; QuickBooks Online</p>
+    <p class="eyebrow">PCLaw &rarr; QuickBooks</p>
     <h1 class="display landing-hero__title">
-      Move from PCLaw to <em>QuickBooks</em> in under an hour.
+      PCLaw to QuickBooks migration, <em>handled for you</em>.
     </h1>
     <p class="landing-hero__lede">
-      {{ app_name }} helps law firms upload their accounting reports,
-      match their accounts, and move their data into QuickBooks through
-      a simple guided workflow.
+      Upload your reports. Answer a few simple questions.
+      {{ app_name }} prepares the migration path and handles the
+      accounting-heavy parts for you.
     </p>
     <p class="landing-hero__value">
-      Less manual work. Fewer spreadsheets. A faster path to QuickBooks.
+      No accounting guesswork. No manual back-and-forth. A guided way to
+      move your firm&rsquo;s data.
     </p>
     <p class="landing-hero__price-anchor"
        data-testid="landing-price-anchor"
@@ -25,8 +26,7 @@
     <p class="landing-hero__qualifier muted"
        data-testid="landing-hour-qualifier"
        style="font-size:.85rem;margin-top:var(--space-2);max-width:60ch;">
-      For supported PCLaw CSV exports; timing depends on file size and
-      how much history you bring over.
+      For supported PCLaw CSV exports. You bring the reports; we do the work.
     </p>
     <div class="landing-hero__ctas">
       <a class="btn btn-primary btn-lg" href="{{ url_for('signup') }}">Start your migration</a>
@@ -34,8 +34,8 @@
     </div>
     <ul class="landing-hero__bullets">
       <li>
-        <strong>Under an hour</strong>
-        End-to-end, for supported PCLaw exports.
+        <strong>Hands-off</strong>
+        You upload and answer a few questions. We handle the rest.
       </li>
       <li>
         <strong>Encrypted</strong>
@@ -56,8 +56,8 @@
     <p class="eyebrow">See how it works</p>
     <h2 class="h-serif landing-section__title">See how {{ app_name }} works.</h2>
     <p class="muted landing-section__lede">
-      A short look at the guided migration &mdash; upload, match, review, and
-      send to QuickBooks, one calm screen at a time.
+      A short look at the guided migration &mdash; you upload and confirm,
+      {{ app_name }} prepares and posts to QuickBooks, one calm screen at a time.
     </p>
     <figure class="landing-preview__media" data-testid="landing-preview-media"
             style="margin:var(--space-5) auto 0;max-width:54rem;aspect-ratio:16/9;
@@ -182,19 +182,21 @@
 <section class="landing-section landing-section--compare" id="compare">
   <div class="landing-section__inner">
     <p class="eyebrow">Why {{ app_name }}</p>
-    <h2 class="h-serif landing-section__title">A faster, simpler path off PCLaw.</h2>
+    <h2 class="h-serif landing-section__title">The work, handled for you.</h2>
     <p class="muted landing-section__lede">
-      A traditional consultant-led migration takes weeks and costs
-      thousands &mdash; {{ app_name }} is built to do it for a fraction of the cost,
-      and is designed so a firm administrator can finish in an afternoon
-      with the controls and reversibility a finance-grade tool should have.
+      A traditional consultant-led migration means weeks of meetings, file
+      exchanges, and review cycles &mdash; you coordinating, them billing.
+      {{ app_name }} turns the same migration into a guided workflow your
+      firm runs without an accountant on the line: you upload your reports
+      and confirm, and we handle the accounting-heavy parts, with the
+      controls and reversibility a finance-grade tool should have.
     </p>
 
     <div class="landing-compare" data-testid="landing-consultant-compare">
       <article class="landing-compare__col landing-compare__col--old">
         <p class="kicker">Traditional consultant</p>
         <p class="landing-compare__headline" style="font-weight:600;font-size:1.05rem;">
-          ~$3,000&ndash;$4,000 &middot; 1&ndash;3 weeks
+          Hands-on for you, week after week
         </p>
         <ul>
           <li>Weeks of meetings, file exchanges, and review cycles.</li>
@@ -206,17 +208,18 @@
       <article class="landing-compare__col landing-compare__col--new">
         <p class="kicker">{{ app_name }}</p>
         <p class="landing-compare__headline" style="font-weight:600;font-size:1.05rem;">
-          From $999 &middot; often under an hour
+          Hands-off &middot; guided every step
         </p>
         <ul>
-          <li>Designed to finish in under an hour, for supported files.</li>
-          <li>The same guided workflow every time.</li>
-          <li>You drive: upload, match, send, reconcile &mdash; on your own schedule.</li>
+          <li>You upload and confirm; {{ app_name }} does the work.</li>
+          <li>The same guided workflow every time, in plain English.</li>
+          <li>No accounting expertise needed &mdash; we handle the complex parts.</li>
           <li>One-click reversal if something looks wrong.</li>
         </ul>
         <p class="muted" style="font-size:.8rem;margin-top:var(--space-2);">
-          Timing depends on file size and history; consultant costs are
-          typical industry estimates and vary by firm.
+          A flat fee, no subscription &mdash; typically a fraction of the cost
+          of a consultant, which runs into the thousands. Costs are typical
+          industry estimates and vary by firm.
         </p>
       </article>
     </div>
@@ -274,10 +277,10 @@
 <section class="landing-section landing-section--pricing" id="pricing">
   <div class="landing-section__inner">
     <p class="eyebrow">Pricing</p>
-    <h2 class="h-serif landing-section__title">Pay for the history you bring over.</h2>
+    <h2 class="h-serif landing-section__title">Choose how much history we handle.</h2>
     <p class="muted landing-section__lede">
-      One firm. One migration. Pick the package that matches how far
-      back you want to go.
+      One firm. One migration. Pick how far back you want us to take it
+      &mdash; we handle the rest.
     </p>
 
     <div class="landing-pricing">
@@ -317,11 +320,11 @@
   <div class="landing-cta__inner">
     <p class="eyebrow">Ready when you are</p>
     <h2 class="display landing-cta__title">
-      Move PCLaw to QuickBooks <em>cleanly</em>.
+      Let {{ app_name }} <em>handle the migration</em>.
     </h2>
     <p class="landing-cta__lede">
-      Create a workspace, upload your PCLaw exports, and review every
-      step before anything is sent to QuickBooks.
+      Create a workspace, upload your PCLaw exports, and answer a few
+      simple questions. You review and confirm; we handle the rest.
     </p>
     <div class="landing-cta__buttons">
       <a class="btn btn-primary btn-lg" href="{{ url_for('signup') }}">Sign up &amp; start migration</a>

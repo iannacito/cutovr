@@ -71,7 +71,7 @@ def t1_pricing_renders_with_packages_and_faq():
         "Most common",
         # Add-ons
         "Extra historical year",
-        "Priority turnaround",
+        "Priority handling",
         "Assisted review call",
         "$250",
         "$299",
