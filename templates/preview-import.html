@@ -2,9 +2,11 @@
 {% block title %}Step 4 &mdash; Review import{% endblock %}
 {% block content %}
 <section class="detail-page" data-testid="preview-import-page">
+  {# The stepper and the Step 4 nav footer both already provide a single,
+     clearly-worded "Back to Step 3" link. The extra "Back to migration"
+     link here pointed somewhere different and gave the page two competing
+     back buttons (June 5 meeting, item 3). Removed for one clear way back. #}
   {% include "_workflow_stepper.html" %}
-
-  <a href="{{ url_for('job_detail', job_id=job.id) }}" class="back-link">&larr; Back to migration</a>
 
   <section class="card detail-hero">
     <div class="flex-between">
@@ -474,33 +476,112 @@
   </section>
   {% endif %}
 
-  {% if preview.sample_lines %}
-  <section class="card">
+  {% if preview.sample_groups %}
+  <section class="card" data-testid="sample-groups-card">
     <p class="eyebrow">Sample entries</p>
-    <h2>First {{ preview.sample_lines|length }} entries we&rsquo;ll send</h2>
-    <p class="muted">A small sample so you can sanity-check what would be sent.</p>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Date</th><th>Account</th>
-            <th>Amount</th><th>Description</th>
-            <th>Transaction reference</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for l in preview.sample_lines %}
-          <tr>
-            <td>{{ l.date }}</td>
-            <td>{{ l.account }}{% if l.qbo_acct_num %} <small class="muted">&middot; #{{ l.qbo_acct_num }}</small>{% endif %}</td>
-            <td>${{ l.amount }}{% if l.posting_type %} <small class="muted">&middot; {{ l.posting_type }}</small>{% endif %}</td>
-            <td class="muted">{{ l.description }}</td>
-            <td><code class="muted" style="font-size:.85em;">{{ l.transaction_id }}</code></td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
+    <h2>First {{ preview.sample_groups|length }} journal entr{% if preview.sample_groups|length != 1 %}ies{% else %}y{% endif %} we&rsquo;ll send</h2>
+    <p class="muted" style="max-width:64ch;">
+      Each card below is one complete journal entry &mdash; all the lines
+      that belong together, grouped by their PCLaw reference, with their
+      own debits and credits totalled for you. No more cross-checking a
+      spreadsheet to see which lines go with which entry.
+    </p>
+
+    {% for g in preview.sample_groups %}
+    <article class="card card--inset" data-testid="sample-group-{{ loop.index0 }}"
+             style="margin-top:var(--space-4);padding:var(--space-4);">
+      <div class="flex-between" style="gap:var(--space-3);flex-wrap:wrap;align-items:flex-start;">
+        <div style="min-width:0;">
+          <p class="eyebrow" style="margin:0;">
+            {% if g.date %}{{ g.date }} &middot; {% endif %}Reference
+            <code style="font-size:.85em;">{{ g.reference }}</code>
+            {% if g.source_journal_token %}
+              <span class="badge" data-testid="sample-group-token-{{ loop.index0 }}"
+                    title="Grouped with other rows sharing this source-journal tag">
+                {{ g.source_journal_token }} batch
+              </span>
+            {% endif %}
+          </p>
+          {% if g.description %}
+            <h3 style="margin:var(--space-1) 0 0;">{{ g.description }}</h3>
+          {% endif %}
+        </div>
+        <div style="text-align:right;white-space:nowrap;">
+          {% if g.balanced %}
+            <span class="badge success" data-testid="sample-group-balanced-{{ loop.index0 }}">Balanced</span>
+          {% else %}
+            <span class="badge error" data-testid="sample-group-unbalanced-{{ loop.index0 }}">Doesn&rsquo;t balance</span>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="table-wrap" style="margin-top:var(--space-3);">
+        <table>
+          <thead>
+            <tr><th>Account</th><th>Type</th><th>Amount</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            {% for l in g.lines %}
+            <tr>
+              <td>{{ l.account }}</td>
+              <td>{{ l.posting_type }}</td>
+              <td>${{ l.amount }}</td>
+              <td class="muted">{{ l.description }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td colspan="2" style="text-align:right;font-weight:600;">Entry totals</td>
+              <td style="font-weight:600;">
+                Dr ${{ g.debits }} &middot; Cr ${{ g.credits }}
+              </td>
+              <td class="muted">{{ g.line_count }} line{% if g.line_count != 1 %}s{% endif %}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      {% if g.blocked_reasons %}
+      <p class="muted" data-testid="sample-group-blocked-{{ loop.index0 }}"
+         style="margin:var(--space-2) 0 0;font-size:.85rem;color:var(--error);">
+        Needs a fix before sending: {{ g.blocked_reasons|join('; ') }}.
+      </p>
+      {% endif %}
+    </article>
+    {% endfor %}
+
+    {# Operators who want the original flat, line-by-line view (e.g. to
+       paste into a spreadsheet) still have it, tucked away so the default
+       customer view stays clean. #}
+    {% if preview.sample_lines %}
+    <details class="quiet" style="margin-top:var(--space-4);"
+             data-testid="sample-lines-flat">
+      <summary>Show these as a flat line list (for support)</summary>
+      <div class="table-wrap" style="margin-top:var(--space-3);">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th><th>Account</th>
+              <th>Amount</th><th>Description</th>
+              <th>Transaction reference</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for l in preview.sample_lines %}
+            <tr>
+              <td>{{ l.date }}</td>
+              <td>{{ l.account }}{% if l.qbo_acct_num %} <small class="muted">&middot; #{{ l.qbo_acct_num }}</small>{% endif %}</td>
+              <td>${{ l.amount }}{% if l.posting_type %} <small class="muted">&middot; {{ l.posting_type }}</small>{% endif %}</td>
+              <td class="muted">{{ l.description }}</td>
+              <td><code class="muted" style="font-size:.85em;">{{ l.transaction_id }}</code></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+    {% endif %}
   </section>
   {% endif %}
 

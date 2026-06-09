@@ -1538,8 +1538,19 @@ def dashboard():
     current = customer_workflow.current_stage(stages)
     upload_ready = customer_workflow.upload_stage_ready_to_advance(checklist_items)
     upload_missing = customer_workflow.upload_stage_missing_reports(checklist_items)
+    # When a customer clicks "Back to Step 2: Upload reports" from the
+    # Match-accounts screen, the workflow has already rolled forward to a
+    # later stage, so the dashboard would otherwise render the busy
+    # post-Step-2 view (workspace card, recent migrations, activity). That
+    # is the "confusing dashboard state" from the June 5 meeting (item 3).
+    # ``?step=upload`` is an explicit request to see the clean, single-action
+    # upload view regardless of how far the workflow has progressed.
+    at_upload_stage = bool(current and current.key == customer_workflow.STAGE_UPLOAD)
+    if request.args.get("step") == "upload":
+        at_upload_stage = True
     return render_template(
         "dashboard.html",
+        at_upload_stage=at_upload_stage,
         firm_jobs=firm_jobs,
         qbo_configured=QBO_CLIENT_ID != "your-client-id-here",
         recent_audit=db.recent_audit_for_firm(user["firm_id"], limit=10),
@@ -3384,6 +3395,144 @@ def _extract_pclaw_accounts_from_gl_rows(gl_rows):
     return list(seen.values())
 
 
+def _gl_preflight_blockers(preflight: dict) -> list[str]:
+    """Return plain-English, customer-facing reasons a GL upload cannot
+    proceed to import yet. Empty list means the file is usable.
+
+    A *blocker* is something that genuinely stops the migration: the file
+    is in the wrong shape, has no transactions, doesn't balance, or has
+    rows QuickBooks would reject. These are distinct from informational
+    notes (e.g. "we skipped 3 blank trailing rows") that don't block the
+    user and should never be flashed as a red error.
+
+    Each reason names what is affected and what to do next, so the flash /
+    job page reads as guidance rather than an opaque "uploaded with
+    warnings" string (Cutovr June 5 meeting, item 2).
+    """
+    pf = preflight or {}
+    reasons: list[str] = []
+    missing = pf.get("missing_required_columns") or []
+    if missing:
+        reasons.append(
+            "Your general ledger is missing these columns: "
+            + ", ".join(missing)
+            + ". Re-export from PCLaw using the sample template so every "
+            "required column is present."
+        )
+    if pf.get("line_count", 0) == 0:
+        reasons.append(
+            "We didn't find any transactions in this file. Check that you "
+            "uploaded the general-ledger export (not an empty file)."
+        )
+    elif not pf.get("balanced", False):
+        reasons.append(
+            "The debits and credits in this file don't add up to the same "
+            "total. Re-export the general ledger for a closed period so it "
+            "balances, then upload again."
+        )
+    if pf.get("rows_missing_account", 0):
+        reasons.append(
+            f"{pf['rows_missing_account']} row(s) are missing an account. "
+            "Open the validation report to see which rows, add the account "
+            "in your CSV, and upload again."
+        )
+    if pf.get("rows_missing_date", 0) or pf.get("rows_unparseable_date", 0):
+        n = (pf.get("rows_missing_date", 0) or 0) + (
+            pf.get("rows_unparseable_date", 0) or 0
+        )
+        reasons.append(
+            f"{n} row(s) are missing a usable date. Make sure every row has "
+            "a date your software can read (YYYY-MM-DD works well)."
+        )
+    if pf.get("beginning_balance_row_count", 0):
+        reasons.append(
+            f"{pf['beginning_balance_row_count']} row(s) look like beginning "
+            "balances. Those belong on the Starting Balances upload, not the "
+            "general ledger — remove them here and add them there."
+        )
+    return reasons
+
+
+def _gl_preflight_notes(preflight: dict) -> list[str]:
+    """Return non-blocking, FYI notes about a GL upload.
+
+    These never make the upload an error — they're shown calmly so the
+    user isn't alarmed by routine cleanup the parser did for them.
+    """
+    pf = preflight or {}
+    notes: list[str] = []
+    skipped = pf.get("blank_rows_skipped", 0)
+    if skipped:
+        notes.append(
+            f"We ignored {skipped} blank row(s) at the end of the file — "
+            "nothing you need to do."
+        )
+    return notes
+
+
+def _coa_preflight_note(preflight: dict) -> str:
+    """Plain-English note for a Chart of Accounts upload that parsed but
+    has something worth a glance. Validation-only — never blocks."""
+    pf = preflight or {}
+    parts: list[str] = []
+    missing = pf.get("missing_required_columns") or []
+    if missing:
+        parts.append("missing columns: " + ", ".join(missing))
+    if pf.get("rows_missing_name", 0):
+        parts.append(f"{pf['rows_missing_name']} row(s) without an account name")
+    dups = pf.get("duplicate_account_numbers") or []
+    if dups:
+        parts.append(f"{len(dups)} duplicate account number(s)")
+    if not parts:
+        return ""
+    return (
+        "One thing to glance at before you create accounts: "
+        + "; ".join(parts)
+        + ". You can fix this now or after connecting QuickBooks."
+    )
+
+
+def _tb_preflight_note(preflight: dict) -> str:
+    """Plain-English note for a Trial Balance upload. Validation-only."""
+    pf = preflight or {}
+    parts: list[str] = []
+    if pf.get("missing_required_columns"):
+        parts.append("missing columns: " + ", ".join(pf["missing_required_columns"]))
+    if not pf.get("balanced", False) and pf.get("account_count", 0):
+        parts.append(
+            "debits and credits don't match (off by "
+            f"${pf.get('out_of_balance_amount', '0.00')})"
+        )
+    if pf.get("rows_missing_account", 0):
+        parts.append(f"{pf['rows_missing_account']} row(s) without an account")
+    if not parts:
+        return ""
+    return (
+        "Worth a look when you reconcile: " + "; ".join(parts) + "."
+    )
+
+
+def _trust_preflight_note(preflight: dict) -> str:
+    """Plain-English note for a Trust Listing upload. Validation-only."""
+    pf = preflight or {}
+    parts: list[str] = []
+    if pf.get("missing_required_columns"):
+        parts.append("missing columns: " + ", ".join(pf["missing_required_columns"]))
+    if pf.get("rows_missing_identifier", 0):
+        parts.append(
+            f"{pf['rows_missing_identifier']} row(s) without a client or matter"
+        )
+    if pf.get("negative_balance_count", 0):
+        parts.append(
+            f"{pf['negative_balance_count']} client(s) with a negative balance"
+        )
+    if not parts:
+        return ""
+    return (
+        "Worth a look when you reconcile trust: " + "; ".join(parts) + "."
+    )
+
+
 def _process_uploaded_csv(
     file_storage,
     company: str,
@@ -3527,18 +3676,44 @@ def _process_uploaded_csv(
             # decrypt_file call). Stored as a list of plain dicts so it
             # round-trips through JSON without surprises.
             jobs[job_id]["gl_rows"] = _gl_rows_for_snapshot(_gl_rows)
-            if preflight["ready"]:
+            # Distinguish a genuine blocker (wrong shape, no transactions,
+            # unbalanced, rows QuickBooks would reject) from a clean upload
+            # that merely has a non-blocking note. The old code flashed a
+            # red "uploaded with warnings" error for *both*, which is the
+            # "succeeded but still shows errors" confusion from the
+            # June 5 meeting (item 2). The file is always saved; only a
+            # true blocker is surfaced as an error.
+            gl_blockers = _gl_preflight_blockers(preflight)
+            gl_notes = _gl_preflight_notes(preflight)
+            if not gl_blockers:
+                jobs[job_id]["status"] = "Ready for QuickBooks connection"
                 message = (
-                    "PCLaw GL file accepted. Review the preflight checklist, "
-                    "then connect QuickBooks to continue."
+                    "Transaction history uploaded. Next, connect QuickBooks "
+                    "and match your accounts."
                 )
+                if gl_notes:
+                    message += " " + " ".join(gl_notes)
                 category = "success"
             else:
-                message = (
-                    "PCLaw GL file uploaded with warnings. Review the "
-                    "preflight checklist on the job page before connecting "
-                    "QuickBooks."
-                )
+                jobs[job_id]["status"] = "General ledger needs a quick fix"
+                # Lead with a calm, plain-English summary, then list exactly
+                # what needs attention so the user has a concrete next step
+                # instead of a vague "review the preflight checklist".
+                if len(gl_blockers) == 1:
+                    message = (
+                        "Your transaction history uploaded, but one thing "
+                        "needs a fix before we can send it to QuickBooks: "
+                        + gl_blockers[0]
+                    )
+                else:
+                    message = (
+                        "Your transaction history uploaded, but a few things "
+                        "need a fix before we can send it to QuickBooks: "
+                        + " ".join(
+                            f"({i}) {b}"
+                            for i, b in enumerate(gl_blockers, start=1)
+                        )
+                    )
                 category = "error"
         elif effective_report_type == REPORT_CHART_OF_ACCOUNTS:
             coa_rows, _fn, missing = parse_chart_of_accounts(temp_path)
@@ -3556,11 +3731,18 @@ def _process_uploaded_csv(
             jobs[job_id]["preflight"] = preflight
             jobs[job_id]["parsed_coa"] = coa_rows
             message = (
-                "Chart of Accounts file accepted. Connect QuickBooks to "
+                "Account list uploaded. Connect QuickBooks to "
                 "see which accounts already exist and which would be "
                 "created. Nothing is written to QuickBooks until you confirm."
             )
-            category = "success" if preflight["ready"] else "error"
+            if not preflight["ready"]:
+                # The file is saved and usable for preview; this is a note,
+                # not a failure. Name what to look at without sounding the
+                # alarm (June 5 meeting, item 2).
+                coa_note = _coa_preflight_note(preflight)
+                if coa_note:
+                    message += " " + coa_note
+            category = "success"
         elif effective_report_type == REPORT_TRIAL_BALANCE:
             tb_rows, _fn, missing = parse_trial_balance(temp_path)
             preflight = build_trial_balance_preflight(tb_rows, _fn, missing)
@@ -3578,11 +3760,14 @@ def _process_uploaded_csv(
             jobs[job_id]["preflight"] = preflight
             jobs[job_id]["parsed_trial_balance"] = tb_rows
             message = (
-                "Trial Balance accepted. This report is parsed for "
-                "validation and reconciliation only — no QuickBooks "
-                "writes are performed for Trial Balance uploads."
+                "Starting/final balances uploaded. We use this report to "
+                "check your books — nothing is posted to QuickBooks from it."
             )
-            category = "success" if preflight["ready"] else "error"
+            if not preflight["ready"]:
+                tb_note = _tb_preflight_note(preflight)
+                if tb_note:
+                    message += " " + tb_note
+            category = "success"
         elif effective_report_type == REPORT_TRUST_LISTING:
             trust_rows, _fn, missing = parse_trust_listing(temp_path)
             preflight = build_trust_listing_preflight(trust_rows, _fn, missing)
@@ -3599,11 +3784,14 @@ def _process_uploaded_csv(
             jobs[job_id]["preflight"] = preflight
             jobs[job_id]["parsed_trust_listing"] = trust_rows
             message = (
-                "Trust Listing accepted. This report is parsed for "
-                "validation and reconciliation only — no QuickBooks "
-                "writes are performed for Trust Listing uploads."
+                "Client trust balances uploaded. We use this report to "
+                "check your books — nothing is posted to QuickBooks from it."
             )
-            category = "success" if preflight["ready"] else "error"
+            if not preflight["ready"]:
+                trust_note = _trust_preflight_note(preflight)
+                if trust_note:
+                    message += " " + trust_note
+            category = "success"
         else:
             rows = parse_pclaw_csv(temp_path)
             out_path = OUTPUT_DIR / f"{fs_prefix}_qbo_import.csv"
@@ -7705,6 +7893,31 @@ def _build_account_mapping_rows(
         )
         creatable = bool(inferred and inferred.get("decision") in ("ok", "warn"))
         needs_category = bool(inferred and inferred.get("decision") == "blocked")
+        # Plain-English reason a row isn't matched yet, plus the next
+        # action — so a lawyer reading the Match-accounts table never sees
+        # a bare "Unmatched" badge with no explanation (June 5 meeting,
+        # item 4). Matched / saved / system rows get no reason.
+        unmatched_reason = ""
+        if not is_system_calc and not saved and not suggestion:
+            if needs_category:
+                unmatched_reason = (
+                    "We couldn't tell what kind of account this is, so "
+                    "QuickBooks can't create it automatically. Pick the "
+                    "account type below, or choose an existing QuickBooks "
+                    "account from the list."
+                )
+            elif creatable:
+                unmatched_reason = (
+                    "No QuickBooks account has this name or number yet. "
+                    "Click “Add to QuickBooks” to create it, or pick "
+                    "an existing account from the list."
+                )
+            else:
+                unmatched_reason = (
+                    "We didn't find a QuickBooks account with this name or "
+                    "number. Choose the matching account from the list, or "
+                    "add it to QuickBooks."
+                )
         rows.append({
             "idx": idx,
             "pclaw_number": pa.get("number"),
@@ -7719,6 +7932,7 @@ def _build_account_mapping_rows(
             "needs_category": needs_category,
             "has_category_override": has_override,
             "inferred_type_label": (inferred or {}).get("account_type_label"),
+            "unmatched_reason": unmatched_reason,
         })
         if is_system_calc:
             # Treat as "handled" — do not flag as unmatched in the count.

@@ -93,8 +93,8 @@
   {% endif %}
 
   <div class="actions-row" style="margin-top:var(--space-5);justify-content:space-between;">
-    <a class="btn btn-link" href="{{ url_for('dashboard') }}">&larr; Back to Step 2: Upload reports</a>
-    <a class="btn btn-primary" href="{{ url_for('dashboard') }}#intake" data-testid="uploaded-reports-add-another">
+    <a class="btn btn-link" href="{{ url_for('dashboard') }}?step=upload#intake">&larr; Back to upload</a>
+    <a class="btn btn-primary" href="{{ url_for('dashboard') }}?step=upload#intake" data-testid="uploaded-reports-add-another">
       Add another report
     </a>
   </div>

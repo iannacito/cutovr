@@ -201,6 +201,63 @@ def build_dry_run_preview(
     mapped_count = sum(1 for v in unique_accounts.values() if v["mapped"])
     unmapped_count = sum(1 for v in unique_accounts.values() if not v["mapped"])
 
+    # Group the review sample by transaction so the customer sees each
+    # journal entry as a self-contained block (its lines, its own debit/
+    # credit totals, whether it balances) instead of a flat list of rows
+    # they'd have to VLOOKUP back together (June 5 meeting, item 5). Each
+    # group keeps the full per-line detail an operator needs, but the
+    # template can render a clean "one entry, these lines" card. We sample
+    # the first ``sample_limit`` transactions in source order; a token
+    # links the group to its merged source-journal batch when it has one.
+    token_by_txn: dict[str, str] = {}
+    for g in (posting_plan.get("merged_groups") or []):
+        for tid in g.get("transaction_ids") or []:
+            token_by_txn[tid] = g.get("token")
+    blocked_by_txn = {b["transaction_id"]: b for b in blocked_transactions}
+    sample_groups: list[dict] = []
+    for txn_id, txn_rows in grouped.items():
+        if len(sample_groups) >= sample_limit:
+            break
+        g_debits = sum(money(r["debit"]) for r in txn_rows)
+        g_credits = sum(money(r["credit"]) for r in txn_rows)
+        # First non-empty description represents the entry; lawyers
+        # recognise an entry by its memo, not its internal id.
+        g_desc = ""
+        for r in txn_rows:
+            if (r.get("description") or "").strip():
+                g_desc = (r.get("description") or "").strip()[:120]
+                break
+        g_date = next((r.get("date") for r in txn_rows if r.get("date")), None)
+        lines = [
+            {
+                "date": r.get("date"),
+                "account": (
+                    f"{(r.get('account_number') or '').strip()} "
+                    f"{(r.get('account_name') or '').strip()}"
+                ).strip() or "(blank)",
+                "posting_type": "Debit" if money(r["debit"]) else (
+                    "Credit" if money(r["credit"]) else ""
+                ),
+                "amount": _dollar(money(r["debit"]) or money(r["credit"])),
+                "description": (r.get("description") or "")[:120],
+            }
+            for r in txn_rows
+            if money(r["debit"]) or money(r["credit"])
+        ]
+        sample_groups.append({
+            "transaction_id": txn_id,
+            "reference": txn_id,
+            "source_journal_token": token_by_txn.get(txn_id),
+            "date": g_date,
+            "description": g_desc,
+            "line_count": len(lines),
+            "debits": _dollar(g_debits),
+            "credits": _dollar(g_credits),
+            "balanced": g_debits == g_credits,
+            "blocked_reasons": (blocked_by_txn.get(txn_id) or {}).get("reasons", []),
+            "lines": lines,
+        })
+
     merged_groups_public = [
         {
             "group_id": g["group_id"],
@@ -254,6 +311,7 @@ def build_dry_run_preview(
         "beginning_balance_rows": [r.to_dict() for r in quality.beginning_balance_rows],
         "row_quality_counts": quality.counts_by_kind(),
         "sample_lines": sample_lines,
+        "sample_groups": sample_groups,
         "missing_required_columns": [
             c for c in GL_REQUIRED_COLUMNS
             if not rows or c not in (rows[0].keys() if rows else [])
