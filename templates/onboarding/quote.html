@@ -1,0 +1,45 @@
+{% extends "_base.html" %}
+{% block title %}We'll prepare your quote &mdash; {{ app_name }}{% endblock %}
+{% block meta_description %}Your {{ app_name }} quote request has been received. Our team will follow up with a tailored quote for your migration.{% endblock %}
+{% block content %}
+<section class="page">
+  <div class="stack">
+
+    {% include "onboarding/_steps_progress.html" %}
+
+    <header class="stack-sm" style="max-width:46rem;">
+      <p class="eyebrow">Quote requested</p>
+      <h1 class="display" data-testid="onboarding-quote-header">We'll prepare your quote</h1>
+      <p class="lede" style="font-size:1.2rem;" data-testid="onboarding-quote-summary">
+        Thanks{% if firm_name %}, {{ firm_name }}{% endif %} &mdash; we've received your
+        request. Because you're bringing across three or more years of history,
+        we put together a tailored quote rather than a fixed price.
+      </p>
+    </header>
+
+    <article class="card" data-testid="onboarding-quote-next">
+      <p class="eyebrow" style="margin:0 0 .5rem;">What happens next</p>
+      <ol style="margin:0;padding-left:1.2rem;line-height:1.8;font-size:1.02rem;">
+        <li>Our team reviews how much history you're moving and your firm's needs.</li>
+        <li>We email you a clear, tailored quote &mdash; no surprises.</li>
+        <li>Once you're happy, we send you a secure payment link.</li>
+        <li>After payment, we tell you exactly which reports to export and you upload them.</li>
+        {% if clio_migration_date %}
+        <li>We schedule your migration around your Clio migration date: {{ clio_migration_date }}.</li>
+        {% endif %}
+      </ol>
+      <p class="note" style="margin:1rem 0 0;">
+        You haven't been charged anything. Nothing happens until you approve the quote.
+      </p>
+    </article>
+
+    <article class="card card--quiet" data-testid="onboarding-quote-support">
+      <p style="margin:0;">
+        Have a question in the meantime? Email <a href="{{ url_for('support') }}">our team</a>{% if contact_email %}
+        &mdash; we'll reach you at {{ contact_email }}{% endif %}.
+      </p>
+    </article>
+
+  </div>
+</section>
+{% endblock %}

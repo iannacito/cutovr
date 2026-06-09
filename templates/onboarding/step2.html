@@ -59,11 +59,15 @@
         <p class="eyebrow" style="margin:0 0 .35rem;">Pay securely</p>
         <h2 style="margin:0;font-size:1.3rem;">{{ payment_heading }}</h2>
         <p class="muted" style="margin:.5rem 0 1rem;" data-testid="onboarding-payment-copy">
-          {% if stripe_enabled %}
-          Submit your details below to continue to secure card payment, handled by Stripe.
+          {% if plan and plan.quote %}
+          This plan is quote-based. Submit your details and our team will
+          prepare a tailored quote &mdash; no payment is taken now.
+          {% elif stripe_enabled %}
+          When you continue, we'll take you to Stripe's secure checkout to
+          complete payment. We never see or store your card details.
           {% else %}
-          Secure card payment will be handled by Stripe once it's connected. This
-          is a preview &mdash; no card details are collected and nothing is charged.
+          Secure card payment is handled by Stripe. It isn't connected in this
+          environment, so no card details are collected and nothing is charged.
           {% endif %}
         </p>
         <p class="note" style="margin:.2rem 0 0;font-weight:600;"
@@ -79,7 +83,7 @@
         <a class="btn btn-secondary btn-lg" href="{{ url_for('onboarding_step1') }}">Back</a>
         <button type="submit" class="btn btn-primary btn-lg"
                 data-testid="onboarding-step2-continue">
-          {% if stripe_enabled %}Continue to secure payment{% else %}Continue{% endif %}
+          {% if plan and plan.quote %}Request my quote{% elif stripe_enabled %}Continue to secure payment{% else %}Continue{% endif %}
         </button>
       </div>
     </form>
