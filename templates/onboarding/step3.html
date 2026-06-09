@@ -1,0 +1,81 @@
+{% extends "_base.html" %}
+{% block title %}Upload the reports we need &mdash; {{ app_name }}{% endblock %}
+{% block meta_description %}Step 3 of your {{ app_name }} onboarding: the reports to export from PCLaw and where to upload them.{% endblock %}
+{% block content %}
+<section class="page">
+  <div class="stack">
+
+    {% include "onboarding/_steps_progress.html" %}
+
+    <header class="stack-sm" style="max-width:46rem;">
+      <p class="eyebrow">
+        {% if stripe_enabled %}Payment received{% else %}Payment pending &mdash; preview{% endif %}
+      </p>
+      <h1 class="display" data-testid="onboarding-step3-header">Upload the reports we need</h1>
+      <p class="lede" style="font-size:1.2rem;">
+        Now that your details are in, here are the reports to export from PCLaw
+        for your plan. Upload whatever you have &mdash; we'll tell you if
+        anything is missing.
+      </p>
+      {% if not stripe_enabled %}
+      <p class="note" data-testid="onboarding-step3-pending">
+        This is a preview &mdash; payment isn't connected yet, so nothing has
+        been charged. The reports below are what we'd ask for once payment is complete.
+      </p>
+      {% endif %}
+    </header>
+
+    <article class="card" data-testid="onboarding-reports">
+      <p class="eyebrow" style="margin:0 0 .5rem;">Reports we need</p>
+      <ul style="margin:0;padding-left:1.2rem;line-height:1.7;font-size:1.02rem;">
+        {% for r in reports %}
+        <li style="margin-bottom:.6rem;">
+          <strong>{{ r.title }}</strong>{% if r.when %} <span class="muted">&mdash; {{ r.when }}</span>{% endif %}
+          {% if r.add_on %}<span class="eyebrow" style="margin-left:.4rem;">add-on</span>{% endif %}
+          <br>
+          <span class="muted">{{ r.note }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </article>
+
+    <article class="card card--inset" data-testid="onboarding-upload">
+      <p style="margin:0;font-weight:600;">Upload your reports</p>
+      <p class="muted" style="margin:.4rem 0 .75rem;">
+        Drag your PCLaw exports in, or choose files. We'll tell you if anything
+        is missing.
+      </p>
+      <div class="dropzone" aria-disabled="true"
+           data-testid="onboarding-dropzone"
+           style="border:2px dashed var(--line);border-radius:.6rem;padding:1.5rem;text-align:center;color:var(--muted,#777);background:var(--surface,#f7f7f5);">
+        Drop files here (preview &mdash; uploads aren't connected yet)
+      </div>
+    </article>
+
+    <article class="card card--inset" data-testid="onboarding-secure-access">
+      <p style="margin:0;font-weight:600;">Trust ledger &amp; secure access</p>
+      <p class="muted" style="margin:.4rem 0 0;">{{ secure_access_note }}</p>
+    </article>
+
+    {% if resource_links %}
+    <aside class="card card--quiet" data-testid="onboarding-resources">
+      <p class="eyebrow" style="margin:0 0 .5rem;">Helpful guides</p>
+      <ul style="margin:0;padding-left:1.2rem;line-height:1.9;font-size:.95rem;">
+        {% for link in resource_links %}
+        <li><a href="{{ url_for(link.endpoint) }}" class="muted">{{ link.label }}</a></li>
+        {% endfor %}
+      </ul>
+    </aside>
+    {% endif %}
+
+    <form method="post" action="{{ url_for('onboarding_step3') }}"
+          style="display:flex;gap:.75rem;flex-wrap:wrap;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <a class="btn btn-secondary btn-lg" href="{{ url_for('onboarding_step2') }}">Back</a>
+      <button type="submit" class="btn btn-primary btn-lg"
+              data-testid="onboarding-step3-continue">Continue</button>
+    </form>
+
+  </div>
+</section>
+{% endblock %}
