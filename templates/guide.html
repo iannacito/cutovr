@@ -1,0 +1,32 @@
+{% extends "_base.html" %}
+{% block title %}{{ guide.title }} &mdash; {{ app_name }}{% endblock %}
+{% block meta_description %}{{ guide.intro }}{% endblock %}
+{% block content %}
+<section class="page page--prose">
+  <header class="hero">
+    <p class="eyebrow">Guide</p>
+    <h1 class="display">{{ guide.title }}</h1>
+    <p class="lede">{{ guide.intro }}</p>
+  </header>
+
+  <div class="stack" style="margin-top:var(--space-8);max-width:44rem;">
+    {% for s in guide.sections %}
+    <article class="card" data-testid="guide-section">
+      <h2 style="margin:0 0 .5rem;font-size:1.2rem;">{{ s.heading }}</h2>
+      <p class="muted" style="margin:0;">{{ s.body }}</p>
+      {% if s.points %}
+      <ul style="margin:.75rem 0 0;padding-left:1.2rem;line-height:1.7;">
+        {% for point in s.points %}
+        <li>{{ point }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+
+  <div class="stack-sm" style="margin-top:var(--space-8);">
+    <a class="btn btn-secondary" href="{{ url_for('onboarding_preview_page') }}">&larr; Back to onboarding</a>
+  </div>
+</section>
+{% endblock %}

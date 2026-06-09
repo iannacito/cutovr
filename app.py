@@ -2857,17 +2857,51 @@ def onboarding_preview_page():
         end_date="2026-03-31",
         include_trust_ledger=False,
     )
+    # Stripe state controls the payment CTA wording. We never render card
+    # fields here — when Stripe isn't configured the CTA shows a safe
+    # "checkout will open here once payment is connected" pending state.
+    stripe_enabled = stripe_checkout.stripe_enabled()
     return render_template(
         "onboarding-preview.html",
         header=onboarding_preview.PREVIEW_HEADER,
         subcopy=onboarding_preview.PREVIEW_SUBCOPY,
         semi_managed_note=onboarding_preview.SEMI_MANAGED_NOTE,
         sections=onboarding_preview.PREVIEW_SECTIONS,
+        plan_cards=onboarding_preview.PLAN_CARDS,
+        pricing_basis_note=onboarding_preview.PRICING_BASIS_NOTE,
         reports=onboarding_preview.REPORTS_CHECKLIST,
         what_happens_next=onboarding_preview.WHAT_HAPPENS_NEXT,
         secure_access_note=onboarding_preview.SECURE_ACCESS_NOTE,
         resource_links=onboarding_preview.RESOURCE_LINKS,
         sample_email=sample_email,
+        stripe_enabled=stripe_enabled,
+    )
+
+
+# Customer-facing, app-hosted instruction guides. These replace the internal
+# Google Drive links that used to appear on the onboarding preview. Content is
+# static, plain-English, and read-only (see onboarding_preview.GUIDES).
+# Reachable from the preview's "Helpful guides" section; intentionally not
+# added to global nav. Each route is named so url_for() can build the link.
+
+@app.route("/guides/pclaw-general-ledger-export")
+def guide_pclaw_general_ledger_export():
+    return render_template(
+        "guide.html", guide=onboarding_preview.GUIDE_PCLAW_GL_EXPORT
+    )
+
+
+@app.route("/guides/reports-needed")
+def guide_reports_needed():
+    return render_template(
+        "guide.html", guide=onboarding_preview.GUIDE_REPORTS_NEEDED
+    )
+
+
+@app.route("/guides/clio-quickbooks-overview")
+def guide_clio_quickbooks_overview():
+    return render_template(
+        "guide.html", guide=onboarding_preview.GUIDE_CLIO_QUICKBOOKS_OVERVIEW
     )
 
 
