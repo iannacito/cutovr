@@ -130,16 +130,16 @@ def t3_checkout_graceful_when_stripe_not_configured():
         "checkout forms should not render when Stripe is not configured"
     )
     # CTAs still work — when Stripe is unconfigured they route into the
-    # plan-specific intake/purchase flow rather than dead-ending. The intake
-    # view is registered at both /intake and /onboarding/start; url_for picks
-    # the canonical /onboarding/start, with the plan preselected via ?plan=.
-    # Essential + Standard route into the purchase/intake flow. Complete is
-    # quote-based and keeps its dedicated quote-request CTA (checked in T6).
+    # page-by-page onboarding flow (Step 1, the package-selection page) rather
+    # than dead-ending, with the plan preselected via ?plan=. Essential +
+    # Standard route into onboarding. Complete is quote-based and keeps its
+    # dedicated quote-request CTA (checked in T6).
     assert "plan=essential" in body and "plan=standard" in body, body[:600]
     for slug in ("essential", "standard"):
-        assert (f'/intake?plan={slug}' in body
-                or f'/onboarding/start?plan={slug}' in body), \
-            f"pricing CTA for {slug} must route into intake flow"
+        assert f'/onboarding/step-1?plan={slug}' in body, \
+            f"pricing CTA for {slug} must route into onboarding Step 1"
+    # The old create-account/intake workflow is no longer the Get Started path.
+    assert "/onboarding/start?plan=" not in body
     assert "Get started with Essential" in body
     assert "Get started with Standard" in body
 

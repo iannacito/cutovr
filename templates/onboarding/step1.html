@@ -1,0 +1,64 @@
+{% extends "_base.html" %}
+{% block title %}Choose your package &mdash; {{ app_name }}{% endblock %}
+{% block meta_description %}Step 1 of your {{ app_name }} onboarding: choose how much history to move from PCLaw into QuickBooks.{% endblock %}
+{% block content %}
+<section class="page">
+  <div class="stack">
+
+    {% include "onboarding/_steps_progress.html" %}
+
+    <header class="stack-sm" style="max-width:46rem;">
+      <p class="eyebrow">Start your {{ app_name }} onboarding</p>
+      <h1 class="display" data-testid="onboarding-step1-header">Choose how much history to move</h1>
+      <p class="lede" style="font-size:1.2rem;">
+        Pick the plan that fits how far back you want us to go. Your price
+        depends on how much history we move into QuickBooks &mdash; not the
+        size of your firm.
+      </p>
+    </header>
+
+    <article class="card card--inset" data-testid="onboarding-semi-managed">
+      <p style="margin:0;">{{ semi_managed_note }}</p>
+    </article>
+
+    <form method="post" action="{{ url_for('onboarding_step1_submit') }}"
+          data-testid="onboarding-step1-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <div class="pricing-tiers" data-testid="onboarding-plans" id="plan-cards">
+        {% for plan in plan_cards %}
+        <article class="pricing-tier{% if plan.featured %} pricing-tier--featured{% endif %}{% if plan.quote %} pricing-tier--quote{% endif %}{% if plan.key == selected_package %} is-selected{% endif %}"
+                 data-plan="{{ plan.key }}"
+                 data-plan-name="{{ plan.name }}"
+                 data-quote="{{ '1' if plan.quote else '0' }}"
+                 data-testid="onboarding-plan-{{ plan.key }}">
+          {% if plan.featured %}<p class="pricing-tier__badge">Most common</p>{% endif %}
+          <header class="pricing-tier__head">
+            <p class="pricing-tier__eyebrow">{{ plan.name }}</p>
+            <h2 class="pricing-tier__name">{{ plan.period }}</h2>
+            <p class="pricing-tier__price">
+              <span class="pricing-tier__amount{% if plan.quote %} pricing-tier__amount--quote{% endif %}"
+                    data-testid="onboarding-plan-price-{{ plan.key }}">{{ plan.price }}</span>
+            </p>
+            <p class="pricing-tier__sub">{{ plan.summary }}</p>
+          </header>
+          <ul class="pricing-tier__list">
+            {% for line in plan.covers %}
+            <li>{{ line }}</li>
+            {% endfor %}
+          </ul>
+          <button type="submit" name="package" value="{{ plan.key }}"
+                  class="btn {% if plan.featured %}btn-primary{% else %}btn-secondary{% endif %} btn-lg pricing-tier__cta"
+                  data-testid="onboarding-plan-select-{{ plan.key }}">
+            {% if plan.quote %}Request a quote{% else %}Select {{ plan.name }}{% endif %}
+          </button>
+        </article>
+        {% endfor %}
+      </div>
+    </form>
+
+    <p class="note" data-testid="onboarding-pricing-basis">{{ pricing_basis_note }}</p>
+
+  </div>
+</section>
+{% endblock %}

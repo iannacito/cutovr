@@ -1,0 +1,46 @@
+{% extends "_base.html" %}
+{% block title %}What happens next &mdash; {{ app_name }}{% endblock %}
+{% block meta_description %}Step 4 of your {{ app_name }} onboarding: what happens next and when your migration takes place.{% endblock %}
+{% block content %}
+<section class="page">
+  <div class="stack">
+
+    {% include "onboarding/_steps_progress.html" %}
+
+    <header class="stack-sm" style="max-width:46rem;">
+      <p class="eyebrow">You're all set</p>
+      <h1 class="display" data-testid="onboarding-step4-header">What happens next</h1>
+      <p class="lede" style="font-size:1.2rem;" data-testid="onboarding-confirmation-summary">
+        {{ confirmation_summary }}
+      </p>
+    </header>
+
+    <article class="card" data-testid="onboarding-next">
+      <p class="eyebrow" style="margin:0 0 .5rem;">Here's what we do from here</p>
+      <ol style="margin:0;padding-left:1.2rem;line-height:1.8;font-size:1.02rem;">
+        {% for step in what_happens_next %}
+        <li>{{ step }}</li>
+        {% endfor %}
+      </ol>
+    </article>
+
+    <article class="card card--inset" data-testid="onboarding-confirmation">
+      <p class="eyebrow" style="margin:0 0 .35rem;">We've emailed you a copy</p>
+      <p class="muted" style="margin:0 0 .6rem;">
+        We send a confirmation email that looks like this:
+      </p>
+      <pre data-testid="onboarding-confirmation-email"
+           style="white-space:pre-wrap;background:var(--surface,#f7f7f5);border:1px solid var(--line);border-radius:.5rem;padding:1rem;font-family:'JetBrains Mono',monospace;font-size:.9rem;line-height:1.6;overflow:auto;">{{ confirmation_email }}</pre>
+    </article>
+
+    <article class="card card--quiet" data-testid="onboarding-support">
+      <p style="margin:0;">
+        Need anything? Email <a href="{{ url_for('support') }}">our team</a> any
+        time. If we need more from you, we'll reach out using the contact
+        details you gave us.
+      </p>
+    </article>
+
+  </div>
+</section>
+{% endblock %}

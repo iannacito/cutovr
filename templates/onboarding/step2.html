@@ -1,0 +1,89 @@
+{% extends "_base.html" %}
+{% block title %}Tell us about your firm &mdash; {{ app_name }}{% endblock %}
+{% block meta_description %}Step 2 of your {{ app_name }} onboarding: your firm details and secure payment through Stripe.{% endblock %}
+{% block content %}
+<section class="page">
+  <div class="stack">
+
+    {% include "onboarding/_steps_progress.html" %}
+
+    <header class="stack-sm" style="max-width:46rem;">
+      <p class="eyebrow">
+        {% if plan %}Selected: {{ plan.name }} &mdash; {{ plan.price }}{% else %}Your onboarding{% endif %}
+      </p>
+      <h1 class="display" data-testid="onboarding-step2-header">Tell us about your firm</h1>
+      <p class="lede" style="font-size:1.2rem;">
+        A few simple details, your Clio migration date, and the login you'll
+        use for {{ app_name }}. Then pay securely through Stripe.
+      </p>
+    </header>
+
+    <form method="post" action="{{ url_for('onboarding_step2_submit') }}"
+          class="stack" style="gap:var(--space-5);" data-testid="onboarding-step2-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      {% for group in firm_field_groups %}
+      <fieldset style="border:1px solid var(--line);border-radius:.6rem;padding:1rem 1.1rem;margin:0;">
+        <legend class="eyebrow" style="padding:0 .4rem;">{{ group.title }}</legend>
+        <div class="form-grid" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;">
+          {% for f in firm_fields if f.group == group.key %}
+          <label class="field" style="display:flex;flex-direction:column;gap:.3rem;{% if f.type in ('date',) %}grid-column:1 / -1;{% endif %}"
+                 data-testid="onboarding-field-{{ f.key }}">
+            <span style="font-weight:600;font-size:.9rem;">{{ f.label }}</span>
+            {% if f.type == "preview-password" %}
+            {# A real Cutovr-account password (NOT a Clio credential). Required
+               to continue, but in this preview-safe flow it is not persisted
+               or hashed into a user record yet. #}
+            <input type="password" name="{{ f.key }}" required
+                   autocomplete="new-password"
+                   data-testid="onboarding-input-{{ f.key }}"
+                   style="padding:.55rem .6rem;border:1px solid var(--line);border-radius:.4rem;">
+            {% else %}
+            <input type="{{ f.type }}" name="{{ f.key }}" required
+                   value="{{ details.get(f.key, '') }}"
+                   autocomplete="{{ f.autocomplete }}"
+                   data-testid="onboarding-input-{{ f.key }}"
+                   style="padding:.55rem .6rem;border:1px solid var(--line);border-radius:.4rem;">
+            {% endif %}
+            {% if f.help %}<span class="muted" style="font-size:.8rem;">{{ f.help }}</span>{% endif %}
+          </label>
+          {% endfor %}
+        </div>
+      </fieldset>
+      {% endfor %}
+
+      {# Payment is part of Step 2 — Stripe Checkout only. No card fields are
+         ever rendered here. When Stripe isn't configured the CTA shows a safe
+         pending state and makes clear nothing is charged. #}
+      <div class="card card--inset" data-testid="onboarding-payment">
+        <p class="eyebrow" style="margin:0 0 .35rem;">Pay securely</p>
+        <h2 style="margin:0;font-size:1.3rem;">{{ payment_heading }}</h2>
+        <p class="muted" style="margin:.5rem 0 1rem;" data-testid="onboarding-payment-copy">
+          {% if stripe_enabled %}
+          Submit your details below to continue to secure card payment, handled by Stripe.
+          {% else %}
+          Secure card payment will be handled by Stripe once it's connected. This
+          is a preview &mdash; no card details are collected and nothing is charged.
+          {% endif %}
+        </p>
+        <p class="note" style="margin:.2rem 0 0;font-weight:600;"
+           data-testid="onboarding-payment-reassurance">{{ payment_reassurance }}</p>
+      </div>
+
+      <div class="card card--inset" data-testid="onboarding-secure-access">
+        <p style="margin:0;font-weight:600;">Trust ledger &amp; secure access</p>
+        <p class="muted" style="margin:.4rem 0 0;">{{ secure_access_note }}</p>
+      </div>
+
+      <div style="display:flex;gap:.75rem;flex-wrap:wrap;">
+        <a class="btn btn-secondary btn-lg" href="{{ url_for('onboarding_step1') }}">Back</a>
+        <button type="submit" class="btn btn-primary btn-lg"
+                data-testid="onboarding-step2-continue">
+          {% if stripe_enabled %}Continue to secure payment{% else %}Continue{% endif %}
+        </button>
+      </div>
+    </form>
+
+  </div>
+</section>
+{% endblock %}

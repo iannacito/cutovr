@@ -2835,61 +2835,228 @@ def onboarding():
     return render_template("onboarding.html")
 
 
+# ---------------------------------------------------------------------------
+# Guided, page-by-page onboarding flow.
+#
+# Each step is its own page/route and the sequence is gated:
+#   /onboarding/step-1  Choose how much history to move   (pick a package)
+#   /onboarding/step-2  Tell us about your firm           (details + Stripe-ready pay)
+#   /onboarding/step-3  Upload the reports we need         (after payment)
+#   /onboarding/step-4  What happens next                  (confirmation)
+#
+# Gating uses a small server-side DRAFT stored in the Flask session — no DB
+# write and no charge yet, so the flow stays preview-safe while the gates are
+# real and testable. You can't reach Step 2 without a confirmed package, and
+# you can't reach Step 3/4 without the required Step 2 firm details.
+#
+# We deliberately avoid browser localStorage/sessionStorage for the draft.
+# ---------------------------------------------------------------------------
+
+ONBOARDING_DRAFT_KEY = "onboarding_draft"
+
+
+def _onboarding_draft():
+    """Return the current onboarding draft dict from the session.
+
+    Shape: {"package": <plan key>, "details": {<field key>: <value>, ...}}.
+    Always returns a dict so callers can read keys safely.
+    """
+    draft = session.get(ONBOARDING_DRAFT_KEY)
+    return draft if isinstance(draft, dict) else {}
+
+
+def _onboarding_has_package(draft):
+    """True when the draft holds one of the three real plans."""
+    return onboarding_preview.plan_by_key(draft.get("package")) is not None
+
+
+def _onboarding_details_complete(draft):
+    """True when all required Step 2 firm fields are present in the draft.
+
+    The raw password is never kept in the draft — Step 2 stores a
+    `password_set` flag instead. We treat the password requirement as met when
+    that flag is set, so the gate doesn't fail on the intentionally-blank
+    password value.
+    """
+    details = draft.get("details")
+    if not isinstance(details, dict):
+        return False
+    check = dict(details)
+    if check.get("password_set"):
+        check["password"] = "set"
+    return not onboarding_preview.missing_firm_fields(check)
+
+
+def _onboarding_gate(min_step):
+    """Redirect response if the draft hasn't satisfied earlier steps yet.
+
+    Returns None when the customer is allowed to view `min_step`. Otherwise it
+    flashes a clear, plain-English message and returns a redirect back to the
+    earliest step they still need to complete.
+    """
+    draft = _onboarding_draft()
+    if min_step >= 2 and not _onboarding_has_package(draft):
+        flash("Choose your package first.", "info")
+        return redirect(url_for("onboarding_step1"))
+    if min_step >= 3 and not _onboarding_details_complete(draft):
+        flash("Complete your firm details first.", "info")
+        return redirect(url_for("onboarding_step2"))
+    return None
+
+
 @app.route("/onboarding-preview")
 def onboarding_preview_page():
-    """Read-only PREVIEW of a proposed guided onboarding flow.
+    """Kept for backwards-compatible links — sends people into the live,
+    page-by-page flow at Step 1."""
+    return redirect(url_for("onboarding_step1"))
 
-    This is an internal review surface, not the live customer path. It maps
-    the latest product notes (package + dates, firm details, reports
-    checklist, add-ons, what-happens-next) into a clean example so the team
-    can see what the flow would look like in the app before it is published.
 
-    Nothing here submits, stores, or charges anything. The live intake flow
-    (/intake) is untouched. A sample copyable "reports we need" email is
-    rendered with placeholder dates so reviewers see the customer-facing copy.
-    """
-    example_clio_date = "2026-07-01"
-    sample_email = onboarding_preview.build_reports_email(
-        firm_name="Smith & Hart LLP",
-        tb_beginning_date="2024-12-31",
-        tb_ending_date="2026-03-31",
-        cutover_date="2026-03-31",
-        start_date="2025-01-01",
-        end_date="2026-03-31",
-        include_trust_ledger=False,
-    )
-    confirmation_email = onboarding_preview.build_confirmation_email(
-        firm_name="Smith & Hart LLP",
-        clio_migration_date=example_clio_date,
-        contact_email="you@yourfirm.com",
-    )
-    # Stripe state controls the payment CTA wording. We never render card
-    # fields here — when Stripe isn't configured the CTA shows a safe
-    # "checkout will open here once payment is connected" pending state.
-    stripe_enabled = stripe_checkout.stripe_enabled()
+@app.route("/onboarding/step-1", methods=["GET"])
+def onboarding_step1():
+    """Step 1 — choose how much history to move (pick a package)."""
+    draft = _onboarding_draft()
+    # Honor a ?plan= hint (e.g. from the pricing page) without committing it,
+    # so the matching card can be pre-highlighted.
+    plan_hint = onboarding_preview.plan_by_key(request.args.get("plan"))
+    selected = draft.get("package") or (plan_hint["key"] if plan_hint else "")
     return render_template(
-        "onboarding-preview.html",
-        header=onboarding_preview.PREVIEW_HEADER,
-        subcopy=onboarding_preview.PREVIEW_SUBCOPY,
-        semi_managed_note=onboarding_preview.SEMI_MANAGED_NOTE,
-        sections=onboarding_preview.PREVIEW_SECTIONS,
+        "onboarding/step1.html",
+        step=1,
+        total_steps=4,
         plan_cards=onboarding_preview.PLAN_CARDS,
         pricing_basis_note=onboarding_preview.PRICING_BASIS_NOTE,
+        semi_managed_note=onboarding_preview.SEMI_MANAGED_NOTE,
+        selected_package=selected,
+    )
+
+
+@app.route("/onboarding/step-1", methods=["POST"])
+def onboarding_step1_submit():
+    """Confirm the chosen package, then advance to Step 2."""
+    plan = onboarding_preview.plan_by_key((request.form.get("package") or "").strip())
+    if not plan:
+        flash("Choose your package first.", "info")
+        return redirect(url_for("onboarding_step1"))
+    draft = dict(_onboarding_draft())
+    draft["package"] = plan["key"]
+    session[ONBOARDING_DRAFT_KEY] = draft
+    return redirect(url_for("onboarding_step2"))
+
+
+@app.route("/onboarding/step-2", methods=["GET"])
+def onboarding_step2():
+    """Step 2 — tell us about your firm + Stripe-ready payment."""
+    gate = _onboarding_gate(2)
+    if gate:
+        return gate
+    draft = _onboarding_draft()
+    plan = onboarding_preview.plan_by_key(draft.get("package"))
+    return _render_onboarding_step2(draft.get("details") or {}, plan)
+
+
+def _render_onboarding_step2(details, plan, *, status=200):
+    return render_template(
+        "onboarding/step2.html",
+        step=2,
+        total_steps=4,
+        plan=plan,
         firm_fields=onboarding_preview.FIRM_FIELDS,
         firm_field_groups=onboarding_preview.FIRM_FIELD_GROUPS,
         payment_heading=onboarding_preview.PAYMENT_HEADING,
         payment_reassurance=onboarding_preview.PAYMENT_REASSURANCE,
-        reports=onboarding_preview.REPORTS_CHECKLIST,
-        what_happens_next=onboarding_preview.WHAT_HAPPENS_NEXT,
         secure_access_note=onboarding_preview.SECURE_ACCESS_NOTE,
-        confirmation_summary=onboarding_preview.confirmation_summary(
-            example_clio_date
-        ),
-        confirmation_email=confirmation_email,
-        example_clio_date=example_clio_date,
+        stripe_enabled=stripe_checkout.stripe_enabled(),
+        details=details,
+    ), status
+
+
+@app.route("/onboarding/step-2", methods=["POST"])
+def onboarding_step2_submit():
+    """Validate the firm details. On success store them and advance to Step 3.
+
+    Preview-safe: the details (including the chosen Cutovr password) live only
+    in the session draft. Nothing is written to the database, hashed into a
+    user record, or charged here yet — that wiring comes before go-live.
+    """
+    gate = _onboarding_gate(2)
+    if gate:
+        return gate
+    draft = dict(_onboarding_draft())
+    plan = onboarding_preview.plan_by_key(draft.get("package"))
+
+    details = {}
+    for f in onboarding_preview.FIRM_FIELDS:
+        details[f["key"]] = (request.form.get(f["key"]) or "").strip()[:200]
+
+    missing = onboarding_preview.missing_firm_fields(details)
+    if missing:
+        # Don't echo the password back into the rendered form.
+        safe = dict(details)
+        safe["password"] = ""
+        flash("Please fill in your " + ", ".join(missing).lower() + ".", "error")
+        return _render_onboarding_step2(safe, plan, status=400)
+
+    email = details.get("email", "")
+    if "@" not in email or "." not in email.split("@")[-1]:
+        safe = dict(details)
+        safe["password"] = ""
+        flash("That email address doesn't look right. Please check it.", "error")
+        return _render_onboarding_step2(safe, plan, status=400)
+
+    # Store the draft without keeping the raw password in the session beyond a
+    # boolean — we only need to know one was set to gate the next steps.
+    stored = dict(details)
+    stored["password"] = ""
+    stored["password_set"] = "1"
+    draft["details"] = stored
+    session[ONBOARDING_DRAFT_KEY] = draft
+    return redirect(url_for("onboarding_step3"))
+
+
+@app.route("/onboarding/step-3", methods=["GET", "POST"])
+def onboarding_step3():
+    """Step 3 — upload the reports we need (only after payment/details)."""
+    gate = _onboarding_gate(3)
+    if gate:
+        return gate
+    if request.method == "POST":
+        return redirect(url_for("onboarding_step4"))
+    draft = _onboarding_draft()
+    plan = onboarding_preview.plan_by_key(draft.get("package"))
+    return render_template(
+        "onboarding/step3.html",
+        step=3,
+        total_steps=4,
+        plan=plan,
+        reports=onboarding_preview.REPORTS_CHECKLIST,
+        secure_access_note=onboarding_preview.SECURE_ACCESS_NOTE,
         resource_links=onboarding_preview.RESOURCE_LINKS,
-        sample_email=sample_email,
-        stripe_enabled=stripe_enabled,
+        stripe_enabled=stripe_checkout.stripe_enabled(),
+    )
+
+
+@app.route("/onboarding/step-4", methods=["GET"])
+def onboarding_step4():
+    """Step 4 — what happens next / confirmation."""
+    gate = _onboarding_gate(3)
+    if gate:
+        return gate
+    draft = _onboarding_draft()
+    details = draft.get("details") or {}
+    clio_date = details.get("clio_migration_date") or ""
+    confirmation_email = onboarding_preview.build_confirmation_email(
+        firm_name=details.get("firm_name") or "",
+        clio_migration_date=clio_date,
+        contact_email=details.get("email") or "",
+    )
+    return render_template(
+        "onboarding/step4.html",
+        step=4,
+        total_steps=4,
+        what_happens_next=onboarding_preview.WHAT_HAPPENS_NEXT,
+        confirmation_summary=onboarding_preview.confirmation_summary(clio_date),
+        confirmation_email=confirmation_email,
+        clio_migration_date=clio_date,
     )
 
 
@@ -3080,7 +3247,6 @@ def _stage_intake_uploads(files):
 
 
 @app.route("/intake", methods=["GET"])
-@app.route("/onboarding/start", methods=["GET"])
 def intake_form():
     """Render the post-purchase onboarding intake form."""
     plan_slug = _intake_plan_from_request()
@@ -3125,7 +3291,6 @@ def _intake_form_error(message, form, plan_slug):
 
 
 @app.route("/intake", methods=["POST"])
-@app.route("/onboarding/start", methods=["POST"])
 def intake_submit():
     """Validate + persist an intake submission, then send notifications.
 

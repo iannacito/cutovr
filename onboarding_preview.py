@@ -222,6 +222,39 @@ FIRM_FIELD_GROUPS = (
     {"key": "login", "title": "Your Cutovr login"},
 )
 
+# Every field in FIRM_FIELDS is required to move on from Step 2. Keeping the
+# list derived from FIRM_FIELDS means the form, the gate, and the tests share
+# one source of truth — add a field above and it's automatically required.
+REQUIRED_FIRM_FIELD_KEYS = tuple(f["key"] for f in FIRM_FIELDS)
+
+
+def plan_by_key(key: str | None):
+    """Return the PLAN_CARDS entry for `key`, or None if it isn't a real plan.
+
+    Used by the Step 1 gate to confirm a selected package is one of the three
+    offered plans before letting the customer move on to Step 2.
+    """
+    for plan in PLAN_CARDS:
+        if plan["key"] == (key or ""):
+            return plan
+    return None
+
+
+def missing_firm_fields(details: dict | None) -> list[str]:
+    """Return the labels of any required Step 2 fields that are blank.
+
+    `details` is the submitted/draft mapping of field key -> value. A field
+    counts as provided when it has a non-empty, stripped value. The returned
+    labels are the customer-facing ones from FIRM_FIELDS so messages read
+    cleanly (e.g. "Law firm name").
+    """
+    details = details or {}
+    missing = []
+    for f in FIRM_FIELDS:
+        if not str(details.get(f["key"], "")).strip():
+            missing.append(f["label"])
+    return missing
+
 
 # ---------------------------------------------------------------------------
 # Required reports checklist
