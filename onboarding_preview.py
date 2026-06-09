@@ -24,19 +24,20 @@ from __future__ import annotations
 PREVIEW_HEADER = "Your migration, prepared for you"
 
 PREVIEW_SUBCOPY = (
-    "Choose your plan, tell us your cutover dates, and upload the reports "
-    "you have. Cutovr reviews everything and lets you know if anything is "
-    "missing."
+    "Choose how much history to move, tell us about your firm, and pay "
+    "securely. Only then do we tell you exactly which reports we need — and "
+    "we handle the migration around your Clio migration date."
 )
 
 
 # ---------------------------------------------------------------------------
 # Plan cards (Step 1)
 #
-# Pricing is history-based, not firm-size-based, matching stripe_checkout.py:
+# Pricing is history-based, not firm-size-based, matching stripe_checkout.py.
+# There are exactly three plans, chosen by how much history is migrated:
 #   Essentials  $999    Current year
-#   Standard    $1,499  Up to 3 years  (most common)
-#   Complete    Quote   5+ years of history
+#   Standard    $1,499  Up to three years  (most common)
+#   Complete    Quote   Three or more years
 #
 # `slug` maps to stripe_checkout.BASE_PLANS for the configured base plans so
 # the "Continue to secure payment" CTA can route to the existing Stripe flow.
@@ -65,11 +66,11 @@ PLAN_CARDS = (
         "slug": "standard",
         "name": "Standard",
         "price": "$1,499",
-        "period": "Up to 3 years",
+        "period": "Up to three years",
         "summary": "The default for most firms making the switch.",
         "covers": (
             "Everything in Essentials",
-            "Up to 3 years of history",
+            "Up to three years of history",
             "Trust balance support",
             "Final migration report",
         ),
@@ -81,11 +82,11 @@ PLAN_CARDS = (
         "slug": None,
         "name": "Complete",
         "price": "Quote",
-        "period": "5+ years of history",
+        "period": "Three or more years",
         "summary": "For firms with a deeper historical record to bring across.",
         "covers": (
             "Everything in Standard",
-            "Five or more years of history",
+            "Three or more years of history",
             "Larger file volumes handled for you",
             "Final reconciliation report",
         ),
@@ -113,55 +114,112 @@ SEMI_MANAGED_NOTE = (
 
 
 # ---------------------------------------------------------------------------
-# Progress sections (the five guided cards)
+# Guided sequence
+#
+# The customer journey is package-first and payment-gated:
+#   Step 1  Choose how much history to move        (plan cards)
+#   Step 2  Tell us about your firm                (details + secure payment)
+#   ── after payment ──────────────────────────────────────────────────────
+#   Step 3  Upload the reports we need             (plan-specific checklist
+#                                                    + upload area)
+#   Step 4  What happens next                      (confirmation + Clio date)
+#
+# `after_payment` marks the steps that only become available once payment is
+# complete. In this read-only preview they render inside a clearly-labelled
+# "After payment" band so reviewers see the sequence without the reports being
+# presented as a pre-payment requirement.
 # ---------------------------------------------------------------------------
+
+# Headings called out explicitly in the product copy guidance.
+STEP1_HEADING = "Choose how much history to move"
+STEP2_HEADING = "Tell us about your firm"
+STEP3_HEADING = "Upload the reports we need"
 
 PREVIEW_SECTIONS = (
     {
         "key": "package",
         "step": "1",
-        "title": "Choose your plan",
+        "title": STEP1_HEADING,
         "summary": (
-            "Pick the plan that fits how much history you want us to bring "
-            "across. You can change this later."
+            "Pick the plan that fits how far back you want us to go. Your "
+            "price depends on how much history we move, not your firm's size."
         ),
+        "after_payment": False,
     },
     {
         "key": "firm",
         "step": "2",
-        "title": "Tell us about your firm",
+        "title": STEP2_HEADING,
         "summary": (
-            "A few simple details and the best person for us to reach. "
-            "Nothing technical."
+            "A few simple details, your Clio migration date, and the login "
+            "you'll use for Cutovr. Then pay securely through Stripe."
         ),
+        "after_payment": False,
     },
     {
         "key": "reports",
         "step": "3",
-        "title": "Upload your reports",
+        "title": STEP3_HEADING,
         "summary": (
-            "Export these reports from PCLaw and upload whatever you have. "
-            "We'll tell you if anything is missing."
+            "Once payment is complete, we tell you exactly which reports to "
+            "export from PCLaw for your plan, and you upload them here."
         ),
-    },
-    {
-        "key": "addons",
-        "step": "4",
-        "title": "Add-ons and special cases",
-        "summary": (
-            "Trust ledger detail, accounts receivable and payable, and other "
-            "items that only apply to some firms."
-        ),
+        "after_payment": True,
     },
     {
         "key": "next",
-        "step": "5",
+        "step": "4",
         "title": "What happens next",
         "summary": (
-            "What Cutovr does after you submit, and how we work around your "
-            "Clio migration date."
+            "After your files are in, we confirm by email and prepare your "
+            "migration around your Clio migration date."
         ),
+        "after_payment": True,
     },
+)
+
+
+# ---------------------------------------------------------------------------
+# Step 2 — firm / account details (preview-safe form fields)
+#
+# These describe the fields the live flow will collect. In the preview the
+# form is non-submitting and the password field is rendered as a plain,
+# non-credential placeholder (see template) so nothing is collected or stored.
+# Order is chosen to read top-to-bottom like a clean signup: who you are,
+# how to reach you, your firm, your Clio date, then the Cutovr login.
+# ---------------------------------------------------------------------------
+
+FIRM_FIELDS = (
+    {"key": "first_name", "label": "First name", "type": "text",
+     "group": "you", "autocomplete": "given-name"},
+    {"key": "last_name", "label": "Last name", "type": "text",
+     "group": "you", "autocomplete": "family-name"},
+    {"key": "email", "label": "Work email", "type": "email",
+     "group": "you", "autocomplete": "email"},
+    {"key": "phone", "label": "Phone number", "type": "tel",
+     "group": "you", "autocomplete": "tel"},
+    {"key": "firm_name", "label": "Law firm name", "type": "text",
+     "group": "firm", "autocomplete": "organization"},
+    {"key": "employees", "label": "Number of employees at the firm",
+     "type": "number", "group": "firm", "autocomplete": "off"},
+    {"key": "position", "label": "Your position at the firm", "type": "text",
+     "group": "firm", "autocomplete": "organization-title"},
+    {"key": "clio_migration_date", "label": "Clio migration date",
+     "type": "date", "group": "firm", "autocomplete": "off",
+     "help": "We schedule your QuickBooks migration around this date."},
+    {"key": "username", "label": "Create a username", "type": "text",
+     "group": "login", "autocomplete": "username"},
+    # Rendered as a plain text placeholder in the preview — never type=password
+    # and never submitted, so no credential is collected or stored here.
+    {"key": "password", "label": "Create a password", "type": "preview-password",
+     "group": "login", "autocomplete": "off",
+     "help": "Sets the password for your Cutovr login (not your Clio login)."},
+)
+
+FIRM_FIELD_GROUPS = (
+    {"key": "you", "title": "About you"},
+    {"key": "firm", "title": "About your firm"},
+    {"key": "login", "title": "Your Cutovr login"},
 )
 
 
@@ -273,14 +331,28 @@ REPORTS_CHECKLIST = (
 
 
 # ---------------------------------------------------------------------------
-# What-happens-next steps
+# Payment panel copy (Step 2 — Stripe Checkout, no card fields here)
+# ---------------------------------------------------------------------------
+
+PAYMENT_HEADING = "Pay securely"
+
+# The exact reassurance line from the product copy guidance.
+PAYMENT_REASSURANCE = (
+    "Secure payment happens through Stripe. Cutovr never stores your card "
+    "details."
+)
+
+
+# ---------------------------------------------------------------------------
+# What-happens-next steps (shown after payment + upload)
 # ---------------------------------------------------------------------------
 
 WHAT_HAPPENS_NEXT = (
-    "Cutovr reviews your files and confirms if anything is missing.",
+    "Cutovr confirms by email that we've received your information and files.",
+    "Our team reviews your data and confirms if anything is missing.",
     "We prepare your migration into QuickBooks and set your opening balances.",
-    "We work around your Clio migration date so nothing clashes.",
-    "We email you the next step. You don't need to do anything else right now.",
+    "Your migration takes place on the same date as your Clio migration date.",
+    "If we need anything, we'll reach out using the contact details you gave us.",
 )
 
 
@@ -296,6 +368,24 @@ SECURE_ACCESS_NOTE = (
     "coordinate a secure access process separately. We never ask for your "
     "Clio password or two-factor codes through this form."
 )
+
+
+# ---------------------------------------------------------------------------
+# Confirmation copy (shown after all files are uploaded/submitted)
+#
+# CONFIRMATION_SUMMARY is the on-page banner; build_confirmation_email()
+# produces the body of the email the customer would receive. Both reuse the
+# Clio migration date so the scheduling promise is concrete. The {date} falls
+# back to the clear placeholder when nothing has been chosen yet.
+# ---------------------------------------------------------------------------
+
+def confirmation_summary(clio_migration_date: str | None = None) -> str:
+    """One-line on-page confirmation banner that names the Clio date."""
+    return (
+        "We've received your files. Our team is reviewing them now. Your "
+        "migration is scheduled around your Clio migration date: "
+        f"{_d(clio_migration_date)}."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -354,6 +444,43 @@ def build_reports_email(
         "",
         "Monthly General Ledgers are best — they're more reliable than a single yearly export.",
         "Many cash-basis firms don't have Accounts Receivable or Payable, and that's completely fine.",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def build_confirmation_email(
+    *,
+    firm_name: str | None = None,
+    clio_migration_date: str | None = None,
+    contact_email: str | None = None,
+) -> str:
+    """Build the post-upload confirmation email body.
+
+    Read-only helper — produces the plain text a customer would receive once
+    all their files are submitted. It states that we received the files, that
+    the team is reviewing them, that the migration happens on their Clio
+    migration date, and how to reach us. Dates fall back to the YYYY-MM-DD
+    placeholder so the example reads cleanly with nothing filled in.
+    """
+    greeting_name = (firm_name or "").strip()
+    greeting = f"Hi {greeting_name}," if greeting_name else "Hi,"
+    reach_us = (contact_email or "").strip() or "your Cutovr contact email"
+
+    lines = [
+        greeting,
+        "",
+        "Thank you — we've received the information and files you submitted.",
+        "Our team is now reviewing your data.",
+        "",
+        "Your migration will take place on the same date as your Clio "
+        f"migration date: {_d(clio_migration_date)}.",
+        "",
+        f"If you need anything in the meantime, just reply to this email or "
+        f"reach out at {reach_us}.",
+        "If we need anything from you, we'll reach out using the contact "
+        "details you provided.",
+        "",
+        "— The Cutovr team",
     ]
     return "\n".join(lines) + "\n"
 
