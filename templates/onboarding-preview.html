@@ -1,0 +1,151 @@
+{% extends "_base.html" %}
+{% block title %}Onboarding preview &mdash; {{ app_name }}{% endblock %}
+{% block meta_description %}A preview of the proposed guided onboarding flow. Internal review only &mdash; not the live customer path.{% endblock %}
+{% block content %}
+<section class="page">
+  <div class="stack">
+
+    {# Preview banner: this is an internal review surface, not the live flow.
+       Kept prominent so no one mistakes it for production intake. #}
+    <div class="warning-panel" data-testid="onboarding-preview-banner" role="status">
+      <strong>Preview &mdash; not live.</strong>
+      This is an example of the proposed onboarding flow for review before
+      publishing. Nothing on this page submits, stores, or charges anything.
+      The live flow is unchanged at
+      <a href="{{ url_for('intake_form') }}">/intake</a>.
+    </div>
+
+    <header class="stack-sm" style="max-width:44rem;">
+      <p class="eyebrow">Start your {{ app_name }} onboarding</p>
+      <h1 class="display" data-testid="onboarding-preview-header">{{ header }}</h1>
+      <p class="lede" data-testid="onboarding-preview-subcopy">{{ subcopy }}</p>
+    </header>
+
+    {# Semi-managed positioning for the first clients: a person reviews and
+       handles setup. We do not promise fully self-serve automation. #}
+    <article class="card card--inset" data-testid="onboarding-preview-semi-managed">
+      <p style="margin:0;">{{ semi_managed_note }}</p>
+    </article>
+
+    {# Progress cards: the five guided sections. #}
+    <ol class="stack" style="list-style:none;margin:0;padding:0;"
+        data-testid="onboarding-preview-sections">
+      {% for s in sections %}
+      <li class="card" data-testid="onboarding-preview-section-{{ s.key }}">
+        <div style="display:flex;gap:1rem;align-items:baseline;">
+          <span class="eyebrow" style="margin:0;white-space:nowrap;">Step {{ s.step }}</span>
+          <div class="stack-sm" style="gap:.35rem;">
+            <h2 style="margin:0;font-size:1.15rem;">{{ s.title }}</h2>
+            <p class="muted" style="margin:0;">{{ s.summary }}</p>
+          </div>
+        </div>
+
+        {# Section 3 expands into the full reports checklist. #}
+        {% if s.key == "reports" %}
+        <ul style="margin:1rem 0 0;padding-left:1.2rem;line-height:1.6;font-size:.94rem;"
+            data-testid="onboarding-preview-reports">
+          {% for r in reports %}
+          <li style="margin-bottom:.5rem;">
+            <strong>{{ r.title }}</strong>{% if r.when %} <span class="muted">&mdash; {{ r.when }}</span>{% endif %}
+            {% if r.add_on %}<span class="eyebrow" style="margin-left:.4rem;">add-on</span>{% endif %}
+            <br>
+            <span class="muted" style="font-size:.9rem;">{{ r.note }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+
+        {# Section 4 expands into add-ons + secure-access copy. #}
+        {% if s.key == "addons" %}
+        <div class="card card--inset" style="margin-top:1rem;"
+             data-testid="onboarding-preview-secure-access">
+          <p style="margin:0;font-weight:600;">Trust ledger &amp; secure access</p>
+          <p class="muted" style="margin:.4rem 0 0;">{{ secure_access_note }}</p>
+        </div>
+        {% endif %}
+
+        {# Section 5 expands into the what-happens-next steps. #}
+        {% if s.key == "next" %}
+        <ol style="margin:1rem 0 0;padding-left:1.2rem;line-height:1.7;font-size:.94rem;"
+            data-testid="onboarding-preview-next">
+          {% for step in what_happens_next %}
+          <li>{{ step }}</li>
+          {% endfor %}
+        </ol>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ol>
+
+    {# Copyable "Reports we need" email / checklist. #}
+    <article class="card" data-testid="onboarding-preview-email">
+      <div class="card-head" style="display:flex;justify-content:space-between;align-items:baseline;gap:1rem;flex-wrap:wrap;">
+        <div>
+          <p class="eyebrow" style="margin:0;">Reports we need</p>
+          <h2 style="margin:.2rem 0 0;font-size:1.15rem;">A simple checklist you can copy</h2>
+        </div>
+        <button type="button" class="btn btn-secondary btn-sm"
+                data-copy-target="reports-email"
+                data-testid="onboarding-preview-copy-btn">Copy checklist</button>
+      </div>
+      <p class="muted" style="margin:.4rem 0 .75rem;">
+        Plain English, ready to send. Dates below are examples &mdash; we fill
+        in your firm's real dates from your migration period.
+      </p>
+      <pre id="reports-email"
+           data-testid="onboarding-preview-email-body"
+           style="white-space:pre-wrap;background:var(--surface,#f7f7f5);border:1px solid var(--line);border-radius:.5rem;padding:1rem;font-family:'JetBrains Mono',monospace;font-size:.85rem;line-height:1.6;overflow:auto;">{{ sample_email }}</pre>
+    </article>
+
+    {# Primary CTA — preview only, deliberately non-functional. #}
+    <div class="stack-sm">
+      <button type="button" class="btn btn-primary btn-lg full-width"
+              data-testid="onboarding-preview-cta" disabled
+              style="opacity:.7;cursor:not-allowed;">Save onboarding preview</button>
+      <p class="note" style="margin:0;text-align:center;">
+        This is a preview. The button is disabled on purpose &mdash; no details
+        are collected or submitted here.
+      </p>
+    </div>
+
+    {# Secondary resource links — kept visually quiet so they don't compete
+       with the onboarding flow. External links open in a new tab. #}
+    <aside class="card card--quiet" data-testid="onboarding-preview-resources">
+      <p class="eyebrow" style="margin:0 0 .5rem;">Helpful resources</p>
+      <ul style="margin:0;padding-left:1.2rem;line-height:1.8;font-size:.9rem;">
+        {% for link in resource_links %}
+        <li>
+          <a href="{{ link.url }}"{% if link.external %} target="_blank" rel="noopener noreferrer"{% endif %}
+             class="muted">{{ link.label }}{% if link.external %} &nearr;{% endif %}</a>
+        </li>
+        {% endfor %}
+      </ul>
+    </aside>
+
+  </div>
+</section>
+
+<script>
+  // Preview-only: copy the checklist text to the clipboard. No network,
+  // no submission — purely a convenience for reviewers.
+  (function () {
+    var btn = document.querySelector('[data-copy-target="reports-email"]');
+    if (!btn) return;
+    btn.addEventListener("click", function () {
+      var el = document.getElementById("reports-email");
+      if (!el) return;
+      var text = el.innerText;
+      var done = function () {
+        var label = btn.textContent;
+        btn.textContent = "Copied";
+        setTimeout(function () { btn.textContent = label; }, 1500);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, done);
+      } else {
+        done();
+      }
+    });
+  })();
+</script>
+{% endblock %}

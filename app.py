@@ -102,6 +102,7 @@ import final_report
 import bulk_upload
 import stripe_checkout
 import intake
+import onboarding_preview
 from rate_limit import RateLimiter, client_ip
 import csv as _csv
 from io import StringIO
@@ -2832,6 +2833,42 @@ def onboarding():
     from the dashboard nav for logged-in firm admins.
     """
     return render_template("onboarding.html")
+
+
+@app.route("/onboarding-preview")
+def onboarding_preview_page():
+    """Read-only PREVIEW of a proposed guided onboarding flow.
+
+    This is an internal review surface, not the live customer path. It maps
+    the latest product notes (package + dates, firm details, reports
+    checklist, add-ons, what-happens-next) into a clean example so the team
+    can see what the flow would look like in the app before it is published.
+
+    Nothing here submits, stores, or charges anything. The live intake flow
+    (/intake) is untouched. A sample copyable "reports we need" email is
+    rendered with placeholder dates so reviewers see the customer-facing copy.
+    """
+    sample_email = onboarding_preview.build_reports_email(
+        firm_name="Smith & Hart LLP",
+        tb_beginning_date="2024-12-31",
+        tb_ending_date="2026-03-31",
+        cutover_date="2026-03-31",
+        start_date="2025-01-01",
+        end_date="2026-03-31",
+        include_trust_ledger=False,
+    )
+    return render_template(
+        "onboarding-preview.html",
+        header=onboarding_preview.PREVIEW_HEADER,
+        subcopy=onboarding_preview.PREVIEW_SUBCOPY,
+        semi_managed_note=onboarding_preview.SEMI_MANAGED_NOTE,
+        sections=onboarding_preview.PREVIEW_SECTIONS,
+        reports=onboarding_preview.REPORTS_CHECKLIST,
+        what_happens_next=onboarding_preview.WHAT_HAPPENS_NEXT,
+        secure_access_note=onboarding_preview.SECURE_ACCESS_NOTE,
+        resource_links=onboarding_preview.RESOURCE_LINKS,
+        sample_email=sample_email,
+    )
 
 
 @app.route("/onboarding/template.csv")
