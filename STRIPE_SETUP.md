@@ -15,14 +15,19 @@ Create these as one-off (mode: payment) Prices in Stripe Dashboard →
 Products. Use any product names you like; the Stripe **Price ID** is
 the thing you wire in.
 
-| Plan slug   | Public label              | Amount  | Env var                         |
-|-------------|---------------------------|---------|---------------------------------|
-| `essential` | Essential — Current Year  | $999    | `STRIPE_PRICE_ESSENTIAL`        |
-| `standard`  | Standard — Up to 3 Years  | $1,499  | `STRIPE_PRICE_STANDARD`         |
+| Plan slug   | Public label              | Amount  | Env var (preferred)             | Env var (legacy alias)   |
+|-------------|---------------------------|---------|---------------------------------|--------------------------|
+| `essential` | Current Year              | $999    | `STRIPE_PRICE_CURRENT_YEAR`     | `STRIPE_PRICE_ESSENTIAL` |
+| `standard`  | Up to 3 Years             | $1,499  | `STRIPE_PRICE_UP_TO_THREE_YEARS`| `STRIPE_PRICE_STANDARD`  |
+
+Either env var name works for each plan — the app reads the preferred
+name first and falls back to the legacy alias, so existing Render
+configs keep working without change. Set only one per plan.
 
 The **Complete** tier (3+ years of history) is quote-based
-and does **not** go through Stripe Checkout — its CTA routes to
-`/support` so the team can quote it.
+and does **not** go through Stripe Checkout. On the pricing page its
+CTA routes to `/support`; in the onboarding flow it routes to
+`/onboarding/quote` so the team can follow up with a tailored quote.
 
 Optional add-ons (not yet exposed as standalone buttons; reserved for
 future UI):
@@ -39,9 +44,26 @@ Set these in Render Dashboard → Settings → Environment (do **not**
 commit them):
 
 ```
-STRIPE_SECRET_KEY=sk_live_...          # or sk_test_... for staging
-STRIPE_PRICE_ESSENTIAL=price_...
-STRIPE_PRICE_STANDARD=price_...
+STRIPE_SECRET_KEY=sk_live_...              # or sk_test_... for staging
+STRIPE_PRICE_CURRENT_YEAR=price_...        # alias: STRIPE_PRICE_ESSENTIAL
+STRIPE_PRICE_UP_TO_THREE_YEARS=price_...   # alias: STRIPE_PRICE_STANDARD
+STRIPE_WEBHOOK_SECRET=whsec_...            # required for the onboarding webhook
+```
+
+### Email (confirmation + internal notification)
+
+The onboarding flow sends a customer confirmation and an internal
+notification after the customer uploads their reports on Step 3. It
+reuses the existing SMTP helper (`email_sender.py`) — no new provider.
+Emails are best-effort: if SMTP isn't configured the flow still works
+and never claims an email was sent.
+
+```
+SMTP_HOST=...            # alias: MAIL_SERVER
+SMTP_USER=...            # alias: SMTP_USERNAME / MAIL_USERNAME
+SMTP_PASSWORD=...        # alias: MAIL_PASSWORD
+SMTP_FROM=...            # alias: SMTP_FROM_EMAIL / MAIL_DEFAULT_SENDER
+INTERNAL_INTAKE_EMAILS=team@yourfirm.com   # comma-separated; who gets the internal notice
 ```
 
 Optional / future:
@@ -92,6 +114,32 @@ checkout POST. Anything else returns 404. The "Complete" tier
 deliberately does **not** hit Stripe — it links to `/support` so the
 team can quote it.
 
+### Onboarding flow routes
+
+The guided onboarding flow has its own payment-gated path with a
+durable, DB-backed purchase record (so a webhook can mark payment out
+of band):
+
+| Method | Path                              | Purpose                                                        |
+|--------|-----------------------------------|----------------------------------------------------------------|
+| POST   | `/onboarding/step-2`              | Persist firm details, create record, 303 to Stripe (paid) or `/onboarding/quote`. |
+| GET    | `/onboarding/payment/return`      | Stripe `success_url`; verifies payment server-side, unlocks Step 3. |
+| GET    | `/onboarding/payment/cancel`      | Stripe `cancel_url`; friendly message, back to Step 2.         |
+| GET    | `/onboarding/quote`               | Quote-plan confirmation (no Stripe); notifies the team.        |
+| GET/POST | `/onboarding/step-3`            | Gated on paid status; uploads reports, sends both emails.      |
+| POST   | `/onboarding/stripe/webhook`      | CSRF-exempt; verifies signature, marks paid (idempotent).      |
+
+Step 3 is gated: a paid plan can't reach it until the record is marked
+paid (by the success-return verify **or** the webhook). The quote plan
+is never payment-gated. The plaintext account password is never stored
+— it is hashed-and-discarded, with the username kept as an auth
+placeholder.
+
+When Stripe isn't configured: in **production** Step 2 returns a 503
+with a friendly "payment is not available" message and does not
+advance; in **non-production** it marks a clearly-labelled demo
+simulation so the flow stays demoable end-to-end (no card charged).
+
 ## Testing locally
 
 ```bash
@@ -110,12 +158,22 @@ To run the smoke tests (no real Stripe traffic, all calls are mocked):
 ```bash
 python3 tests/smoke_pricing_stripe.py
 python3 tests/smoke_pricing_page.py
+python3 tests/smoke_onboarding_stripe_email.py
 ```
 
-## Webhooks (optional, future)
+## Webhooks
 
-`stripe_checkout.verify_webhook(payload, signature)` will verify a
-Stripe webhook using `STRIPE_WEBHOOK_SECRET`. No webhook route is
-mounted yet — when one is needed, mount it as a CSRF-exempt POST
-endpoint and pass the raw request body + `Stripe-Signature` header
-through `verify_webhook`. Never process the body without verifying.
+The onboarding flow mounts a CSRF-exempt webhook at
+`POST /onboarding/stripe/webhook`. It verifies the `Stripe-Signature`
+header against `STRIPE_WEBHOOK_SECRET` via
+`stripe_checkout.verify_webhook(payload, signature)`, then handles
+`checkout.session.completed` by marking the linked record paid. The
+handler is idempotent (replaying the same event does not change
+`paid_at`) and never logs secrets or PII. A missing
+`STRIPE_WEBHOOK_SECRET` returns 503; a bad signature returns 400 and
+changes nothing.
+
+In the Stripe Dashboard → Developers → Webhooks, add an endpoint
+pointing at `https://<your-domain>/onboarding/stripe/webhook`,
+subscribe to `checkout.session.completed`, and copy the signing secret
+into `STRIPE_WEBHOOK_SECRET`.

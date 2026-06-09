@@ -339,6 +339,22 @@ class AppDB:
         # 'pending' and are only flipped to 'paid' by a real Stripe path.
         add_col("intake_submissions", "payment_status TEXT NOT NULL DEFAULT 'pending'")
 
+        # Package-first onboarding + Stripe Checkout linkage. These let a
+        # Stripe success redirect / webhook find the originating onboarding
+        # record and mark it paid. payment_amount_cents stores the charged
+        # amount for the internal email + receipts; the Stripe IDs are the
+        # durable keys the webhook keys off. All nullable so existing intake
+        # rows (and quote-plan rows that never touch Stripe) stay valid.
+        add_col("intake_submissions", "payment_amount_cents INTEGER")
+        add_col("intake_submissions", "currency TEXT")
+        add_col("intake_submissions", "stripe_session_id TEXT")
+        add_col("intake_submissions", "stripe_payment_intent_id TEXT")
+        add_col("intake_submissions", "username TEXT")
+        add_col("intake_submissions", "employees TEXT")
+        # When this record was last touched by a Stripe event, so a replayed
+        # webhook can be recognised as already-applied (idempotency).
+        add_col("intake_submissions", "paid_at TEXT")
+
     @contextmanager
     def _conn(self):
         conn = sqlite3.connect(self.db_path)
@@ -1057,6 +1073,10 @@ class AppDB:
         user_id: Optional[int] = None,
         job_id: Optional[str] = None,
         payment_status: str = "pending",
+        payment_amount_cents: Optional[int] = None,
+        currency: Optional[str] = None,
+        username: Optional[str] = None,
+        employees: Optional[str] = None,
     ) -> int:
         """Persist a post-purchase onboarding intake record. Returns its id."""
         with self._conn() as c:
@@ -1064,8 +1084,9 @@ class AppDB:
                 "INSERT INTO intake_submissions ("
                 "  reference, firm_id, user_id, firm_name, first_name, last_name, "
                 "  position, phone, email, plan, clio_migration_date, uploads_json, "
-                "  job_id, email_status, payment_status, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+                "  job_id, email_status, payment_status, payment_amount_cents, "
+                "  currency, username, employees, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)",
                 (
                     reference, firm_id, user_id, firm_name.strip(),
                     first_name.strip(), last_name.strip(),
@@ -1076,10 +1097,93 @@ class AppDB:
                     (clio_migration_date or "").strip() or None,
                     uploads_json, job_id,
                     (payment_status or "pending").strip().lower(),
+                    payment_amount_cents,
+                    (currency or "").strip().lower() or None,
+                    (username or "").strip() or None,
+                    (employees or "").strip() or None,
                     _now(),
                 ),
             )
             return cur.lastrowid
+
+    def attach_stripe_session(
+        self, intake_id: int, *, session_id: str,
+        payment_amount_cents: Optional[int] = None,
+        currency: Optional[str] = None,
+    ) -> None:
+        """Record the Stripe Checkout Session id for an onboarding record.
+
+        Called right after the session is created so the success redirect and
+        the webhook can both find the originating record. Amount/currency are
+        stored when known (the price the customer is being charged).
+        """
+        with self._conn() as c:
+            c.execute(
+                "UPDATE intake_submissions SET stripe_session_id = ?, "
+                "  payment_amount_cents = COALESCE(?, payment_amount_cents), "
+                "  currency = COALESCE(?, currency) "
+                "WHERE id = ?",
+                (
+                    (session_id or "").strip() or None,
+                    payment_amount_cents,
+                    (currency or "").strip().lower() or None,
+                    intake_id,
+                ),
+            )
+
+    def get_intake_by_stripe_session(self, session_id: str) -> Optional[dict]:
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT * FROM intake_submissions WHERE stripe_session_id = ?",
+                ((session_id or "").strip(),),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def mark_intake_paid(
+        self, intake_id: int, *,
+        payment_intent_id: Optional[str] = None,
+        payment_amount_cents: Optional[int] = None,
+        currency: Optional[str] = None,
+    ) -> bool:
+        """Idempotently mark an onboarding record paid.
+
+        Returns True if this call transitioned the record from not-paid to
+        paid (i.e. the caller should run first-time side effects like the
+        receipt). Returns False if it was already paid, so a replayed Stripe
+        webhook is a safe no-op. Always records the payment-intent id and
+        amount when supplied, even on the already-paid path.
+        """
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT payment_status FROM intake_submissions WHERE id = ?",
+                (intake_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            already_paid = (row["payment_status"] or "").strip().lower() == "paid"
+            c.execute(
+                "UPDATE intake_submissions SET payment_status = 'paid', "
+                "  stripe_payment_intent_id = COALESCE(?, stripe_payment_intent_id), "
+                "  payment_amount_cents = COALESCE(?, payment_amount_cents), "
+                "  currency = COALESCE(?, currency), "
+                "  paid_at = COALESCE(paid_at, ?) "
+                "WHERE id = ?",
+                (
+                    (payment_intent_id or "").strip() or None,
+                    payment_amount_cents,
+                    (currency or "").strip().lower() or None,
+                    _now(),
+                    intake_id,
+                ),
+            )
+            return not already_paid
+
+    def set_intake_uploads(self, intake_id: int, uploads_json: str) -> None:
+        with self._conn() as c:
+            c.execute(
+                "UPDATE intake_submissions SET uploads_json = ? WHERE id = ?",
+                (uploads_json, intake_id),
+            )
 
     def set_intake_email_status(self, intake_id: int, status: str) -> None:
         with self._conn() as c:

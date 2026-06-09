@@ -38,24 +38,43 @@ from typing import Optional
 # Plan registry
 # ---------------------------------------------------------------------------
 
-# Keys here are the URL-safe plan slugs used in /pricing/checkout/<plan>.
-# The env var is the name of the Stripe Price ID for that line item.
+# Keys here are the URL-safe plan slugs used in /pricing/checkout/<plan> and
+# in the package-first onboarding flow (Step 1 plan keys map 1:1 to these).
+# Each plan resolves its Stripe Price ID from the FIRST environment variable
+# in its tuple that is set, so deployments can use either the history-based
+# names (preferred, self-documenting) or the original Essential/Standard
+# names without any re-config:
 #
-# Complete (3+ years of history) is intentionally absent:
-# it's quote-based, so the UI links to /support instead of hitting Stripe.
+#   essential (Current year, $999)
+#       STRIPE_PRICE_CURRENT_YEAR  ->  STRIPE_PRICE_ESSENTIAL
+#   standard  (Up to three years, $1,499)
+#       STRIPE_PRICE_UP_TO_THREE_YEARS  ->  STRIPE_PRICE_STANDARD
+#
+# Complete (3+ years of history) is intentionally absent: it's quote-based,
+# so the UI routes it to /support instead of hitting Stripe.
 PLAN_ENV_VARS = {
-    "essential": "STRIPE_PRICE_ESSENTIAL",
-    "standard": "STRIPE_PRICE_STANDARD",
+    "essential": ("STRIPE_PRICE_CURRENT_YEAR", "STRIPE_PRICE_ESSENTIAL"),
+    "standard": ("STRIPE_PRICE_UP_TO_THREE_YEARS", "STRIPE_PRICE_STANDARD"),
     # Optional add-ons. These are usable on their own as well as alongside
     # a base plan; for the minimal first-cut UI we surface base plans only.
-    "extra_year": "STRIPE_PRICE_EXTRA_YEAR",
-    "priority_turnaround": "STRIPE_PRICE_PRIORITY_TURNAROUND",
-    "assisted_review": "STRIPE_PRICE_ASSISTED_REVIEW",
+    "extra_year": ("STRIPE_PRICE_EXTRA_YEAR",),
+    "priority_turnaround": ("STRIPE_PRICE_PRIORITY_TURNAROUND",),
+    "assisted_review": ("STRIPE_PRICE_ASSISTED_REVIEW",),
 }
 
-# Plan slugs that show a "Buy now" Stripe button on the pricing page.
-# Complete is excluded — it routes to /support for a quote.
+# Plan slugs that show a "Buy now" Stripe button on the pricing page and are
+# the paid options in the onboarding flow. Complete is excluded — it routes
+# to /support for a quote.
 BASE_PLANS = ("essential", "standard")
+
+# Known fixed amounts (in cents) for the base plans, used for receipts and the
+# internal notification email. These mirror the public /pricing cards. The
+# Stripe Price is still the source of truth for what's actually charged; this
+# is only display/record metadata when we can't (or don't) call back to Stripe.
+PLAN_AMOUNT_CENTS = {
+    "essential": 99900,
+    "standard": 149900,
+}
 
 
 @dataclass(frozen=True)
@@ -77,10 +96,25 @@ def _stripe_secret_key() -> str:
 
 
 def _price_id_for(plan: str) -> str:
-    env = PLAN_ENV_VARS.get(plan)
-    if not env:
+    """Resolve a plan's Stripe Price ID from its env-var aliases.
+
+    Returns the value of the first env var in the plan's tuple that is set
+    (e.g. STRIPE_PRICE_CURRENT_YEAR, falling back to STRIPE_PRICE_ESSENTIAL),
+    or "" if none are configured.
+    """
+    names = PLAN_ENV_VARS.get(plan)
+    if not names:
         return ""
-    return (os.environ.get(env) or "").strip()
+    for name in names:
+        val = (os.environ.get(name) or "").strip()
+        if val:
+            return val
+    return ""
+
+
+def plan_amount_cents(plan: str) -> Optional[int]:
+    """Best-effort fixed price (in cents) for a base plan, else None."""
+    return PLAN_AMOUNT_CENTS.get((plan or "").strip().lower())
 
 
 def stripe_enabled() -> bool:
@@ -135,10 +169,25 @@ def create_checkout_session(
     plan: str,
     base_url: str,
     customer_email: Optional[str] = None,
+    *,
+    success_url: Optional[str] = None,
+    cancel_url: Optional[str] = None,
+    metadata: Optional[dict] = None,
+    client_reference_id: Optional[str] = None,
+    return_session: bool = False,
 ):
     """Create a Stripe Checkout Session for a given plan slug.
 
-    Returns the URL the browser should be redirected to (Stripe-hosted).
+    By default returns the Stripe-hosted URL the browser should be redirected
+    to. Pass ``return_session=True`` to get the full Session object instead
+    (the onboarding flow needs its ``id`` to link the record so the webhook
+    can find it later).
+
+    ``success_url`` / ``cancel_url`` override the /pricing defaults so the
+    onboarding flow can return the customer to its own Step 3 / Step 2.
+    ``metadata`` is merged with ``{"plan": plan}`` and is the durable link
+    back to the onboarding record (e.g. the intake id + reference).
+    ``client_reference_id`` is echoed back on the session/webhook event.
 
     Raises:
         StripeUnknownPlan: plan slug isn't in the registry.
@@ -152,8 +201,9 @@ def create_checkout_session(
         raise StripeNotConfigured("STRIPE_SECRET_KEY is not set")
     price_id = _price_id_for(plan)
     if not price_id:
+        names = "/".join(PLAN_ENV_VARS[plan])
         raise StripeNotConfigured(
-            f"{PLAN_ENV_VARS[plan]} is not set; cannot start checkout for {plan!r}"
+            f"{names} is not set; cannot start checkout for {plan!r}"
         )
 
     try:
@@ -165,18 +215,26 @@ def create_checkout_session(
         ) from exc
 
     stripe.api_key = secret
-    success_url, cancel_url = _build_default_urls(base_url)
+    default_success, default_cancel = _build_default_urls(base_url)
+    merged_metadata = {"plan": plan}
+    if metadata:
+        # Stripe metadata values must be strings; coerce defensively.
+        merged_metadata.update({k: str(v) for k, v in metadata.items() if v is not None})
     kwargs = {
         "mode": "payment",
         "line_items": [{"price": price_id, "quantity": 1}],
-        "success_url": success_url,
-        "cancel_url": cancel_url,
+        "success_url": success_url or default_success,
+        "cancel_url": cancel_url or default_cancel,
         "allow_promotion_codes": True,
-        "metadata": {"plan": plan},
+        "metadata": merged_metadata,
     }
     if customer_email:
         kwargs["customer_email"] = customer_email
+    if client_reference_id:
+        kwargs["client_reference_id"] = str(client_reference_id)
     csession = stripe.checkout.Session.create(**kwargs)
+    if return_session:
+        return csession
     # ``url`` is the Stripe-hosted checkout page.
     return csession.url
 

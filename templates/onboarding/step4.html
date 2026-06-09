@@ -25,10 +25,17 @@
     </article>
 
     <article class="card card--inset" data-testid="onboarding-confirmation">
+      {% if email_sent %}
       <p class="eyebrow" style="margin:0 0 .35rem;">We've emailed you a copy</p>
       <p class="muted" style="margin:0 0 .6rem;">
-        We send a confirmation email that looks like this:
+        We've sent a confirmation to {{ contact_email }}. It looks like this:
       </p>
+      {% else %}
+      <p class="eyebrow" style="margin:0 0 .35rem;">Your confirmation</p>
+      <p class="muted" style="margin:0 0 .6rem;" data-testid="onboarding-email-fallback">
+        Here's a copy of your confirmation for your records:
+      </p>
+      {% endif %}
       <pre data-testid="onboarding-confirmation-email"
            style="white-space:pre-wrap;background:var(--surface,#f7f7f5);border:1px solid var(--line);border-radius:.5rem;padding:1rem;font-family:'JetBrains Mono',monospace;font-size:.9rem;line-height:1.6;overflow:auto;">{{ confirmation_email }}</pre>
     </article>

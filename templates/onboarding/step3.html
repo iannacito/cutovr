@@ -9,18 +9,18 @@
 
     <header class="stack-sm" style="max-width:46rem;">
       <p class="eyebrow">
-        {% if stripe_enabled %}Payment received{% else %}Payment pending &mdash; preview{% endif %}
+        {% if payment_simulated %}Demo mode &mdash; no card charged{% else %}Payment received{% endif %}
       </p>
       <h1 class="display" data-testid="onboarding-step3-header">Upload the reports we need</h1>
       <p class="lede" style="font-size:1.2rem;">
-        Now that your details are in, here are the reports to export from PCLaw
+        Now that your payment's in, here are the reports to export from PCLaw
         for your plan. Upload whatever you have &mdash; we'll tell you if
         anything is missing.
       </p>
-      {% if not stripe_enabled %}
-      <p class="note" data-testid="onboarding-step3-pending">
-        This is a preview &mdash; payment isn't connected yet, so nothing has
-        been charged. The reports below are what we'd ask for once payment is complete.
+      {% if payment_simulated %}
+      <p class="note" data-testid="onboarding-step3-demo">
+        Payment isn't connected in this environment, so nothing has been
+        charged. You're seeing the real upload step in demo mode.
       </p>
       {% endif %}
     </header>
@@ -39,41 +39,43 @@
       </ul>
     </article>
 
-    <article class="card card--inset" data-testid="onboarding-upload">
-      <p style="margin:0;font-weight:600;">Upload your reports</p>
-      <p class="muted" style="margin:.4rem 0 .75rem;">
-        Drag your PCLaw exports in, or choose files. We'll tell you if anything
-        is missing.
-      </p>
-      <div class="dropzone" aria-disabled="true"
-           data-testid="onboarding-dropzone"
-           style="border:2px dashed var(--line);border-radius:.6rem;padding:1.5rem;text-align:center;color:var(--muted,#777);background:var(--surface,#f7f7f5);">
-        Drop files here (preview &mdash; uploads aren't connected yet)
-      </div>
-    </article>
-
-    <article class="card card--inset" data-testid="onboarding-secure-access">
-      <p style="margin:0;font-weight:600;">Trust ledger &amp; secure access</p>
-      <p class="muted" style="margin:.4rem 0 0;">{{ secure_access_note }}</p>
-    </article>
-
-    {% if resource_links %}
-    <aside class="card card--quiet" data-testid="onboarding-resources">
-      <p class="eyebrow" style="margin:0 0 .5rem;">Helpful guides</p>
-      <ul style="margin:0;padding-left:1.2rem;line-height:1.9;font-size:.95rem;">
-        {% for link in resource_links %}
-        <li><a href="{{ url_for(link.endpoint) }}" class="muted">{{ link.label }}</a></li>
-        {% endfor %}
-      </ul>
-    </aside>
-    {% endif %}
-
     <form method="post" action="{{ url_for('onboarding_step3') }}"
-          style="display:flex;gap:.75rem;flex-wrap:wrap;">
+          enctype="multipart/form-data" class="stack" style="gap:var(--space-5);"
+          data-testid="onboarding-step3-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <a class="btn btn-secondary btn-lg" href="{{ url_for('onboarding_step2') }}">Back</a>
-      <button type="submit" class="btn btn-primary btn-lg"
-              data-testid="onboarding-step3-continue">Continue</button>
+
+      <article class="card card--inset" data-testid="onboarding-upload">
+        <p style="margin:0;font-weight:600;">Upload your reports</p>
+        <p class="muted" style="margin:.4rem 0 .75rem;">
+          Choose your PCLaw exports. You can select more than one file, and you
+          can always send more later &mdash; nothing is locked in.
+        </p>
+        <input type="file" name="report_files" multiple
+               data-testid="onboarding-file-input"
+               style="display:block;width:100%;padding:.6rem;border:1px solid var(--line);border-radius:.5rem;background:var(--surface,#f7f7f5);">
+      </article>
+
+      <article class="card card--inset" data-testid="onboarding-secure-access">
+        <p style="margin:0;font-weight:600;">Trust ledger &amp; secure access</p>
+        <p class="muted" style="margin:.4rem 0 0;">{{ secure_access_note }}</p>
+      </article>
+
+      {% if resource_links %}
+      <aside class="card card--quiet" data-testid="onboarding-resources">
+        <p class="eyebrow" style="margin:0 0 .5rem;">Helpful guides</p>
+        <ul style="margin:0;padding-left:1.2rem;line-height:1.9;font-size:.95rem;">
+          {% for link in resource_links %}
+          <li><a href="{{ url_for(link.endpoint) }}" class="muted">{{ link.label }}</a></li>
+          {% endfor %}
+        </ul>
+      </aside>
+      {% endif %}
+
+      <div style="display:flex;gap:.75rem;flex-wrap:wrap;">
+        <a class="btn btn-secondary btn-lg" href="{{ url_for('onboarding_step2') }}">Back</a>
+        <button type="submit" class="btn btn-primary btn-lg"
+                data-testid="onboarding-step3-continue">Submit my files</button>
+      </div>
     </form>
 
   </div>

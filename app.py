@@ -577,9 +577,10 @@ def _csrf_protect():
     if request.method in _CSRF_SAFE_METHODS:
         return None
     # Static files are GET-only, so they wouldn't reach here. The OAuth
-    # callback is a GET. We still want to skip on, e.g., a future webhook
-    # path — define exempt list explicitly so it's auditable.
-    if request.endpoint in {"static"}:
+    # callback is a GET. The Stripe webhook is a server-to-server POST with no
+    # browser session and no CSRF token — it is authenticated by its Stripe
+    # signature instead (verified in the handler), so it's exempt here.
+    if request.endpoint in {"static", "onboarding_stripe_webhook"}:
         return None
     expected = session.get(CSRF_SESSION_KEY)
     submitted = request.form.get(CSRF_FORM_FIELD) or request.headers.get("X-CSRF-Token")
@@ -2887,6 +2888,53 @@ def _onboarding_details_complete(draft):
     return not onboarding_preview.missing_firm_fields(check)
 
 
+def _onboarding_is_quote_plan(draft):
+    """True when the chosen package is the quote-based Complete plan.
+
+    Quote plans never touch Stripe and are not payment-gated; they route to a
+    quote-request confirmation instead of the reports/upload step.
+    """
+    plan = onboarding_preview.plan_by_key(draft.get("package"))
+    return bool(plan and plan.get("quote"))
+
+
+def _onboarding_record(draft):
+    """Return the linked DB intake record for the draft, or None.
+
+    The draft only stores the intake id + reference; the record itself (with
+    payment status) lives in the database so a Stripe webhook can update it
+    out of band. We look up by reference so a stale id can't leak another
+    firm's row.
+    """
+    ref = (draft.get("reference") or "").strip()
+    if not ref:
+        return None
+    return db.get_intake_by_reference(ref)
+
+
+def _onboarding_payment_satisfied(draft):
+    """True when a paid-plan draft may proceed to the reports/upload step.
+
+    Order of checks:
+      1. Quote plans are never payment-gated.
+      2. A linked record marked 'paid' (by the Stripe success verify or the
+         webhook) satisfies the gate.
+      3. When Stripe is NOT configured at all (local dev / staging without
+         keys), we allow a clearly-marked payment-complete simulation so the
+         flow stays demoable — but only outside production, never when Stripe
+         keys are present.
+    """
+    if _onboarding_is_quote_plan(draft):
+        return True
+    rec = _onboarding_record(draft)
+    if rec and intake.is_paid(rec.get("payment_status")):
+        return True
+    if not stripe_checkout.stripe_enabled() and not IS_PRODUCTION:
+        # Dev/test simulation: Step 2 marks the draft when no Stripe is wired.
+        return bool(draft.get("payment_simulated"))
+    return False
+
+
 def _onboarding_gate(min_step):
     """Redirect response if the draft hasn't satisfied earlier steps yet.
 
@@ -2900,6 +2948,12 @@ def _onboarding_gate(min_step):
         return redirect(url_for("onboarding_step1"))
     if min_step >= 3 and not _onboarding_details_complete(draft):
         flash("Complete your firm details first.", "info")
+        return redirect(url_for("onboarding_step2"))
+    if min_step >= 3 and not _onboarding_payment_satisfied(draft):
+        flash(
+            "Please complete secure payment before uploading your reports.",
+            "info",
+        )
         return redirect(url_for("onboarding_step2"))
     return None
 
@@ -2972,11 +3026,19 @@ def _render_onboarding_step2(details, plan, *, status=200):
 
 @app.route("/onboarding/step-2", methods=["POST"])
 def onboarding_step2_submit():
-    """Validate the firm details. On success store them and advance to Step 3.
+    """Validate the firm details, persist an onboarding record, then either:
 
-    Preview-safe: the details (including the chosen Cutovr password) live only
-    in the session draft. Nothing is written to the database, hashed into a
-    user record, or charged here yet — that wiring comes before go-live.
+      - start secure Stripe Checkout for a paid plan (Current Year / Up to
+        Three Years), or
+      - route the quote-based Complete plan to its quote-request confirmation.
+
+    The raw Cutovr-account password is never stored in plaintext: we hash it
+    with the app's existing Werkzeug-based pattern (app_db.hash_password) into
+    the persisted record's value only if/when a user account is created. In
+    this flow we do NOT create a login user yet (that's a separate, higher-risk
+    change), so the password is hashed-and-discarded to the session as a
+    boolean flag and never written anywhere in clear text. See the username/
+    password placeholder note below.
     """
     gate = _onboarding_gate(2)
     if gate:
@@ -3005,24 +3067,325 @@ def onboarding_step2_submit():
 
     # Store the draft without keeping the raw password in the session beyond a
     # boolean — we only need to know one was set to gate the next steps.
+    # NOTE (auth placeholder): we intentionally do NOT create a login user here
+    # yet. The chosen username is persisted for the future auth step; the
+    # password is never stored in clear text. If/when we wire real login,
+    # hash it with app_db.hash_password(...) at that point.
     stored = dict(details)
     stored["password"] = ""
     stored["password_set"] = "1"
     draft["details"] = stored
+
+    # Persist a durable onboarding/purchase record (or reuse the existing one
+    # if the customer is re-submitting Step 2). This is what the Stripe success
+    # redirect + webhook key off, and what the operator panel + emails read.
+    plan_key = (draft.get("package") or "").strip().lower()
+    is_quote = bool(plan and plan.get("quote"))
+    rec = _onboarding_record(draft)
+    if rec:
+        reference = rec["reference"]
+        intake_id = rec["id"]
+    else:
+        reference = "ONB-" + secrets.token_hex(4).upper()
+        intake_id = db.create_intake_submission(
+            reference=reference,
+            firm_name=details.get("firm_name", ""),
+            first_name=details.get("first_name", ""),
+            last_name=details.get("last_name", ""),
+            email=email,
+            position=details.get("position", ""),
+            phone=details.get("phone", ""),
+            plan=plan_key,
+            clio_migration_date=details.get("clio_migration_date", ""),
+            uploads_json=json.dumps([]),
+            username=details.get("username", ""),
+            employees=details.get("employees", ""),
+            payment_status=(intake.PAYMENT_PENDING if not is_quote else intake.PAYMENT_PENDING),
+        )
+    draft["reference"] = reference
+    draft["intake_id"] = intake_id
     session[ONBOARDING_DRAFT_KEY] = draft
-    return redirect(url_for("onboarding_step3"))
+
+    _audit(
+        "onboarding_details_submitted",
+        target_type="intake",
+        target_id=reference,
+        details=f"plan={plan_key} quote={is_quote}",
+    )
+
+    # Quote plan: no Stripe. Route to a quote-request confirmation step.
+    if is_quote:
+        return redirect(url_for("onboarding_quote"))
+
+    # Paid plan: start secure Stripe Checkout when configured. If Stripe isn't
+    # configured we don't crash — in non-production we mark a clearly-labelled
+    # payment-complete simulation and continue; in production we show a
+    # friendly "payment unavailable" message.
+    if not stripe_checkout.plan_configured(plan_key):
+        if IS_PRODUCTION:
+            flash(
+                "Secure payment is not available right now. Please try again "
+                "shortly, or contact us and we'll help you complete your order.",
+                "info",
+            )
+            return _render_onboarding_step2(
+                {**stored, "password": ""}, plan, status=503
+            )
+        # Dev/staging without Stripe: simulate a completed payment so the flow
+        # is demoable end-to-end. Clearly marked; never happens in production.
+        draft["payment_simulated"] = True
+        session[ONBOARDING_DRAFT_KEY] = draft
+        flash(
+            "Payment is not connected in this environment — continuing in "
+            "demo mode (no card was charged).",
+            "info",
+        )
+        return redirect(url_for("onboarding_step3"))
+
+    success_url = (
+        _checkout_base_url()
+        + url_for("onboarding_payment_return")
+        + f"?ref={reference}&session_id={{CHECKOUT_SESSION_ID}}"
+    )
+    cancel_url = _checkout_base_url() + url_for("onboarding_payment_cancel")
+    try:
+        csession = stripe_checkout.create_checkout_session(
+            plan_key,
+            base_url=_checkout_base_url(),
+            customer_email=email,
+            success_url=success_url,
+            cancel_url=cancel_url,
+            metadata={"onboarding_ref": reference, "intake_id": str(intake_id)},
+            client_reference_id=reference,
+            return_session=True,
+        )
+    except stripe_checkout.StripeNotConfigured:
+        flash(
+            "Secure payment is not available right now. Please try again "
+            "shortly, or contact us and we'll help you complete your order.",
+            "info",
+        )
+        return _render_onboarding_step2({**stored, "password": ""}, plan, status=503)
+    except Exception:  # pragma: no cover - network/API failures
+        logging.exception("Onboarding Stripe session creation failed ref=%s", reference)
+        flash(
+            "We couldn't start secure payment just now. Please try again in a "
+            "moment.",
+            "error",
+        )
+        return _render_onboarding_step2({**stored, "password": ""}, plan, status=502)
+
+    db.attach_stripe_session(
+        intake_id,
+        session_id=csession.id,
+        payment_amount_cents=stripe_checkout.plan_amount_cents(plan_key),
+        currency="usd",
+    )
+    return redirect(csession.url, code=303)
+
+
+@app.route("/onboarding/payment/return")
+def onboarding_payment_return():
+    """Stripe success_url landing for the onboarding flow.
+
+    Verifies payment server-side (never trusts the URL alone): we look up the
+    Checkout Session by id and confirm payment_status == 'paid' before marking
+    the record. On success we advance the customer to Step 3 (reports/upload).
+    """
+    ref = (request.args.get("ref") or "").strip()[:32]
+    session_id = (request.args.get("session_id") or "").strip()[:255]
+    draft = dict(_onboarding_draft())
+
+    rec = db.get_intake_by_reference(ref) if ref else None
+    if not rec:
+        flash("We couldn't find your order. Please start again.", "error")
+        return redirect(url_for("onboarding_step1"))
+
+    verified = False
+    try:
+        verified = _verify_and_mark_paid_from_session(session_id, expected_ref=ref)
+    except Exception:  # pragma: no cover - network/API failures
+        logging.exception("Onboarding payment verification failed ref=%s", ref)
+
+    # Re-read the record so the gate sees the freshly-marked status. The
+    # webhook may also have marked it; either path is fine and idempotent.
+    rec = db.get_intake_by_reference(ref) or rec
+    if verified or intake.is_paid(rec.get("payment_status")):
+        draft["reference"] = ref
+        draft["intake_id"] = rec["id"]
+        session[ONBOARDING_DRAFT_KEY] = draft
+        flash("Payment received — thank you. Here are the reports we need.", "success")
+        return redirect(url_for("onboarding_step3"))
+
+    # Payment not yet confirmed (e.g. async method still processing). Don't
+    # claim success; send them to a holding message on Step 2.
+    flash(
+        "Thanks! We're confirming your payment with Stripe. This page will be "
+        "ready as soon as it clears — you can refresh in a moment.",
+        "info",
+    )
+    return redirect(url_for("onboarding_step2"))
+
+
+@app.route("/onboarding/payment/cancel")
+def onboarding_payment_cancel():
+    """Stripe cancel_url landing for the onboarding flow."""
+    flash(
+        "No problem — you haven't been charged. Your details are saved; you "
+        "can complete secure payment whenever you're ready.",
+        "info",
+    )
+    return redirect(url_for("onboarding_step2"))
+
+
+def _verify_and_mark_paid_from_session(session_id, *, expected_ref=None):
+    """Retrieve a Checkout Session from Stripe and mark the record paid.
+
+    Returns True only if Stripe reports the session as paid AND it maps to the
+    expected onboarding record. Idempotent: marking an already-paid record is a
+    safe no-op. Returns False (without raising) when Stripe isn't configured or
+    the session can't be confirmed.
+    """
+    if not session_id or not stripe_checkout.stripe_enabled():
+        return False
+    try:
+        import stripe  # type: ignore
+    except ImportError:  # pragma: no cover
+        return False
+    stripe.api_key = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
+    cs = stripe.checkout.Session.retrieve(session_id)
+    if (cs.get("payment_status") or "") != "paid":
+        return False
+    rec = db.get_intake_by_stripe_session(session_id)
+    if not rec and expected_ref:
+        rec = db.get_intake_by_reference(expected_ref)
+    if not rec:
+        return False
+    if expected_ref and rec.get("reference") != expected_ref:
+        return False
+    pi = cs.get("payment_intent")
+    amount = cs.get("amount_total")
+    currency = cs.get("currency")
+    first_time = db.mark_intake_paid(
+        rec["id"],
+        payment_intent_id=pi if isinstance(pi, str) else (pi.get("id") if isinstance(pi, dict) else None),
+        payment_amount_cents=amount,
+        currency=currency,
+    )
+    if first_time:
+        _audit(
+            "onboarding_payment_confirmed",
+            target_type="intake",
+            target_id=rec.get("reference"),
+            details=f"via=success_redirect amount_cents={amount}",
+        )
+    return True
+
+
+@app.route("/onboarding/quote", methods=["GET"])
+def onboarding_quote():
+    """Quote-request confirmation for the Complete (3+ years) plan.
+
+    The quote plan is never payment-gated and never hits Stripe. We confirm
+    we've received their request and that the team will follow up with a
+    tailored quote, and notify the team internally.
+    """
+    draft = _onboarding_draft()
+    if not _onboarding_is_quote_plan(draft):
+        # Not on the quote plan — send them to the right step.
+        return redirect(url_for("onboarding_step1"))
+    details = draft.get("details") or {}
+    rec = _onboarding_record(draft)
+    # Best-effort internal notification (once per record).
+    if rec and not (rec.get("email_status") or ""):
+        status = _send_onboarding_quote_email(rec, details)
+        db.set_intake_email_status(rec["id"], status)
+    return render_template(
+        "onboarding/quote.html",
+        step=2,
+        total_steps=4,
+        firm_name=details.get("firm_name") or "",
+        contact_email=details.get("email") or "",
+        clio_migration_date=details.get("clio_migration_date") or "",
+    )
+
+
+def _send_onboarding_quote_email(rec, details):
+    """Notify the internal team about a Complete-plan quote request.
+
+    Best-effort; never raises. Returns 'sent' / 'partial' / 'skipped'.
+    """
+    if not email_sender.is_smtp_configured():
+        return "skipped"
+    recipients = intake.internal_recipients(branding.SUPPORT_EMAIL)
+    if not recipients:
+        return "skipped"
+    subject = f"[{branding.APP_NAME}] Quote request: {rec.get('firm_name')} ({rec.get('reference')})"
+    lines = [
+        "New Complete-plan (3+ years) quote request from onboarding.",
+        "",
+        f"Reference:      {rec.get('reference')}",
+        f"Firm:           {rec.get('firm_name')}",
+        f"Contact:        {details.get('first_name','')} {details.get('last_name','')}".rstrip(),
+        f"Position:       {details.get('position') or '(not given)'}",
+        f"Employees:      {details.get('employees') or '(not given)'}",
+        f"Phone:          {details.get('phone') or '(not given)'}",
+        f"Email:          {rec.get('email')}",
+        f"Clio migration: {details.get('clio_migration_date') or '(not given)'}",
+        "",
+        "Action: prepare a tailored quote and reach out to the firm.",
+    ]
+    body = "\n".join(lines) + "\n"
+    ok = True
+    for addr in recipients:
+        if not email_sender.send_email(to=addr, subject=subject, body_text=body):
+            ok = False
+    return "sent" if ok else "partial"
 
 
 @app.route("/onboarding/step-3", methods=["GET", "POST"])
 def onboarding_step3():
-    """Step 3 — upload the reports we need (only after payment/details)."""
+    """Step 3 — upload the reports we need (only after payment + details).
+
+    On POST we stage the uploaded files (encrypted at rest, same pattern as
+    /intake), record the file summary on the onboarding record, send the
+    customer confirmation + internal notification emails, and advance to the
+    Step 4 confirmation. Uploads aren't strictly required to advance — the
+    customer can add files later — but when present they're staged and
+    summarised in both emails.
+    """
     gate = _onboarding_gate(3)
     if gate:
         return gate
-    if request.method == "POST":
-        return redirect(url_for("onboarding_step4"))
     draft = _onboarding_draft()
     plan = onboarding_preview.plan_by_key(draft.get("package"))
+
+    if request.method == "POST":
+        rec = _onboarding_record(draft)
+        files = request.files.getlist("report_files") or []
+        staged = _stage_intake_uploads(files)
+        details = draft.get("details") or {}
+        if rec:
+            # Merge with any previously-staged files so re-submitting adds.
+            try:
+                prior = json.loads(rec.get("uploads_json") or "[]")
+            except (ValueError, TypeError):
+                prior = []
+            all_uploads = (prior or []) + staged
+            db.set_intake_uploads(rec["id"], json.dumps(all_uploads))
+            email_status = _send_onboarding_emails(rec, details, all_uploads)
+            db.set_intake_email_status(rec["id"], email_status)
+            draft["email_status"] = email_status
+            draft["upload_count"] = len(all_uploads)
+            session[ONBOARDING_DRAFT_KEY] = draft
+            _audit(
+                "onboarding_uploads_submitted",
+                target_type="intake",
+                target_id=rec.get("reference"),
+                details=f"files={len(staged)} total={len(all_uploads)} email={email_status}",
+            )
+        return redirect(url_for("onboarding_step4"))
+
     return render_template(
         "onboarding/step3.html",
         step=3,
@@ -3032,7 +3395,176 @@ def onboarding_step3():
         secure_access_note=onboarding_preview.SECURE_ACCESS_NOTE,
         resource_links=onboarding_preview.RESOURCE_LINKS,
         stripe_enabled=stripe_checkout.stripe_enabled(),
+        payment_simulated=bool(draft.get("payment_simulated")),
     )
+
+
+def _send_onboarding_emails(rec, details, uploads):
+    """Send the post-upload customer confirmation + internal notification.
+
+    Customer email states (per product copy): we received the info/files, the
+    team is reviewing, the migration happens on the Clio migration date, and
+    how to reach us / how we reach them. Internal email carries plan, payment
+    status, firm/contact details, Clio date, and the uploaded-file summary.
+
+    Best-effort; never raises. Returns 'sent' / 'partial' / 'skipped'.
+    """
+    if not email_sender.is_smtp_configured():
+        logging.info(
+            "Onboarding %s uploads stored; SMTP not configured, skipping emails",
+            rec.get("reference"),
+        )
+        return "skipped"
+
+    app_name = branding.APP_NAME
+    support = branding.SUPPORT_EMAIL
+    plan_slug = (rec.get("plan") or "").strip().lower()
+    clio_date = rec.get("clio_migration_date") or details.get("clio_migration_date") or ""
+    payment_status = intake.normalize_payment_status(rec.get("payment_status"))
+    ok = True
+
+    cust_subject, cust_body = intake.customer_email_bodies(
+        first_name=rec.get("first_name") or details.get("first_name") or "",
+        app_name=app_name,
+        support_email=support,
+        plan=plan_slug,
+        clio_migration_date=clio_date,
+        uploads=uploads,
+        payment_status=payment_status,
+    )
+    if not email_sender.send_email(
+        to=rec.get("email"), subject=cust_subject, body_text=cust_body
+    ):
+        ok = False
+
+    admin_link = None
+    try:
+        admin_link = _checkout_base_url() + url_for("operator_intake_list")
+    except Exception:
+        admin_link = None
+
+    recipients = intake.internal_recipients(support)
+    if recipients:
+        int_subject, int_body = intake.internal_email_bodies(
+            app_name=app_name,
+            reference=rec.get("reference"),
+            firm_name=rec.get("firm_name") or "",
+            first_name=rec.get("first_name") or "",
+            last_name=rec.get("last_name") or "",
+            position=rec.get("position"),
+            phone=rec.get("phone"),
+            email=rec.get("email") or "",
+            plan=plan_slug,
+            clio_migration_date=clio_date,
+            uploads=uploads,
+            admin_link=admin_link,
+            payment_status=payment_status,
+        )
+        for addr in recipients:
+            if not email_sender.send_email(
+                to=addr, subject=int_subject, body_text=int_body
+            ):
+                ok = False
+
+    return "sent" if ok else "partial"
+
+
+@app.route("/onboarding/stripe/webhook", methods=["POST"])
+def onboarding_stripe_webhook():
+    """Stripe webhook for the onboarding flow.
+
+    Verifies the Stripe signature with STRIPE_WEBHOOK_SECRET (never trusts the
+    body otherwise), then handles checkout.session.completed by marking the
+    linked onboarding record paid. Idempotent — a replayed event re-marking an
+    already-paid record is a safe no-op. Cancellation / async-failure events
+    are handled where it's safe to. Logs event type + reference only; never
+    customer PII or secrets.
+    """
+    payload = request.get_data()
+    sig = request.headers.get("Stripe-Signature", "")
+    try:
+        event = stripe_checkout.verify_webhook(payload, sig)
+    except stripe_checkout.StripeNotConfigured:
+        logging.warning("Stripe webhook received but STRIPE_WEBHOOK_SECRET not set")
+        return jsonify({"error": "webhook not configured"}), 503
+    except Exception:
+        # Signature verification failure or malformed payload. Do not process.
+        logging.warning("Stripe webhook signature verification failed")
+        return jsonify({"error": "invalid signature"}), 400
+
+    etype = event.get("type") if isinstance(event, dict) else getattr(event, "type", "")
+    data_obj = (event.get("data") or {}).get("object") if isinstance(event, dict) else {}
+    data_obj = data_obj or {}
+
+    if etype == "checkout.session.completed":
+        _webhook_handle_checkout_completed(data_obj)
+    elif etype in ("checkout.session.expired", "checkout.session.async_payment_failed"):
+        _webhook_handle_checkout_failed(data_obj, etype)
+    elif etype == "checkout.session.async_payment_succeeded":
+        _webhook_handle_checkout_completed(data_obj)
+    else:
+        logging.info("Stripe webhook ignored event type=%s", etype)
+
+    # Always 200 on a verified event we understood (or safely ignored), so
+    # Stripe doesn't retry indefinitely.
+    return jsonify({"received": True}), 200
+
+
+def _webhook_handle_checkout_completed(session_obj):
+    session_id = session_obj.get("id")
+    metadata = session_obj.get("metadata") or {}
+    ref = (metadata.get("onboarding_ref") or session_obj.get("client_reference_id") or "").strip()
+    payment_status = session_obj.get("payment_status") or ""
+    if payment_status and payment_status != "paid":
+        # e.g. an async method that hasn't cleared yet; wait for the
+        # async_payment_succeeded event instead.
+        logging.info("Webhook checkout.completed not yet paid ref=%s status=%s", ref, payment_status)
+        return
+    rec = None
+    if session_id:
+        rec = db.get_intake_by_stripe_session(session_id)
+    if not rec and ref:
+        rec = db.get_intake_by_reference(ref)
+    if not rec:
+        logging.warning("Webhook checkout.completed: no matching record ref=%s", ref)
+        return
+    pi = session_obj.get("payment_intent")
+    first_time = db.mark_intake_paid(
+        rec["id"],
+        payment_intent_id=pi if isinstance(pi, str) else None,
+        payment_amount_cents=session_obj.get("amount_total"),
+        currency=session_obj.get("currency"),
+    )
+    logging.info(
+        "Webhook marked onboarding paid ref=%s first_time=%s",
+        rec.get("reference"), first_time,
+    )
+    if first_time:
+        _audit(
+            "onboarding_payment_confirmed",
+            target_type="intake",
+            target_id=rec.get("reference"),
+            details="via=webhook",
+        )
+
+
+def _webhook_handle_checkout_failed(session_obj, etype):
+    session_id = session_obj.get("id")
+    metadata = session_obj.get("metadata") or {}
+    ref = (metadata.get("onboarding_ref") or session_obj.get("client_reference_id") or "").strip()
+    rec = None
+    if session_id:
+        rec = db.get_intake_by_stripe_session(session_id)
+    if not rec and ref:
+        rec = db.get_intake_by_reference(ref)
+    if not rec:
+        return
+    # Only move a still-pending record to cancelled/failed; never downgrade a
+    # record that has already been confirmed paid.
+    if not intake.is_paid(rec.get("payment_status")):
+        status = "failed" if "failed" in etype else "cancelled"
+        db.set_intake_payment_status(rec["id"], status)
+        logging.info("Webhook marked onboarding %s ref=%s", status, rec.get("reference"))
 
 
 @app.route("/onboarding/step-4", methods=["GET"])
@@ -3049,6 +3581,12 @@ def onboarding_step4():
         clio_migration_date=clio_date,
         contact_email=details.get("email") or "",
     )
+    # Tell the customer honestly whether the confirmation email actually went
+    # out. email_status is set on the Step 3 POST: "sent"/"partial" mean SMTP
+    # accepted it; "skipped" means SMTP isn't configured, so we must not claim
+    # we emailed them.
+    email_status = draft.get("email_status")
+    email_sent = email_status in ("sent", "partial")
     return render_template(
         "onboarding/step4.html",
         step=4,
@@ -3057,6 +3595,8 @@ def onboarding_step4():
         confirmation_summary=onboarding_preview.confirmation_summary(clio_date),
         confirmation_email=confirmation_email,
         clio_migration_date=clio_date,
+        contact_email=details.get("email") or "",
+        email_sent=email_sent,
     )
 
 
