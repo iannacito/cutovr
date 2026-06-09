@@ -945,6 +945,10 @@ a.landing-pricing__card:focus-visible {
   border-color: var(--ink);
   box-shadow: 0 1px 0 var(--line);
 }
+.pricing-tier.is-selected {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 2px var(--ink);
+}
 .pricing-tier--quote {
   background: var(--bg-2);
   border-color: transparent;

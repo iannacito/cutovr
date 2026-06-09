@@ -15,10 +15,17 @@ Covers:
      the safe "coordinate secure access separately" copy.
   T5 The copyable "reports we need" email body has the expected lines and
      fills in dates (with a clean YYYY-MM-DD fallback when missing).
-  T6 The CTA is a non-functional preview (disabled, no form submission) and
-     the page contains no <form> that posts onboarding data.
-  T7 Secondary resource links render (Clio overview, PCLaw GL export guide).
+  T6 The payment CTA never collects raw card fields and uses safe wording.
+     When Stripe is not configured it shows a "Stripe Checkout will open here
+     once payment is connected" pending state.
+  T7 The customer-facing guide links are app-hosted (/guides/...), and NO
+     shared internal Google Drive links appear on the preview.
   T8 The live /intake flow is untouched (still renders its own form + CTA).
+  T9 Large, visible "Step 1..5" labels appear on the preview.
+  T10 Step 1 renders selectable plan cards with prices (Essentials $999,
+     Standard $1,499, Complete quote) and a Select/Request button each.
+  T11 The three app-hosted guide routes render with their content.
+  T12 Pricing copy says price is based on history, not firm size.
 """
 
 import os
@@ -50,10 +57,10 @@ def t1_preview_renders_and_marked_preview():
     assert "Your migration, prepared for you" in body
     # The five guided section titles.
     for needle in (
-        "Package and migration period",
-        "Firm details",
-        "Reports to upload",
-        "Optional add-ons and special cases",
+        "Choose your plan",
+        "Tell us about your firm",
+        "Upload your reports",
+        "Add-ons and special cases",
         "What happens next",
     ):
         assert needle in body, f"missing section {needle!r}"
@@ -139,30 +146,40 @@ def t5_copyable_reports_email():
     print("T5 OK: copyable reports email renders + builder fills dates / placeholder")
 
 
-def t6_cta_is_preview_only_no_submission():
+def t6_payment_cta_no_card_fields_safe_wording():
     c = appmod.app.test_client()
     body = c.get("/onboarding-preview").get_data(as_text=True)
-    # The CTA is disabled (preview only).
-    assert "Save onboarding preview" in body
-    assert "disabled" in body, "preview CTA should be disabled"
-    # No form posts onboarding data from this preview page. (_base.html still
-    # carries the logout + support-assistant forms, which is fine; we only
-    # assert nothing here submits to the live intake endpoint.)
+    low = body.lower()
+    # Never collect raw card details on this page.
+    for banned in ('type="password"', 'name="card"', 'name="cardnumber"',
+                   'name="cvc"', 'name="cvv"', 'name="card_number"',
+                   'autocomplete="cc-number"', 'autocomplete="cc-csc"'):
+        assert banned not in low, f"preview must not collect {banned!r}"
+    # The payment step represents Stripe Checkout.
+    assert "Continue to secure payment" in body, "missing Stripe-style CTA"
+    assert "Stripe" in body, "payment step should reference Stripe"
+    # No form posts onboarding data from this preview page.
     assert 'action="/intake"' not in body, "preview must not post to /intake"
     assert 'enctype="multipart/form-data"' not in body, \
         "preview must not contain a file-upload submission form"
-    print("T6 OK: CTA is disabled preview-only; no onboarding submission form")
+    # Stripe is unconfigured in the test env, so the safe pending copy shows
+    # and we do not falsely claim payment is live.
+    assert "Stripe Checkout will open here once payment is connected" in body, \
+        "missing safe pending-state copy when Stripe not configured"
+    print("T6 OK: payment CTA has no card fields; safe Stripe pending wording")
 
 
-def t7_resource_links_present():
+def t7_guide_links_app_hosted_no_drive():
     c = appmod.app.test_client()
     body = c.get("/onboarding-preview").get_data(as_text=True)
-    assert "Clio to QuickBooks integration overview" in body
-    assert "PCLaw GL Export Guide" in body
-    assert "drive.google.com" in body
-    # External links open safely in a new tab.
-    assert 'rel="noopener noreferrer"' in body
-    print("T7 OK: secondary resource links present and open safely")
+    # App-hosted guide links replace the old internal Drive links.
+    assert "/guides/pclaw-general-ledger-export" in body
+    assert "/guides/reports-needed" in body
+    assert "/guides/clio-quickbooks-overview" in body
+    # No shared internal Google Drive links exposed to customers.
+    assert "drive.google.com" not in body, \
+        "internal Google Drive links must NOT appear on the customer preview"
+    print("T7 OK: app-hosted guide links present; no Google Drive links")
 
 
 def t8_live_intake_untouched():
@@ -176,13 +193,86 @@ def t8_live_intake_untouched():
     print("T8 OK: live /intake flow is untouched")
 
 
+def t9_large_step_labels_present():
+    c = appmod.app.test_client()
+    body = c.get("/onboarding-preview").get_data(as_text=True)
+    for n in ("Step 1", "Step 2", "Step 3", "Step 4", "Step 5"):
+        assert n in body, f"missing large step label {n!r}"
+    # New, clearer Step 1 heading.
+    assert "Choose your plan" in body, "Step 1 heading should be 'Choose your plan'"
+    print("T9 OK: large Step 1..5 labels present")
+
+
+def t10_plan_cards_with_prices_and_buttons():
+    c = appmod.app.test_client()
+    body = c.get("/onboarding-preview").get_data(as_text=True)
+    # Plan names + prices.
+    assert "Essentials" in body and "$999" in body
+    assert "Standard" in body and "$1,499" in body
+    assert "Complete" in body and "Quote" in body
+    # Five-or-more-years framing for Complete.
+    assert "5+ years of history" in body
+    # Selection buttons.
+    assert 'data-testid="onboarding-preview-plan-select-essential"' in body
+    assert 'data-testid="onboarding-preview-plan-select-standard"' in body
+    assert 'data-testid="onboarding-preview-plan-select-complete"' in body
+    assert "Select Essentials" in body
+    assert "Request a quote" in body
+    print("T10 OK: plan cards show prices + selection buttons")
+
+
+def t11_guide_routes_render():
+    c = appmod.app.test_client()
+
+    r = c.get("/guides/pclaw-general-ledger-export")
+    assert r.status_code == 200, r.status_code
+    b = r.get_data(as_text=True)
+    assert "Exporting your General Ledger from PCLaw" in b
+    assert "Export monthly, not yearly" in b
+    assert "more reliable" in b
+
+    r = c.get("/guides/reports-needed")
+    assert r.status_code == 200, r.status_code
+    b = r.get_data(as_text=True)
+    assert "Reports we need" in b
+    for needle in ("Chart of Accounts", "Trial Balance — beginning",
+                   "Trial Balance — ending", "Trust Listing",
+                   "Trust Ledger", "General Ledgers — monthly",
+                   "Accounts Payable", "Accounts Receivable"):
+        assert needle in b, f"reports-needed guide missing {needle!r}"
+
+    r = c.get("/guides/clio-quickbooks-overview")
+    assert r.status_code == 200, r.status_code
+    b = r.get_data(as_text=True)
+    assert "Clio and QuickBooks" in b
+    assert "limits" in b.lower()
+    assert "trust" in b.lower()
+    # The Clio guide must reassure: never ask for password/2FA.
+    assert "never ask for your Clio password" in b
+    low = b.lower()
+    assert 'type="password"' not in low, "guide must not collect passwords"
+    print("T11 OK: all three app-hosted guide routes render with content")
+
+
+def t12_pricing_basis_is_history_not_firm_size():
+    c = appmod.app.test_client()
+    body = c.get("/onboarding-preview").get_data(as_text=True)
+    assert "how much history we bring across" in body, \
+        "pricing should be framed around history, not firm size"
+    print("T12 OK: pricing copy is history-based, not firm-size-based")
+
+
 if __name__ == "__main__":
     t1_preview_renders_and_marked_preview()
     t2_required_reports_checklist_present()
     t3_monthly_gl_guidance()
     t4_no_password_or_2fa_collection()
     t5_copyable_reports_email()
-    t6_cta_is_preview_only_no_submission()
-    t7_resource_links_present()
+    t6_payment_cta_no_card_fields_safe_wording()
+    t7_guide_links_app_hosted_no_drive()
     t8_live_intake_untouched()
+    t9_large_step_labels_present()
+    t10_plan_cards_with_prices_and_buttons()
+    t11_guide_routes_render()
+    t12_pricing_basis_is_history_not_firm_size()
     print("\nALL ONBOARDING PREVIEW SMOKE TESTS PASSED")

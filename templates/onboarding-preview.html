@@ -15,10 +15,10 @@
       <a href="{{ url_for('intake_form') }}">/intake</a>.
     </div>
 
-    <header class="stack-sm" style="max-width:44rem;">
+    <header class="stack-sm" style="max-width:46rem;">
       <p class="eyebrow">Start your {{ app_name }} onboarding</p>
       <h1 class="display" data-testid="onboarding-preview-header">{{ header }}</h1>
-      <p class="lede" data-testid="onboarding-preview-subcopy">{{ subcopy }}</p>
+      <p class="lede" style="font-size:1.2rem;" data-testid="onboarding-preview-subcopy">{{ subcopy }}</p>
     </header>
 
     {# Semi-managed positioning for the first clients: a person reviews and
@@ -27,46 +27,83 @@
       <p style="margin:0;">{{ semi_managed_note }}</p>
     </article>
 
-    {# Progress cards: the five guided sections. #}
-    <ol class="stack" style="list-style:none;margin:0;padding:0;"
+    {# Guided sections. Each step leads with a large, obvious "Step N" label
+       and a big heading so the page reads as a walkthrough, not a checklist. #}
+    <ol class="stack" style="list-style:none;margin:0;padding:0;gap:var(--space-6);"
         data-testid="onboarding-preview-sections">
       {% for s in sections %}
       <li class="card" data-testid="onboarding-preview-section-{{ s.key }}">
-        <div style="display:flex;gap:1rem;align-items:baseline;">
-          <span class="eyebrow" style="margin:0;white-space:nowrap;">Step {{ s.step }}</span>
-          <div class="stack-sm" style="gap:.35rem;">
-            <h2 style="margin:0;font-size:1.15rem;">{{ s.title }}</h2>
-            <p class="muted" style="margin:0;">{{ s.summary }}</p>
-          </div>
-        </div>
+        <p class="eyebrow" style="margin:0 0 .35rem;font-size:.95rem;letter-spacing:.12em;"
+           data-testid="onboarding-preview-step-label-{{ s.key }}">Step {{ s.step }}</p>
+        <h2 style="margin:0;font-size:1.6rem;line-height:1.2;">{{ s.title }}</h2>
+        <p class="muted" style="margin:.5rem 0 0;font-size:1.05rem;">{{ s.summary }}</p>
 
-        {# Section 3 expands into the full reports checklist. #}
+        {# Step 1 expands into selectable plan cards with prices. #}
+        {% if s.key == "package" %}
+        <div class="pricing-tiers" style="margin-top:var(--space-5);"
+             data-testid="onboarding-preview-plans" id="plan-cards">
+          {% for plan in plan_cards %}
+          <article class="pricing-tier{% if plan.featured %} pricing-tier--featured{% endif %}{% if plan.quote %} pricing-tier--quote{% endif %}"
+                   data-plan="{{ plan.key }}"
+                   data-plan-name="{{ plan.name }}"
+                   data-quote="{{ '1' if plan.quote else '0' }}"
+                   data-testid="onboarding-preview-plan-{{ plan.key }}">
+            {% if plan.featured %}<p class="pricing-tier__badge">Most common</p>{% endif %}
+            <header class="pricing-tier__head">
+              <p class="pricing-tier__eyebrow">{{ plan.name }}</p>
+              <h3 class="pricing-tier__name">{{ plan.period }}</h3>
+              <p class="pricing-tier__price">
+                <span class="pricing-tier__amount{% if plan.quote %} pricing-tier__amount--quote{% endif %}"
+                      data-testid="onboarding-preview-plan-price-{{ plan.key }}">{{ plan.price }}</span>
+              </p>
+              <p class="pricing-tier__sub">{{ plan.summary }}</p>
+            </header>
+            <ul class="pricing-tier__list">
+              {% for line in plan.covers %}
+              <li>{{ line }}</li>
+              {% endfor %}
+            </ul>
+            <button type="button"
+                    class="btn {% if plan.featured %}btn-primary{% else %}btn-secondary{% endif %} btn-lg pricing-tier__cta js-plan-select"
+                    data-plan-select="{{ plan.key }}"
+                    data-testid="onboarding-preview-plan-select-{{ plan.key }}">
+              {% if plan.quote %}Request a quote{% else %}Select {{ plan.name }}{% endif %}
+            </button>
+          </article>
+          {% endfor %}
+        </div>
+        <p class="note" style="margin-top:var(--space-4);" data-testid="onboarding-preview-pricing-basis">
+          {{ pricing_basis_note }}
+        </p>
+        {% endif %}
+
+        {# Step 3 expands into the full reports checklist. #}
         {% if s.key == "reports" %}
-        <ul style="margin:1rem 0 0;padding-left:1.2rem;line-height:1.6;font-size:.94rem;"
+        <ul style="margin:1.25rem 0 0;padding-left:1.2rem;line-height:1.7;font-size:1.02rem;"
             data-testid="onboarding-preview-reports">
           {% for r in reports %}
-          <li style="margin-bottom:.5rem;">
+          <li style="margin-bottom:.6rem;">
             <strong>{{ r.title }}</strong>{% if r.when %} <span class="muted">&mdash; {{ r.when }}</span>{% endif %}
             {% if r.add_on %}<span class="eyebrow" style="margin-left:.4rem;">add-on</span>{% endif %}
             <br>
-            <span class="muted" style="font-size:.9rem;">{{ r.note }}</span>
+            <span class="muted">{{ r.note }}</span>
           </li>
           {% endfor %}
         </ul>
         {% endif %}
 
-        {# Section 4 expands into add-ons + secure-access copy. #}
+        {# Step 4 expands into add-ons + secure-access copy. #}
         {% if s.key == "addons" %}
-        <div class="card card--inset" style="margin-top:1rem;"
+        <div class="card card--inset" style="margin-top:1.25rem;"
              data-testid="onboarding-preview-secure-access">
           <p style="margin:0;font-weight:600;">Trust ledger &amp; secure access</p>
           <p class="muted" style="margin:.4rem 0 0;">{{ secure_access_note }}</p>
         </div>
         {% endif %}
 
-        {# Section 5 expands into the what-happens-next steps. #}
+        {# Step 5 expands into the what-happens-next steps. #}
         {% if s.key == "next" %}
-        <ol style="margin:1rem 0 0;padding-left:1.2rem;line-height:1.7;font-size:.94rem;"
+        <ol style="margin:1.25rem 0 0;padding-left:1.2rem;line-height:1.8;font-size:1.02rem;"
             data-testid="onboarding-preview-next">
           {% for step in what_happens_next %}
           <li>{{ step }}</li>
@@ -82,7 +119,7 @@
       <div class="card-head" style="display:flex;justify-content:space-between;align-items:baseline;gap:1rem;flex-wrap:wrap;">
         <div>
           <p class="eyebrow" style="margin:0;">Reports we need</p>
-          <h2 style="margin:.2rem 0 0;font-size:1.15rem;">A simple checklist you can copy</h2>
+          <h2 style="margin:.2rem 0 0;font-size:1.25rem;">A simple checklist you can copy</h2>
         </div>
         <button type="button" class="btn btn-secondary btn-sm"
                 data-copy-target="reports-email"
@@ -94,29 +131,59 @@
       </p>
       <pre id="reports-email"
            data-testid="onboarding-preview-email-body"
-           style="white-space:pre-wrap;background:var(--surface,#f7f7f5);border:1px solid var(--line);border-radius:.5rem;padding:1rem;font-family:'JetBrains Mono',monospace;font-size:.85rem;line-height:1.6;overflow:auto;">{{ sample_email }}</pre>
+           style="white-space:pre-wrap;background:var(--surface,#f7f7f5);border:1px solid var(--line);border-radius:.5rem;padding:1rem;font-family:'JetBrains Mono',monospace;font-size:.9rem;line-height:1.6;overflow:auto;">{{ sample_email }}</pre>
     </article>
 
-    {# Primary CTA — preview only, deliberately non-functional. #}
-    <div class="stack-sm">
-      <button type="button" class="btn btn-primary btn-lg full-width"
-              data-testid="onboarding-preview-cta" disabled
-              style="opacity:.7;cursor:not-allowed;">Save onboarding preview</button>
-      <p class="note" style="margin:0;text-align:center;">
-        This is a preview. The button is disabled on purpose &mdash; no details
-        are collected or submitted here.
+    {# Payment CTA — Stripe Checkout, no card fields collected here. When
+       Stripe isn't configured the CTA is a safe pending state. The selected
+       plan name is reflected here via progressive enhancement. #}
+    <div class="card" data-testid="onboarding-preview-payment">
+      <p class="eyebrow" style="margin:0 0 .35rem;">Final step</p>
+      <h2 style="margin:0;font-size:1.4rem;">Secure payment</h2>
+      <p class="muted" style="margin:.5rem 0 1rem;" data-testid="onboarding-preview-selected-plan">
+        {% if stripe_enabled %}
+        Select a plan above, then continue to secure card payment, handled by Stripe.
+        {% else %}
+        Select a plan above. Secure card payment will be handled by Stripe once
+        it's connected.
+        {% endif %}
       </p>
+
+      {% if stripe_enabled %}
+      <button type="button" class="btn btn-primary btn-lg full-width"
+              data-testid="onboarding-preview-pay-cta"
+              data-stripe-state="ready">
+        Continue to secure payment
+      </button>
+      <p class="note" style="margin:.5rem 0 0;text-align:center;">
+        You'll be taken to Stripe's secure checkout. We never see or store your
+        card details.
+      </p>
+      {% else %}
+      <button type="button" class="btn btn-primary btn-lg full-width"
+              data-testid="onboarding-preview-pay-cta"
+              data-stripe-state="pending" disabled
+              style="opacity:.7;cursor:not-allowed;">
+        Continue to secure payment
+      </button>
+      <p class="note" style="margin:.5rem 0 0;text-align:center;"
+         data-testid="onboarding-preview-stripe-pending">
+        Stripe Checkout will open here once payment is connected. This is a
+        preview &mdash; no card details are collected and nothing is charged.
+      </p>
+      {% endif %}
     </div>
 
-    {# Secondary resource links — kept visually quiet so they don't compete
-       with the onboarding flow. External links open in a new tab. #}
+    {# App-hosted instruction guides — kept visually quiet so they don't
+       compete with the onboarding flow. These replace the old internal
+       Google Drive links. #}
     <aside class="card card--quiet" data-testid="onboarding-preview-resources">
-      <p class="eyebrow" style="margin:0 0 .5rem;">Helpful resources</p>
-      <ul style="margin:0;padding-left:1.2rem;line-height:1.8;font-size:.9rem;">
+      <p class="eyebrow" style="margin:0 0 .5rem;">Helpful guides</p>
+      <ul style="margin:0;padding-left:1.2rem;line-height:1.9;font-size:.95rem;">
         {% for link in resource_links %}
         <li>
-          <a href="{{ link.url }}"{% if link.external %} target="_blank" rel="noopener noreferrer"{% endif %}
-             class="muted">{{ link.label }}{% if link.external %} &nearr;{% endif %}</a>
+          <a href="{{ url_for(link.endpoint) }}" class="muted"
+             data-testid="onboarding-preview-guide-link">{{ link.label }}</a>
         </li>
         {% endfor %}
       </ul>
@@ -126,25 +193,59 @@
 </section>
 
 <script>
-  // Preview-only: copy the checklist text to the clipboard. No network,
-  // no submission — purely a convenience for reviewers.
+  // Preview-only progressive enhancement. No network, no submission.
   (function () {
-    var btn = document.querySelector('[data-copy-target="reports-email"]');
-    if (!btn) return;
-    btn.addEventListener("click", function () {
-      var el = document.getElementById("reports-email");
-      if (!el) return;
-      var text = el.innerText;
-      var done = function () {
-        var label = btn.textContent;
-        btn.textContent = "Copied";
-        setTimeout(function () { btn.textContent = label; }, 1500);
-      };
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(done, done);
-      } else {
-        done();
-      }
+    // Copy the checklist text to the clipboard.
+    var copyBtn = document.querySelector('[data-copy-target="reports-email"]');
+    if (copyBtn) {
+      copyBtn.addEventListener("click", function () {
+        var el = document.getElementById("reports-email");
+        if (!el) return;
+        var text = el.innerText;
+        var done = function () {
+          var label = copyBtn.textContent;
+          copyBtn.textContent = "Copied";
+          setTimeout(function () { copyBtn.textContent = label; }, 1500);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done, done);
+        } else {
+          done();
+        }
+      });
+    }
+
+    // Plan selection: highlight the chosen card and update the payment copy.
+    var cards = document.querySelectorAll('[data-plan]');
+    var selected = document.querySelector('[data-testid="onboarding-preview-selected-plan"]');
+    var payCta = document.querySelector('[data-testid="onboarding-preview-pay-cta"]');
+    var stripeReady = payCta && payCta.getAttribute('data-stripe-state') === 'ready';
+
+    function clearSelection() {
+      cards.forEach(function (c) { c.classList.remove('is-selected'); });
+    }
+
+    document.querySelectorAll('.js-plan-select').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var key = btn.getAttribute('data-plan-select');
+        var card = document.querySelector('[data-plan="' + key + '"]');
+        if (!card) return;
+        clearSelection();
+        card.classList.add('is-selected');
+        var name = card.getAttribute('data-plan-name') || 'your plan';
+        var isQuote = card.getAttribute('data-quote') === '1';
+
+        if (!selected) return;
+        if (isQuote) {
+          selected.textContent = name + ' is quote-based — request a quote and we will follow up. No payment is taken now.';
+          if (payCta) { payCta.setAttribute('disabled', 'disabled'); payCta.style.opacity = '.7'; payCta.style.cursor = 'not-allowed'; }
+        } else if (stripeReady) {
+          selected.textContent = 'Selected: ' + name + '. Continue to secure card payment, handled by Stripe.';
+          if (payCta) { payCta.removeAttribute('disabled'); payCta.style.opacity = ''; payCta.style.cursor = ''; }
+        } else {
+          selected.textContent = 'Selected: ' + name + '. Secure card payment will be handled by Stripe once it is connected.';
+        }
+      });
     });
   })();
 </script>
