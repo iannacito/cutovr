@@ -6,7 +6,7 @@ Run from project root:
 
 Verifies:
   T1 With OPERATOR_EMAILS unset: panel feature is disabled.
-       - Anonymous /operator → redirect to /login (login_required runs first).
+       - Anonymous /operator → 404 (we never confirm the panel's existence).
        - A logged-in non-operator user → 404 on /operator.
        - Nav HTML on /dashboard does NOT contain "Operator" link.
        - is_operator_user(user) returns False.
@@ -114,10 +114,11 @@ def t1_unset_disables_panel():
     assert op.is_operator_user({"email": "anyone@x.com"}) is False
     assert op.is_operator_user(None) is False
 
-    # Anonymous → login_required wins
+    # Anonymous → 404 (we never confirm the panel exists to a logged-out
+    # prober; matches /demo and avoids the confusing "please log in" flash).
     c = appmod.app.test_client()
     r = c.get("/operator")
-    assert r.status_code == 302 and "/login" in r.headers.get("Location", ""), r.status_code
+    assert r.status_code == 404, r.status_code
 
     # Logged-in non-operator → 404 (because operator_required aborts)
     _signup(c, "Acme Law", "alice@acme.test")

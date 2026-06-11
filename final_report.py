@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
 
@@ -422,7 +422,7 @@ def build_reconciliation_summary(
         lines=lines,
         warnings=warnings,
         overall_status=overall,
-        generated_at=generated_at or datetime.utcnow().strftime("%Y-%m-%d %H:%MZ"),
+        generated_at=generated_at or datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d %H:%MZ"),
         validation_passed=validation_passed,
         validation_open_items=validation_open_items,
     )

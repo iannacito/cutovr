@@ -45,6 +45,13 @@ REPORT_CHART_OF_ACCOUNTS = "chart_of_accounts"
 REPORT_TRIAL_BALANCE = "trial_balance"
 REPORT_TRUST_LISTING = "trust_listing"
 
+# Neutral type for a failed / unrecognized upload. A file that could not be
+# parsed must NOT default to general_ledger: that fallback let broken or
+# wrong-shape files pool with real general-ledger jobs and become a Step 5
+# import target. Storing them as "unknown" keeps them out of every
+# report-type pool while preserving the row for operator/audit history.
+REPORT_UNKNOWN = "unknown"
+
 REPORT_TYPES = (
     REPORT_GENERAL_LEDGER,
     REPORT_CHART_OF_ACCOUNTS,
@@ -57,6 +64,7 @@ REPORT_LABELS = {
     REPORT_CHART_OF_ACCOUNTS: "Chart of Accounts",
     REPORT_TRIAL_BALANCE: "Trial Balance",
     REPORT_TRUST_LISTING: "Trust Listing",
+    REPORT_UNKNOWN: "Unrecognized report",
 }
 
 # Whether each report type currently writes to QuickBooks Online.
@@ -68,6 +76,7 @@ REPORT_QBO_BEHAVIOR = {
     REPORT_CHART_OF_ACCOUNTS: "preview",
     REPORT_TRIAL_BALANCE: "readonly",
     REPORT_TRUST_LISTING: "readonly",
+    REPORT_UNKNOWN: "readonly",
 }
 
 
@@ -337,6 +346,43 @@ def detect_report_type(fieldnames: Optional[Iterable[str]]) -> Optional[str]:
     if best_score < 3:
         return None
     return best
+
+
+# Report shapes Cutovr can recognize but does not yet process. The sample
+# library ships examples of these (bank balances, A/R, A/P, cutover
+# reconciliation). Without this, those files fell through to a generic
+# "we could not read the ledger" error, which misled users into thinking
+# their file was broken. We recognize the shape and return a friendly
+# label so the upload path can say "this report type is coming soon"
+# instead.
+_COMING_SOON_SIGNATURES = (
+    # (label, required-header-set)
+    ("Bank reconciliation",
+     {"bank_account_name", "statement_balance"}),
+    ("Accounts receivable (client/matter A/R)",
+     {"client_id", "ar_balance"}),
+    ("Accounts payable (vendor A/P)",
+     {"vendor_id", "ap_balance"}),
+    ("Cutover reconciliation",
+     {"source_report", "target_qbo_area"}),
+)
+
+
+def detect_coming_soon_report(fieldnames: Optional[Iterable[str]]) -> Optional[str]:
+    """Recognize a known-but-unsupported PCLaw report by its headers.
+
+    Returns a human-readable label (e.g. "Accounts receivable") when the
+    headers match one of the report types Cutovr will support later, or
+    None when the file isn't one of those recognizable shapes.
+    """
+    idx = _index_headers(fieldnames)
+    if not idx:
+        return None
+    present = set(idx.keys())
+    for label, required in _COMING_SOON_SIGNATURES:
+        if required <= present:
+            return label
+    return None
 
 
 # --- parsers ---------------------------------------------------------------

@@ -1,7 +1,7 @@
 import logging
 import time
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 import base64
 
@@ -163,7 +163,7 @@ class QBOAuthHandler:
         token_data = resp.json()
 
         expires_in = token_data.get("expires_in", 3600)
-        expires_at = (datetime.utcnow() + timedelta(seconds=expires_in)).isoformat()
+        expires_at = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=expires_in)).isoformat()
 
         return {
             "access_token": token_data["access_token"],
@@ -214,7 +214,7 @@ class QBOAuthHandler:
         token_data = resp.json()
 
         expires_in = token_data.get("expires_in", 3600)
-        expires_at = (datetime.utcnow() + timedelta(seconds=expires_in)).isoformat()
+        expires_at = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=expires_in)).isoformat()
 
         return {
             "access_token": token_data["access_token"],

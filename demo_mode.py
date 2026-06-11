@@ -49,7 +49,7 @@ import csv
 import io
 import os
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -109,7 +109,7 @@ def new_demo_run_id() -> str:
     random suffix removes any chance of two demos in the same minute
     colliding when wall-clock resolution is coarser than expected.
     """
-    ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+    ts = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y%m%dT%H%M%S")
     suffix = secrets.token_hex(2).upper()
     return f"D-{ts}-{suffix}"
 
@@ -390,6 +390,18 @@ def is_superseded_job(job: dict) -> bool:
     """True iff ``job`` was replaced by a newer upload of the same type."""
     status = (job.get("status") or "").strip()
     return status.startswith(SUPERSEDED_STATUS_PREFIX)
+
+
+def is_failed_job(job: dict) -> bool:
+    """True iff ``job`` ended in a parse/validation failure.
+
+    Failed uploads must never be picked as a Step 5 import target: a
+    broken or wrong-shape file that fell back to the general-ledger pool
+    could otherwise become the "latest GL" and be sent to QuickBooks.
+    The upload path records these with a status beginning "Error:".
+    """
+    status = (job.get("status") or "").strip().lower()
+    return status.startswith("error")
 
 
 def filter_active_jobs(jobs) -> list:
