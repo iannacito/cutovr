@@ -108,8 +108,8 @@ def t1_dashboard_sandbox_banner():
     c = appmod.app.test_client()
     _signup(c)
     body = c.get("/dashboard").get_data(as_text=True)
-    assert "Sandbox Testing Mode" in body, "expected sandbox banner on dashboard"
-    assert "production approval" in body.lower(), body[:400]
+    assert "Sandbox mode" in body, "expected sandbox banner on dashboard"
+    assert "test company" in body.lower(), body[:400]
 
     # Production: banner suppressed.
     appmod2 = _fresh_app({
@@ -120,7 +120,7 @@ def t1_dashboard_sandbox_banner():
     c2 = appmod2.app.test_client()
     _signup(c2)
     body2 = c2.get("/dashboard").get_data(as_text=True)
-    assert "Sandbox Testing Mode" not in body2, \
+    assert "Sandbox mode" not in body2, \
         "sandbox banner should NOT render in production"
     print("T1 OK: dashboard sandbox banner toggles on QBO_ENVIRONMENT")
 

@@ -4,11 +4,9 @@
 <section class="page page--prose">
   <header class="hero">
     <p class="eyebrow">Onboarding</p>
-    <h1 class="display">A quiet, careful path off PCLaw.</h1>
+    <h1 class="display">Move your PCLaw books into QuickBooks.</h1>
     <p class="muted">
-      A plain-English walkthrough for law-firm staff. How to move PCLaw
-      transaction history into QuickBooks Online, what to check at each
-      step, and how to roll it back if something looks wrong.
+      Step by step, with a check at each stage and a one-click rollback.
     </p>
   </header>
 
@@ -52,35 +50,31 @@
   <section style="margin-top:var(--space-10);" id="pclaw-export-guide" data-testid="onboarding-export-guide">
     <h2>Getting your reports out of PCLaw</h2>
     <p class="muted" style="margin-bottom:var(--space-4);">
-      You don't need to learn any new PCLaw screens to use this tool. Below is what each report is, why we want it, and roughly where to find it inside PCLaw. If your PCLaw build labels a menu differently, the export should still be available from your PCLaw reporting / export area &mdash; the report name is the key.
+      These all export as CSV from PCLaw&rsquo;s reporting area. Menu names
+      vary by version &mdash; search by the report name.
     </p>
     <div class="card" style="padding:var(--space-4);">
       <ol class="secure-list" style="margin:0;padding-left:1.25rem;">
         <li style="margin-bottom:var(--space-3);">
           <strong>Account List (Chart of Accounts).</strong>
           The list of accounts your firm uses. We match these against your
-          QuickBooks accounts. <br>
-          <span class="muted" style="font-size:.9rem;">Run from your PCLaw reporting/export area &mdash; look for &ldquo;Chart of Accounts&rdquo; or &ldquo;Account List&rdquo;. Export as CSV.</span>
+          QuickBooks accounts.
         </li>
         <li style="margin-bottom:var(--space-3);">
           <strong>Transaction History (General Ledger).</strong>
-          The actual entries to move. Run for the period you want to bring over.<br>
-          <span class="muted" style="font-size:.9rem;">Run from your PCLaw reporting/export area &mdash; look for &ldquo;General Ledger&rdquo; or &ldquo;Transaction History&rdquo;. Export as CSV.</span>
+          The actual entries to move. Run for the period you want to bring over.
         </li>
         <li style="margin-bottom:var(--space-3);">
           <strong>Starting Balances (Trial Balance).</strong>
-          The balance of every account as of your switchover date. Used to seed opening balances in QuickBooks and to check the books afterward.<br>
-          <span class="muted" style="font-size:.9rem;">Run from your PCLaw reporting/export area &mdash; look for &ldquo;Trial Balance&rdquo; as of your switchover date.</span>
+          The balance of every account as of your switchover date. Used to seed opening balances in QuickBooks and to check the books afterward.
         </li>
         <li style="margin-bottom:var(--space-3);">
           <strong>Final Balance Check (Trial Balance, end of period).</strong>
-          A second Trial Balance run for the end of the period you moved. Used at the very end to confirm every dollar landed cleanly.<br>
-          <span class="muted" style="font-size:.9rem;">Same export as above, just dated at the end of your migration window.</span>
+          A second Trial Balance run for the end of the period you moved. Used at the very end to confirm every dollar landed cleanly.
         </li>
         <li style="margin-bottom:var(--space-3);">
           <strong>Client Trust Balances (Trust Listing).</strong>
-          Per-matter trust balances. Reconciled against your trust liability and trust-bank totals. Never auto-posted &mdash; see the IOLTA section below.<br>
-          <span class="muted" style="font-size:.9rem;">Run from your PCLaw reporting/export area &mdash; look for &ldquo;Trust Listing&rdquo; or &ldquo;Client Trust Balances&rdquo;.</span>
+          Per-matter trust balances. Reconciled against your trust liability and trust-bank totals. Never auto-posted &mdash; see the IOLTA section below.
         </li>
         <li>
           <strong>Customer / Vendor lists</strong> <span class="muted">(if your PCLaw build supports a direct export).</span>
@@ -89,7 +83,7 @@
       </ol>
     </div>
     <p class="muted" style="font-size:.85rem;margin-top:var(--space-3);">
-      Don't worry about getting the column order &ldquo;right&rdquo; &mdash; we look at the header row, not the position. As long as the file is a CSV with sensible column headings, the app will figure the rest out.
+      Column order doesn&rsquo;t matter &mdash; we read the headers.
     </p>
   </section>
 
@@ -132,14 +126,14 @@
   <section style="margin-top:var(--space-10);">
     <h2>The full workflow</h2>
     <ol class="secure-list" style="margin-top:var(--space-4);">
-      <li><strong>Export from PCLaw.</strong> Run the General Ledger report for the period you want and save as CSV.</li>
-      <li><strong>Upload.</strong> From the dashboard, enter the firm name and pick the CSV. The file is encrypted before processing.</li>
-      <li><strong>Review the preflight.</strong> The job page shows transaction count, debit / credit totals, whether the file balances, and which accounts were detected.</li>
-      <li><strong>Map accounts.</strong> Open the matching screen and pair each PCLaw account with a QuickBooks account. The import is blocked until every account is matched.</li>
-      <li><strong>Connect QuickBooks.</strong> Sign in with Intuit and pick the company that should receive these records.</li>
-      <li><strong>Confirm.</strong> In production, type <code>IMPORT</code> on the confirmation card to enable the post.</li>
-      <li><strong>Send.</strong> Each PCLaw transaction posts as one QuickBooks journal entry. Duplicate protection runs first.</li>
-      <li><strong>Verify.</strong> Re-fetch every entry from QuickBooks and compare against the CSV.</li>
+      <li><strong>Export from PCLaw.</strong> The General Ledger for your period, as CSV.</li>
+      <li><strong>Upload.</strong> Files are encrypted before processing.</li>
+      <li><strong>Review the preflight.</strong> Counts, totals, and whether the file balances.</li>
+      <li><strong>Map accounts.</strong> Pair each PCLaw account with a QuickBooks account.</li>
+      <li><strong>Connect QuickBooks.</strong> Sign in and pick the receiving company.</li>
+      <li><strong>Confirm.</strong> Type <code>IMPORT</code> to enable the post.</li>
+      <li><strong>Send.</strong> One journal entry per transaction, with duplicate protection.</li>
+      <li><strong>Verify.</strong> Every entry is re-fetched and compared against your CSV.</li>
       <li><strong>Reverse if needed.</strong> Type <code>REVERSE</code> to post offsetting entries.</li>
     </ol>
   </section>
@@ -228,7 +222,7 @@
       {% else %}
         the address on the support page.
       {% endif %}
-      Include the job id and the exact flash message &mdash; please don&rsquo;t paste raw ledger content or OAuth tokens.
+      Include the job ID and the error message (never paste ledger data).
     </p>
   </section>
 

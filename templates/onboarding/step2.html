@@ -13,8 +13,7 @@
       </p>
       <h1 class="display" data-testid="onboarding-step2-header">Tell us about your firm</h1>
       <p class="lede" style="font-size:1.2rem;">
-        A few simple details, your Clio migration date, and the login you'll
-        use for {{ app_name }}. Then pay securely through Stripe.
+        Your details, your migration date, and the login you&rsquo;ll use.
       </p>
     </header>
 
@@ -58,25 +57,17 @@
       <div class="card card--inset" data-testid="onboarding-payment">
         <p class="eyebrow" style="margin:0 0 .35rem;">Pay securely</p>
         <h2 style="margin:0;font-size:1.3rem;">{{ payment_heading }}</h2>
-        <p class="muted" style="margin:.5rem 0 1rem;" data-testid="onboarding-payment-copy">
+        <p class="muted" style="margin:.5rem 0 0;" data-testid="onboarding-payment-copy">
           {% if plan and plan.quote %}
-          This plan is quote-based. Submit your details and our team will
-          prepare a tailored quote &mdash; no payment is taken now.
+          This plan is quote-based &mdash; no payment is taken now.
           {% elif stripe_enabled %}
-          When you continue, we'll take you to Stripe's secure checkout to
-          complete payment. We never see or store your card details.
+          Checkout is handled by Stripe &mdash; we never see or store your
+          card details.
           {% else %}
-          Secure card payment is handled by Stripe. It isn't connected in this
-          environment, so no card details are collected and nothing is charged.
+          Payments are handled by Stripe. It isn't connected in this
+          environment, so nothing is charged.
           {% endif %}
         </p>
-        <p class="note" style="margin:.2rem 0 0;font-weight:600;"
-           data-testid="onboarding-payment-reassurance">{{ payment_reassurance }}</p>
-      </div>
-
-      <div class="card card--inset" data-testid="onboarding-secure-access">
-        <p style="margin:0;font-weight:600;">Trust ledger &amp; secure access</p>
-        <p class="muted" style="margin:.4rem 0 0;">{{ secure_access_note }}</p>
       </div>
 
       <div style="display:flex;gap:.75rem;flex-wrap:wrap;">

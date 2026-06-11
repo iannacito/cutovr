@@ -81,7 +81,7 @@ def t3_landing_scope_qualifier():
     # leading with a turnaround-time claim.
     assert "landing-hour-qualifier" in body
     assert "supported PCLaw CSV exports" in body
-    assert "we do the work" in body
+    assert "accounting-heavy parts" in body
     print("T3 OK: landing scope qualifier reinforces hands-off framing")
 
 

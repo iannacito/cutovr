@@ -49,7 +49,7 @@ def t1_landing_renders_with_marketing_content():
         "PCLaw",
         "QuickBooks",
         "handled for you",
-        "Answer a few simple questions",
+        "answer a few questions",
         # Coverage section makes clear it's not GL-only
         "More than just the General Ledger",
         "Chart of Accounts",
@@ -71,7 +71,7 @@ def t1_landing_renders_with_marketing_content():
         "thousands",
         "fraction of the cost",
         # CTAs
-        "Start your migration",
+        "Get started",
         "Sign up",
     ]
     for needle in must_contain:

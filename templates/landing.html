@@ -10,13 +10,8 @@
       PCLaw to QuickBooks migration, <em>handled for you</em>.
     </h1>
     <p class="landing-hero__lede">
-      Upload your reports. Answer a few simple questions.
-      {{ app_name }} prepares the migration path and handles the
-      accounting-heavy parts for you.
-    </p>
-    <p class="landing-hero__value">
-      No accounting guesswork. No manual back-and-forth. A guided way to
-      move your firm&rsquo;s data.
+      Upload your PCLaw reports, answer a few questions, and we do the
+      accounting-heavy parts.
     </p>
     <p class="landing-hero__price-anchor"
        data-testid="landing-price-anchor"
@@ -26,14 +21,13 @@
     <p class="landing-hero__qualifier muted"
        data-testid="landing-hour-qualifier"
        style="font-size:.85rem;margin-top:var(--space-2);max-width:60ch;">
-      For supported PCLaw CSV exports. You bring the reports; we do the work.
+      For supported PCLaw CSV exports.
     </p>
     <div class="landing-hero__ctas">
       {# Get Started leads into the page-by-page onboarding flow: choose how
          much history to move, enter firm details, pay, then upload reports. #}
       <a class="btn btn-primary btn-lg" href="{{ url_for('onboarding_step1') }}"
-         data-testid="landing-get-started">Get Started</a>
-      <a class="btn btn-secondary btn-lg" href="{{ url_for('signup') }}">Start your migration</a>
+         data-testid="landing-get-started">Get started</a>
       <a class="landing-hero__signin" href="{{ url_for('login') }}">Sign in</a>
     </div>
     <ul class="landing-hero__bullets">
@@ -57,7 +51,6 @@
 <section class="landing-section landing-section--preview" id="see-how-it-works"
          data-testid="landing-preview">
   <div class="landing-section__inner">
-    <p class="eyebrow">See how it works</p>
     <h2 class="h-serif landing-section__title">See how {{ app_name }} works.</h2>
     <p class="muted landing-section__lede">
       A short look at the guided migration &mdash; you upload and confirm,

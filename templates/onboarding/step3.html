@@ -13,9 +13,7 @@
       </p>
       <h1 class="display" data-testid="onboarding-step3-header">Upload the reports we need</h1>
       <p class="lede" style="font-size:1.2rem;">
-        Now that your payment's in, here are the reports to export from PCLaw
-        for your plan. Upload whatever you have &mdash; we'll tell you if
-        anything is missing.
+        Upload what you have &mdash; we&rsquo;ll flag anything missing.
       </p>
       {% if payment_simulated %}
       <p class="note" data-testid="onboarding-step3-demo">
@@ -47,17 +45,11 @@
       <article class="card card--inset" data-testid="onboarding-upload">
         <p style="margin:0;font-weight:600;">Upload your reports</p>
         <p class="muted" style="margin:.4rem 0 .75rem;">
-          Choose your PCLaw exports. You can select more than one file, and you
-          can always send more later &mdash; nothing is locked in.
+          Select one or more CSV files. You can add more later.
         </p>
         <input type="file" name="report_files" multiple
                data-testid="onboarding-file-input"
                style="display:block;width:100%;padding:.6rem;border:1px solid var(--line);border-radius:.5rem;background:var(--surface,#f7f7f5);">
-      </article>
-
-      <article class="card card--inset" data-testid="onboarding-secure-access">
-        <p style="margin:0;font-weight:600;">Trust ledger &amp; secure access</p>
-        <p class="muted" style="margin:.4rem 0 0;">{{ secure_access_note }}</p>
       </article>
 
       {% if resource_links %}

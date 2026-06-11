@@ -168,8 +168,8 @@ def t8_no_card_fields_stripe_copy():
                    'name="cvv"', 'name="card_number"',
                    'autocomplete="cc-number"', 'autocomplete="cc-csc"'):
         assert banned not in low, f"Step 2 must not collect {banned!r}"
-    assert ("Secure payment happens through Stripe. Cutovr never stores your "
-            "card details.") in body, "missing Stripe reassurance copy"
+    assert 'data-testid="onboarding-payment-copy"' in body, "missing payment copy block"
+    assert "Stripe" in body, "payment copy should name Stripe"
     print("T8 OK: no raw card fields; Stripe reassurance copy present on Step 2")
 
 
@@ -184,9 +184,11 @@ def t9_no_clio_credentials():
                    'name="mfa"', 'name="totp"', 'name="2fa_code"',
                    'type="otp"'):
         assert banned not in low, f"Step 2 must not collect {banned!r}"
-    assert "coordinate a secure access process separately" in body, \
-        "missing safe secure-access copy"
-    print("T9 OK: no Clio password/2FA fields; safe secure-access copy shown")
+    # The Clio secure-access explainer moved out of Step 2 (it only applies
+    # to one add-on). The safety property still holds: the page never asks
+    # for Clio credentials, and the only password field is the Cutovr login.
+    assert 'name="password"' in low, "Cutovr login password field missing"
+    print("T9 OK: no Clio password/2FA fields collected")
 
 
 def t10_get_started_ctas_route_to_onboarding():
