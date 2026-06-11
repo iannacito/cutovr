@@ -62,7 +62,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -252,7 +252,7 @@ CREATE TABLE IF NOT EXISTS cutover_settings (
 
 
 def _now() -> str:
-    return datetime.utcnow().isoformat()
+    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
 
 class AppDB:
@@ -309,6 +309,17 @@ class AppDB:
         # instance whose uploads/ tree was wiped would 500 on the
         # decrypt_file call at the top of /jobs/<id>/import-to-qbo.
         add_col("jobs", "gl_rows_json TEXT")
+        # COA create history: the per-run record of QuickBooks accounts
+        # created from a Chart-of-Accounts job (counts, intuit_tids, the
+        # created/failed account lists). Without persistence the dashboard
+        # checklist could never show "Account list created in QuickBooks"
+        # after a reload, and replacing a COA upload wiped the memory of
+        # what had already been created. Stored as JSON TEXT.
+        add_col("jobs", "coa_create_history_json TEXT")
+        # Operator type corrections for COA accounts (account_number/name ->
+        # corrected QBO AccountType). Persisted alongside create history so
+        # the corrections survive a reload too.
+        add_col("jobs", "coa_type_overrides_json TEXT")
         # Canonical migration checkpoint (durable, resumable foundation).
         # One of: uploaded | parsed | matched | reviewed | importing |
         # completed | needs_attention. Distinct from the free-text status
@@ -497,7 +508,7 @@ class AppDB:
         None if the state is unknown, already consumed, or expired.
         """
         from datetime import timedelta
-        cutoff = (datetime.utcnow() - timedelta(seconds=max(1, max_age_seconds))).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=max(1, max_age_seconds))).isoformat()
         with self._conn() as c:
             cur = c.execute(
                 "UPDATE oauth_states SET consumed_at = ? "
@@ -532,7 +543,7 @@ class AppDB:
         past their window they have no value and should not linger on disk.
         """
         from datetime import timedelta
-        cutoff = (datetime.utcnow() - timedelta(seconds=max(1, max_age_seconds))).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=max(1, max_age_seconds))).isoformat()
         with self._conn() as c:
             cur = c.execute(
                 "DELETE FROM oauth_states "
@@ -704,6 +715,20 @@ class AppDB:
                 if job_dict["gl_rows"] is not None
                 else None
             )
+        if "coa_create_history" in job_dict:
+            fields.append("coa_create_history_json")
+            values.append(
+                json.dumps(job_dict["coa_create_history"])
+                if job_dict["coa_create_history"]
+                else None
+            )
+        if "coa_type_overrides" in job_dict:
+            fields.append("coa_type_overrides_json")
+            values.append(
+                json.dumps(job_dict["coa_type_overrides"])
+                if job_dict["coa_type_overrides"]
+                else None
+            )
 
         set_clause = ", ".join(f"{f} = ?" for f in fields)
         values.append(job_id)
@@ -763,6 +788,8 @@ class AppDB:
             ("preflight_json", "preflight"),
             ("pclaw_accounts_json", "pclaw_accounts"),
             ("gl_rows_json", "gl_rows"),
+            ("coa_create_history_json", "coa_create_history"),
+            ("coa_type_overrides_json", "coa_type_overrides"),
         ]:
             v = row[src] if src in row.keys() else None
             if v:

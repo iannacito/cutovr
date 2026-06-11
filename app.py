@@ -2,7 +2,7 @@ from flask import Flask, render_template, request, redirect, url_for, flash, jso
 from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from functools import wraps
 from typing import Optional
@@ -55,11 +55,13 @@ from report_types import (
     REPORT_CHART_OF_ACCOUNTS,
     REPORT_TRIAL_BALANCE,
     REPORT_TRUST_LISTING,
+    REPORT_UNKNOWN,
     REPORT_TYPES,
     REPORT_LABELS,
     REPORT_QBO_BEHAVIOR,
     is_valid_report_type,
     detect_report_type,
+    detect_coming_soon_report,
     parse_chart_of_accounts,
     parse_trial_balance,
     parse_trust_listing,
@@ -201,6 +203,17 @@ except ValueError:
     _max_upload_mb = 25
 
 from datetime import timedelta as _timedelta  # local alias to avoid clobbering datetime above
+
+
+def _utcnow() -> datetime:
+    """Current UTC time as a naive datetime.
+
+    ``datetime.utcnow()`` is deprecated in Python 3.12+. This returns the
+    same value (UTC, no tzinfo) via the non-deprecated API so the rest of
+    the code — which formats/compares naive UTC datetimes — is unchanged.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -655,7 +668,7 @@ def inject_user():
     to every template."""
     user = current_user()
     firm = db.get_firm(user["firm_id"]) if user else None
-    ctx = {"user": user, "firm": firm, "now_year": datetime.utcnow().year}
+    ctx = {"user": user, "firm": firm, "now_year": _utcnow().year}
     ctx.update(branding.context())
     # True when SUPPORT_EMAIL has been set to a real monitored address.
     # Templates use this to suppress mailto: links pointing at the
@@ -781,6 +794,35 @@ class QBOAuthExpired(Exception):
     """Raised when the stored refresh token is no longer accepted by Intuit."""
 
 
+class ReportTypeMismatch(ValueError):
+    """Raised when the user-selected report type contradicts what the
+    header detector confidently recognized.
+
+    Carries the selected and detected types so the friendly-message layer
+    can name both in plain English.
+    """
+
+    def __init__(self, selected: str, detected: str):
+        self.selected = selected
+        self.detected = detected
+        super().__init__(
+            f"report type mismatch: selected {selected!r}, detected {detected!r}"
+        )
+
+
+class ComingSoonReport(ValueError):
+    """Raised when an upload is a report type Cutovr recognizes but does
+    not yet process (e.g. bank reconciliation, A/R, A/P).
+
+    Carries the human-readable label so the friendly-message layer can name
+    it instead of returning a generic parse failure.
+    """
+
+    def __init__(self, label: str):
+        self.label = label
+        super().__init__(f"report type not yet supported: {label}")
+
+
 def _qbo_token_is_fresh(qbo_conn):
     expires_at = qbo_conn.get("expires_at")
     if not expires_at:
@@ -789,7 +831,7 @@ def _qbo_token_is_fresh(qbo_conn):
         exp = datetime.fromisoformat(expires_at)
     except (TypeError, ValueError):
         return False
-    return (exp - datetime.utcnow()).total_seconds() > TOKEN_REFRESH_LEEWAY_SECONDS
+    return (exp - _utcnow()).total_seconds() > TOKEN_REFRESH_LEEWAY_SECONDS
 
 
 def _refresh_qbo_tokens(job_id, qbo_conn, firm_id):
@@ -1216,7 +1258,7 @@ def forgot_password():
             token = _generate_reset_token()
             token_hash = _hash_reset_token(token)
             expires_at = (
-                datetime.utcnow() + timedelta(minutes=PASSWORD_RESET_TTL_MINUTES)
+                _utcnow() + timedelta(minutes=PASSWORD_RESET_TTL_MINUTES)
             ).isoformat()
             db.create_password_reset_token(user["id"], token_hash, expires_at)
             reset_url = url_for("reset_password", token=token, _external=True)
@@ -1263,7 +1305,7 @@ def reset_password(token):
         expires = datetime.fromisoformat(row["expires_at"])
     except (TypeError, ValueError):
         return _invalid()
-    if expires < datetime.utcnow():
+    if expires < _utcnow():
         return _invalid()
 
     user = db.get_user(row["user_id"])
@@ -1358,9 +1400,8 @@ def _build_firm_checklist(firm_id):
     and returns (cutover, checklist_items, next_step).
     """
     cutover = db.get_cutover_settings(firm_id)
-    firm_jobs = demo_mode.filter_active_jobs(
-        db.list_jobs_for_firm(firm_id, limit=500)
-    )
+    all_rows = db.list_jobs_for_firm(firm_id, limit=500) or []
+    firm_jobs = demo_mode.filter_active_jobs(all_rows)
     # Hydrate the jobs we know about so checklist can look at `preflight`,
     # `import_summary`, `verification`. list_jobs_for_firm returns raw rows
     # (with *_json columns); hydrate_job decodes them.
@@ -1368,12 +1409,18 @@ def _build_firm_checklist(firm_id):
     for row in firm_jobs:
         h = db.hydrate_job(row["id"])
         hydrated.append(h or row)
+    # Hydrate the full set (superseded included) so an already-created
+    # Chart of Accounts keeps the checklist ticked after a re-upload.
+    coa_history_jobs = [
+        (db.hydrate_job(row["id"]) or row) for row in all_rows
+    ]
     qbo_conns = db.list_qbo_connections_for_firm(firm_id)
     items = cutover_workflow.build_checklist(
         cutover,
         hydrated,
         has_qbo_connection=bool(qbo_conns),
         account_mapping_count=_firm_account_mapping_count(firm_id),
+        coa_history_jobs=coa_history_jobs,
     )
     return cutover, items, cutover_workflow.next_recommended_step(items)
 
@@ -2071,19 +2118,22 @@ def _build_reconcile_view(firm_id):
     at all — callers should treat that as a blocked state.
     """
     cutover = db.get_cutover_settings(firm_id)
-    firm_jobs = demo_mode.filter_active_jobs(
-        db.list_jobs_for_firm(firm_id, limit=500)
-    )
+    all_rows = db.list_jobs_for_firm(firm_id, limit=500) or []
+    firm_jobs = demo_mode.filter_active_jobs(all_rows)
     hydrated = []
     for row in firm_jobs:
         h = db.hydrate_job(row["id"])
         hydrated.append(h or row)
+    coa_history_jobs = [
+        (db.hydrate_job(row["id"]) or row) for row in all_rows
+    ]
     qbo_conns = db.list_qbo_connections_for_firm(firm_id)
     items = cutover_workflow.build_checklist(
         cutover,
         hydrated,
         has_qbo_connection=bool(qbo_conns),
         account_mapping_count=_firm_account_mapping_count(firm_id),
+        coa_history_jobs=coa_history_jobs,
     )
     match_blocked, blocked_job_id = _firm_match_blocked_state(firm_id)
     stages = customer_workflow.build_customer_stages(
@@ -2474,7 +2524,7 @@ def _verify_import(job, qbo):
         "debits_match": debits_match,
         "credits_match": credits_match,
         "not_found_ids": not_found,
-        "verified_at": datetime.utcnow().isoformat(),
+        "verified_at": _utcnow().isoformat(),
     }
 
 
@@ -4376,7 +4426,7 @@ def _process_uploaded_csv(
             ),
             "category": "error",
         }
-    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    timestamp = _utcnow().strftime("%Y%m%d%H%M%S")
     job_suffix = secrets.token_urlsafe(12)
     job_id = f"job_{timestamp}_{job_suffix}"
     fs_prefix = f"{timestamp}_{job_suffix}"
@@ -4398,7 +4448,7 @@ def _process_uploaded_csv(
         "encrypted_file": encrypted_path.name,
         "file_sha256": file_sha256,
         "status": "File uploaded (encrypted)",
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": _utcnow().isoformat(),
         "summary": {},
         "qbo_connected": False,
         "report_type": user_picked_report_type or REPORT_GENERAL_LEDGER,
@@ -4431,6 +4481,41 @@ def _process_uploaded_csv(
             )
 
         detected = detect_report_type(_fieldnames)
+
+        # A file with headers but zero data rows is not a successful upload.
+        # Accepting it as "success" let the supersede step archive a firm's
+        # real general-ledger upload behind an empty placeholder. Reject it
+        # before any report-type branch runs so it can never supersede a
+        # valid prior upload.
+        if _row_count == 0:
+            raise ValueError(
+                "no data rows: the file has only a header row and no transactions"
+            )
+
+        # If the user explicitly chose a report type and the header detector
+        # is confident it's something else, do not silently process the file
+        # as the chosen type. Uploading a general ledger while choosing
+        # "Account list" produced garbage account names from transaction
+        # rows. Block the dangerous mismatch with a plain-English message so
+        # the customer can pick the right type (or re-export the right file).
+        if (
+            user_picked_report_type
+            and detected
+            and detected != user_picked_report_type
+        ):
+            raise ReportTypeMismatch(user_picked_report_type, detected)
+
+        # Recognize report types Cutovr will support later (bank
+        # reconciliation, A/R, A/P, cutover reconciliation). Only treat the
+        # file as "coming soon" when it isn't a confidently-supported type:
+        # a real general ledger, or a header-detected supported report. This
+        # keeps the four live report types working while giving these files
+        # a calm "coming soon" message instead of a generic parse failure.
+        if not _is_gl and not detected:
+            coming_soon = detect_coming_soon_report(_fieldnames)
+            if coming_soon:
+                raise ComingSoonReport(coming_soon)
+
         if user_picked_report_type:
             effective_report_type = user_picked_report_type
         elif _is_gl:
@@ -4600,12 +4685,23 @@ def _process_uploaded_csv(
             )
             category = "success"
     except Exception as e:  # noqa: BLE001
-        headline, action = friendly_validation_message(e)
+        headline, action = friendly_validation_message(
+            e,
+            selected_type=user_picked_report_type,
+            detected_type=detected,
+        )
         jobs[job_id]["status"] = f"Error: {headline}"
         jobs[job_id]["last_validation_error"] = {
             "headline": headline,
             "action": action,
         }
+        # A failed upload must never pool with real general-ledger jobs.
+        # Store it under the neutral "unknown" type so Step 5 target
+        # selection and the GL-by-type lookup skip it entirely. The row
+        # stays in the DB for operator/audit history.
+        effective_report_type = REPORT_UNKNOWN
+        jobs[job_id]["report_type"] = REPORT_UNKNOWN
+        jobs[job_id]["report_type_detected"] = detected
         message = f"{headline} {action}"
         category = "error"
     finally:
@@ -4644,7 +4740,41 @@ def _process_uploaded_csv(
     # several monthly general ledgers in one batch (Cesar QA item 12)
     # intends *all* of them to stand, so the batch must not archive its
     # own earlier files as it processes the later ones.
-    if supersede_prior and category != "error" and effective_report_type:
+    # Duplicate-upload hint. We already store a SHA-256 of every upload, so
+    # we can recognize an identical re-upload of the same report type for
+    # the same firm. We don't block it (the customer may genuinely want to
+    # re-upload), but we add a friendly hint so they aren't left wondering
+    # whether the second upload "took". We still supersede the prior copy
+    # below so only one identical job stays active — two active
+    # byte-identical GLs would only muddy Step 5 target selection.
+    is_exact_duplicate = False
+    if category != "error" and effective_report_type and file_sha256:
+        try:
+            for prior in (db.list_jobs_for_firm(user["firm_id"], limit=500) or []):
+                if prior.get("id") == job_id:
+                    continue
+                if prior.get("file_sha256") != file_sha256:
+                    continue
+                prior_rt = prior.get("report_type") or REPORT_GENERAL_LEDGER
+                if prior_rt != effective_report_type:
+                    continue
+                if demo_mode.is_archived_demo_job(prior) or \
+                        demo_mode.is_superseded_job(prior):
+                    continue
+                is_exact_duplicate = True
+                break
+        except Exception:  # noqa: BLE001
+            is_exact_duplicate = False
+
+    if is_exact_duplicate:
+        hint = (
+            "Heads up: this is the same file you already uploaded. We've "
+            "kept the most recent copy — nothing else changed."
+        )
+        message = f"{message} {hint}".strip() if message else hint
+
+    if supersede_prior and category not in ("error",) \
+            and effective_report_type:
         try:
             superseded = demo_mode.supersede_prior_jobs(
                 db, user["firm_id"], effective_report_type, keep_job_id=job_id
@@ -4658,7 +4788,16 @@ def _process_uploaded_csv(
                         continue
                     stale_rt = stale.get("report_type") or REPORT_GENERAL_LEDGER
                     if stale_rt == effective_report_type:
-                        jobs.pop(stale_id, None)
+                        # Flip the in-memory copy to the superseded status
+                        # instead of dropping it. filter_active_jobs() keys
+                        # off the status string, so the dashboard and Step 5
+                        # target selection still ignore it — but irreversible
+                        # milestones recorded on the job (a Chart of Accounts
+                        # that was already created in QuickBooks) survive a
+                        # later re-upload of the same report type.
+                        live = db.hydrate_job(stale_id)
+                        if live and live.get("status"):
+                            stale["status"] = live["status"]
         except Exception:  # noqa: BLE001
             pass
 
@@ -4683,7 +4822,20 @@ def upload():
     # report_type is optional for backward compatibility. Missing / blank /
     # "auto" all mean "detect from headers (and fall back to GL behavior)".
     raw_report_type = (request.form.get("report_type") or "").strip().lower()
-    user_picked_report_type = raw_report_type if is_valid_report_type(raw_report_type) else None
+    if raw_report_type in ("", "auto"):
+        user_picked_report_type = None
+    elif is_valid_report_type(raw_report_type):
+        user_picked_report_type = raw_report_type
+    else:
+        # A non-empty report type we don't recognize is a client/form bug,
+        # not a "detect it for me" request. Surface it instead of silently
+        # falling back to auto-detect, which could pick the wrong handler.
+        flash(
+            "That report type isn't one we recognize. Choose a report type "
+            "from the list and try again.",
+            "error",
+        )
+        return redirect(url_for("dashboard"))
 
     if not company or not file:
         flash("Company name and PCLaw export file are required.", "error")
@@ -4889,7 +5041,7 @@ def upload_bulk():
     # alone; ``bulk_upload.classify_csv`` combines headers, filename
     # hints, and content patterns to choose a report type and a
     # confidence label.
-    bulk_id = f"bulk_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{secrets.token_urlsafe(8)}"
+    bulk_id = f"bulk_{_utcnow().strftime('%Y%m%d%H%M%S')}_{secrets.token_urlsafe(8)}"
     aggregated = _classify_and_process_files(
         files, company=company, user_email=user_email, user=user,
     )
@@ -4919,7 +5071,7 @@ def upload_bulk():
         "user_id": user["id"],
         "company": company,
         "email": user_email,
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": _utcnow().isoformat(),
         "results": aggregated,
         "summary": summary,
     }
@@ -5689,7 +5841,7 @@ def coa_apply_route(job_id):
     # query on every page render.
     coa_history = job.get("coa_create_history") or []
     coa_history.append({
-        "created_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "created_at": _utcnow().isoformat(timespec="seconds") + "Z",
         "realm_id": qbo_conn.get("realm_id"),
         "company_name": qbo_conn.get("company_name"),
         "created_count": len(created),
@@ -5786,11 +5938,22 @@ def _firm_latest_jobs_by_type(firm_id: int, report_type: str, limit: int = 20) -
     Skips jobs archived by a demo reset so a stale demo upload cannot
     be picked up as the "latest" reference for cross-report lookups
     after ``Start new demo`` has been clicked.
+
+    Also skips jobs whose parse/validation failed (status "Error: ...").
+    A failed upload must never surface as the "latest" of its type — most
+    importantly, a broken file must not become the Step 5 GL import
+    target. Failed auto-detects are now stored under the neutral
+    "unknown" type, but we exclude failed rows here as a belt-and-braces
+    guard for legacy rows that fell back to general_ledger.
     """
     all_jobs = demo_mode.filter_active_jobs(
         db.list_jobs_for_firm(firm_id, limit=limit) or []
     )
-    return [j for j in all_jobs if (j.get("report_type") or "general_ledger") == report_type]
+    return [
+        j for j in all_jobs
+        if (j.get("report_type") or "general_ledger") == report_type
+        and not demo_mode.is_failed_job(j)
+    ]
 
 
 def _latest_other_job_report(firm_id: int, report_type: str, exclude_job_id: str) -> list[dict]:
@@ -5883,7 +6046,13 @@ def _firm_latest_coa_state(firm_id: int) -> dict:
     overrides: dict = {}
     create_history: list[dict] = []
     for j in coa_jobs:
-        live = jobs.get(j["id"]) or j
+        # Prefer the in-memory job, but after a restart/reload the cache is
+        # empty and the raw DB row from list_jobs_for_firm has the COA
+        # history/overrides only as undecoded *_json strings. Hydrate so the
+        # checklist "Account list created in QuickBooks" state survives a
+        # dashboard reload (and survives replacing the COA upload, since the
+        # prior job's history is still on file).
+        live = jobs.get(j["id"]) or db.hydrate_job(j["id"]) or j
         ov = live.get("coa_type_overrides") or {}
         for k, v in ov.items():
             overrides.setdefault(k, v)
@@ -6005,6 +6174,7 @@ def coa_override_route(job_id):
             "success",
         )
     job["coa_type_overrides"] = overrides
+    _save_job(job_id)
     return redirect(url_for("coa_preview", job_id=job_id))
 
 
@@ -6172,7 +6342,7 @@ def _opening_balance_post(job, user, qbo, qbo_conn, plan):
     if not QBO_REAL_IMPORT:
         job["status"] = "Opening balance JE (demo mode)"
         history_entry = {
-            "created_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            "created_at": _utcnow().isoformat(timespec="seconds") + "Z",
             "demo_mode": True,
             "as_of_date": plan.as_of_date,
             "total_debit": plan.total_debit,
@@ -6219,7 +6389,7 @@ def _opening_balance_post(job, user, qbo, qbo_conn, plan):
     je = (response or {}).get("JournalEntry") or {}
     je_id = str(je.get("Id") or "")
     history_entry = {
-        "created_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "created_at": _utcnow().isoformat(timespec="seconds") + "Z",
         "as_of_date": plan.as_of_date,
         "total_debit": plan.total_debit,
         "total_credit": plan.total_credit,
@@ -6264,7 +6434,7 @@ def ending_tb_reconciliation_view(job_id):
     gl_rows = _latest_other_job_report(user["firm_id"], REPORT_GENERAL_LEDGER, job_id)
     report = build_ending_tb_reconciliation(ending_rows, opening_rows, gl_rows)
     job["ending_tb_reconciliation"] = {
-        "built_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "built_at": _utcnow().isoformat(timespec="seconds") + "Z",
         "summary": report["summary"],
     }
     _save_job(job_id)
@@ -6339,7 +6509,7 @@ def trust_reconciliation_view(job_id):
     tb_rows = _latest_other_job_report(user["firm_id"], REPORT_TRIAL_BALANCE, job_id)
     report = build_trust_listing_reconciliation(trust_rows, tb_rows)
     job["trust_reconciliation"] = {
-        "built_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "built_at": _utcnow().isoformat(timespec="seconds") + "Z",
         "summary": report["summary"],
     }
     _save_job(job_id)
@@ -6400,8 +6570,15 @@ def connect_qbo(job_id):
     job, _user = _job_or_403(job_id)
 
     if QBO_CLIENT_ID == "your-client-id-here":
+        # Operator-only detail (which env vars are unset) stays in the log;
+        # the customer sees a calm, non-technical message.
+        logging.warning(
+            "QuickBooks OAuth not configured: set QBO_CLIENT_ID, "
+            "QBO_CLIENT_SECRET, and QBO_REDIRECT_URI."
+        )
         flash(
-            "QuickBooks OAuth not configured. Set QBO_CLIENT_ID, QBO_CLIENT_SECRET, and QBO_REDIRECT_URI environment variables.",
+            "QuickBooks connection is not available right now. "
+            "Please contact support.",
             "error",
         )
         return redirect(url_for("job_detail", job_id=job_id))
@@ -6779,7 +6956,7 @@ def oauth_callback():
             "access_token_enc": encrypted_access,
             "refresh_token_enc": encrypted_refresh,
             "expires_at": token_data["expires_at"],
-            "connected_at": datetime.utcnow().isoformat(),
+            "connected_at": _utcnow().isoformat(),
             "company_name": None,
         }
 
@@ -7579,7 +7756,7 @@ def _import_to_qbo_impl(job_id):
             # post a single tiny test JournalEntry so the user can confirm the
             # real write path works end-to-end. We do NOT pretend the full
             # ledger imported.
-            txn_date = datetime.utcnow().strftime("%Y-%m-%d")
+            txn_date = _utcnow().strftime("%Y-%m-%d")
             payload = build_test_journal_entry(qbo_accounts, txn_date=txn_date)
             resp = qbo.create_journal_entry(payload)
             je = resp.get("JournalEntry", {})
@@ -9714,7 +9891,7 @@ def reverse_import(job_id):
     _audit("import_reversal_started", target_type="job", target_id=job_id,
            details=f"import #{last_import['id']}, {len(last_import['transactions'])} JEs")
 
-    reversal_date = datetime.utcnow().strftime("%Y-%m-%d")
+    reversal_date = _utcnow().strftime("%Y-%m-%d")
     reversal_rows = []
     try:
         for tx in last_import["transactions"]:
@@ -10025,14 +10202,14 @@ def _is_operator():
 def operator_required(view):
     @wraps(view)
     def wrapper(*args, **kwargs):
-        user = current_user()
-        if not user:
-            flash("Please log in to continue.", "error")
-            return redirect(url_for("login", next=request.path))
-        if not operator_panel.is_operator_user(user):
-            # 404 rather than 403 so we don't confirm the panel exists for
-            # non-operators. This matches the cross-firm 404 convention
-            # used elsewhere (see _job_or_403).
+        # 404 rather than a login redirect or a 403 so we never confirm the
+        # operator panel exists to anyone who isn't an operator — whether
+        # they're logged out or just a normal customer. The old login
+        # redirect ("Please log in to continue") both leaked the route's
+        # existence and confused logged-in customers who were already
+        # authenticated. This matches /demo (404) and the cross-firm 404
+        # convention used elsewhere (see _job_or_403).
+        if not operator_panel.is_operator_user(current_user()):
             abort(404)
         return view(*args, **kwargs)
     return wrapper

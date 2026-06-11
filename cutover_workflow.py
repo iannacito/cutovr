@@ -176,12 +176,21 @@ def build_checklist(
     *,
     has_qbo_connection: bool,
     account_mapping_count: int = 0,
+    coa_history_jobs: Optional[Iterable[dict]] = None,
 ) -> List[ChecklistItem]:
     """Build the ordered checklist from observed state.
 
     `firm_jobs` should be the list of job rows returned by
     `AppDB.list_jobs_for_firm`. We only read `report_type` and `status`
     so it's cheap to call on every dashboard render.
+
+    `coa_history_jobs`, when given, is scanned for Chart-of-Accounts
+    creation history *in addition to* `firm_jobs`. Callers pass the
+    firm's full job set (including superseded uploads) here so that the
+    "Chart of Accounts created in QuickBooks" milestone survives a later
+    re-upload of the chart of accounts — creating accounts in QuickBooks
+    is irreversible, so superseding the upload must not un-tick the step.
+    Defaults to `firm_jobs` when omitted.
 
     Steps the app intentionally doesn't yet build (opening-balance JE
     creation, ending-TB reconciliation as a posted activity, trust
@@ -219,19 +228,31 @@ def build_checklist(
     # 2. Chart of Accounts uploaded / previewed / created
     coa_jobs = [j for j in jobs
                 if (j.get("report_type") or "") == "chart_of_accounts"]
+    # Account-creation history is read from the wider set (superseded
+    # uploads included) so a re-upload can't hide an already-created COA.
+    coa_history_source = list(coa_history_jobs) if coa_history_jobs is not None else jobs
+    coa_history_jobs_filtered = [
+        j for j in coa_history_source
+        if (j.get("report_type") or "") == "chart_of_accounts"
+    ]
     coa_created_history = [
-        h for j in coa_jobs for h in (j.get("coa_create_history") or [])
+        h for j in coa_history_jobs_filtered
+        for h in (j.get("coa_create_history") or [])
     ]
     coa_created_total = sum(
         int(h.get("created_count") or 0) for h in coa_created_history
     )
     if coa_created_total > 0:
+        coa_upload_count = len(coa_jobs) or len([
+            j for j in coa_history_jobs_filtered
+            if j.get("coa_create_history")
+        ])
         items.append(ChecklistItem(
             STEP_COA_UPLOAD, "Chart of Accounts created in QuickBooks",
             STATUS_COMPLETE,
             summary=(
                 f"{coa_created_total} QuickBooks account(s) created across "
-                f"{len(coa_jobs)} upload(s)."
+                f"{coa_upload_count} upload(s)."
             ),
         ))
     elif coa_jobs:

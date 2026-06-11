@@ -48,7 +48,7 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -211,7 +211,7 @@ class ImportHistory:
                     transaction_count,
                     str(debit_total),
                     str(credit_total),
-                    datetime.utcnow().isoformat(),
+                    datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                     status,
                     notes,
                 ),
@@ -316,7 +316,7 @@ class ImportHistory:
                 " created_by_user_id, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     import_id, job_id, firm_id, realm_id, status,
-                    datetime.utcnow().isoformat(), created_by_user_id, error,
+                    datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), created_by_user_id, error,
                 ),
             )
             reversal_id = cur.lastrowid
