@@ -284,6 +284,11 @@
     <p style="max-width:62ch;margin:0 0 var(--space-4);">
       You&rsquo;re now ready to move on to Step 4.
     </p>
+    <a class="btn btn-primary"
+       href="{{ url_for('import_job_entry') }}"
+       data-testid="step3-proceed-to-step4-top">
+      Proceed to Step 4: Review import &rarr;
+    </a>
   </section>
   {% endif %}
   <p class="muted" data-testid="mapping-summary"
