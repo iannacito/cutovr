@@ -1,0 +1,424 @@
+diff --git a/onboarding_preview.py b/onboarding_preview.py
+index b43b46c..9f04877 100644
+--- a/onboarding_preview.py
++++ b/onboarding_preview.py
+@@ -106,10 +106,8 @@ PRICING_BASIS_NOTE = (
+ # that keeps us honest: a person reviews the files, we are not promising a
+ # fully automated, self-serve migration yet.
+ SEMI_MANAGED_NOTE = (
+-    "While we get started, onboarding is hands-on: a Cutovr specialist "
+-    "personally reviews your files, confirms anything that's missing, and "
+-    "prepares your migration for you. You won't be left to figure out "
+-    "accounting on your own."
++    "A Cutovr specialist reviews your files and prepares the migration "
++    "with you."
+ )
+ 
+ 
+@@ -141,8 +139,8 @@ PREVIEW_SECTIONS = (
+         "step": "1",
+         "title": STEP1_HEADING,
+         "summary": (
+-            "Pick the plan that fits how far back you want us to go. Your "
+-            "price depends on how much history we move, not your firm's size."
++            "Pricing is based on how much history we move — not your "
++            "firm's size."
+         ),
+         "after_payment": False,
+     },
+@@ -151,8 +149,8 @@ PREVIEW_SECTIONS = (
+         "step": "2",
+         "title": STEP2_HEADING,
+         "summary": (
+-            "A few simple details, your Clio migration date, and the login "
+-            "you'll use for Cutovr. Then pay securely through Stripe."
++            "Your details, your migration date, and the login you'll use. "
++            "Then secure checkout through Stripe."
+         ),
+         "after_payment": False,
+     },
+@@ -371,7 +369,7 @@ PAYMENT_HEADING = "Pay securely"
+ 
+ # The exact reassurance line from the product copy guidance.
+ PAYMENT_REASSURANCE = (
+-    "Secure payment happens through Stripe. Cutovr never stores your card "
++    "Checkout is handled by Stripe — we never see or store your card "
+     "details."
+ )
+ 
+diff --git a/templates/dashboard.html b/templates/dashboard.html
+index d117965..2d0a46a 100644
+--- a/templates/dashboard.html
++++ b/templates/dashboard.html
+@@ -41,12 +41,10 @@
+   {% if not at_upload_stage %}
+     {% if qbo_configured and qbo_is_sandbox %}
+       <div class="flash info" role="status" aria-label="Sandbox testing mode" style="margin-bottom:var(--space-6);">
+-        <strong>Sandbox Testing Mode.</strong>
+-        You&rsquo;re connected to a QuickBooks <em>sandbox</em> company for safe testing.
+-        Nothing posts to a real firm&rsquo;s QuickBooks.
+-        Real customer QuickBooks companies require Intuit production approval and production credentials, which this build does not yet have.
++        <strong>Sandbox mode.</strong>
++        Connected to a QuickBooks test company &mdash; nothing posts to real books.
+         {% if support_email and "your-domain.example" not in support_email %}
+-          Need the sandbox login? <a href="mailto:{{ support_email }}">Email support</a>.
++          <a href="mailto:{{ support_email }}">Email support</a> for the sandbox login.
+         {% endif %}
+       </div>
+     {% elif not qbo_configured %}
+diff --git a/templates/landing.html b/templates/landing.html
+index b21f15f..cfe4f04 100644
+--- a/templates/landing.html
++++ b/templates/landing.html
+@@ -10,13 +10,8 @@
+       PCLaw to QuickBooks migration, <em>handled for you</em>.
+     </h1>
+     <p class="landing-hero__lede">
+-      Upload your reports. Answer a few simple questions.
+-      {{ app_name }} prepares the migration path and handles the
+-      accounting-heavy parts for you.
+-    </p>
+-    <p class="landing-hero__value">
+-      No accounting guesswork. No manual back-and-forth. A guided way to
+-      move your firm&rsquo;s data.
++      Upload your PCLaw reports, answer a few questions, and we do the
++      accounting-heavy parts.
+     </p>
+     <p class="landing-hero__price-anchor"
+        data-testid="landing-price-anchor"
+@@ -26,14 +21,13 @@
+     <p class="landing-hero__qualifier muted"
+        data-testid="landing-hour-qualifier"
+        style="font-size:.85rem;margin-top:var(--space-2);max-width:60ch;">
+-      For supported PCLaw CSV exports. You bring the reports; we do the work.
++      For supported PCLaw CSV exports.
+     </p>
+     <div class="landing-hero__ctas">
+       {# Get Started leads into the page-by-page onboarding flow: choose how
+          much history to move, enter firm details, pay, then upload reports. #}
+       <a class="btn btn-primary btn-lg" href="{{ url_for('onboarding_step1') }}"
+-         data-testid="landing-get-started">Get Started</a>
+-      <a class="btn btn-secondary btn-lg" href="{{ url_for('signup') }}">Start your migration</a>
++         data-testid="landing-get-started">Get started</a>
+       <a class="landing-hero__signin" href="{{ url_for('login') }}">Sign in</a>
+     </div>
+     <ul class="landing-hero__bullets">
+@@ -57,7 +51,6 @@
+ <section class="landing-section landing-section--preview" id="see-how-it-works"
+          data-testid="landing-preview">
+   <div class="landing-section__inner">
+-    <p class="eyebrow">See how it works</p>
+     <h2 class="h-serif landing-section__title">See how {{ app_name }} works.</h2>
+     <p class="muted landing-section__lede">
+       A short look at the guided migration &mdash; you upload and confirm,
+diff --git a/templates/onboarding.html b/templates/onboarding.html
+index 72b13c4..c568e6d 100644
+--- a/templates/onboarding.html
++++ b/templates/onboarding.html
+@@ -4,11 +4,9 @@
+ <section class="page page--prose">
+   <header class="hero">
+     <p class="eyebrow">Onboarding</p>
+-    <h1 class="display">A quiet, careful path off PCLaw.</h1>
++    <h1 class="display">Move your PCLaw books into QuickBooks.</h1>
+     <p class="muted">
+-      A plain-English walkthrough for law-firm staff. How to move PCLaw
+-      transaction history into QuickBooks Online, what to check at each
+-      step, and how to roll it back if something looks wrong.
++      Step by step, with a check at each stage and a one-click rollback.
+     </p>
+   </header>
+ 
+@@ -52,35 +50,31 @@
+   <section style="margin-top:var(--space-10);" id="pclaw-export-guide" data-testid="onboarding-export-guide">
+     <h2>Getting your reports out of PCLaw</h2>
+     <p class="muted" style="margin-bottom:var(--space-4);">
+-      You don't need to learn any new PCLaw screens to use this tool. Below is what each report is, why we want it, and roughly where to find it inside PCLaw. If your PCLaw build labels a menu differently, the export should still be available from your PCLaw reporting / export area &mdash; the report name is the key.
++      These all export as CSV from PCLaw&rsquo;s reporting area. Menu names
++      vary by version &mdash; search by the report name.
+     </p>
+     <div class="card" style="padding:var(--space-4);">
+       <ol class="secure-list" style="margin:0;padding-left:1.25rem;">
+         <li style="margin-bottom:var(--space-3);">
+           <strong>Account List (Chart of Accounts).</strong>
+           The list of accounts your firm uses. We match these against your
+-          QuickBooks accounts. <br>
+-          <span class="muted" style="font-size:.9rem;">Run from your PCLaw reporting/export area &mdash; look for &ldquo;Chart of Accounts&rdquo; or &ldquo;Account List&rdquo;. Export as CSV.</span>
++          QuickBooks accounts.
+         </li>
+         <li style="margin-bottom:var(--space-3);">
+           <strong>Transaction History (General Ledger).</strong>
+-          The actual entries to move. Run for the period you want to bring over.<br>
+-          <span class="muted" style="font-size:.9rem;">Run from your PCLaw reporting/export area &mdash; look for &ldquo;General Ledger&rdquo; or &ldquo;Transaction History&rdquo;. Export as CSV.</span>
++          The actual entries to move. Run for the period you want to bring over.
+         </li>
+         <li style="margin-bottom:var(--space-3);">
+           <strong>Starting Balances (Trial Balance).</strong>
+-          The balance of every account as of your switchover date. Used to seed opening balances in QuickBooks and to check the books afterward.<br>
+-          <span class="muted" style="font-size:.9rem;">Run from your PCLaw reporting/export area &mdash; look for &ldquo;Trial Balance&rdquo; as of your switchover date.</span>
++          The balance of every account as of your switchover date. Used to seed opening balances in QuickBooks and to check the books afterward.
+         </li>
+         <li style="margin-bottom:var(--space-3);">
+           <strong>Final Balance Check (Trial Balance, end of period).</strong>
+-          A second Trial Balance run for the end of the period you moved. Used at the very end to confirm every dollar landed cleanly.<br>
+-          <span class="muted" style="font-size:.9rem;">Same export as above, just dated at the end of your migration window.</span>
++          A second Trial Balance run for the end of the period you moved. Used at the very end to confirm every dollar landed cleanly.
+         </li>
+         <li style="margin-bottom:var(--space-3);">
+           <strong>Client Trust Balances (Trust Listing).</strong>
+-          Per-matter trust balances. Reconciled against your trust liability and trust-bank totals. Never auto-posted &mdash; see the IOLTA section below.<br>
+-          <span class="muted" style="font-size:.9rem;">Run from your PCLaw reporting/export area &mdash; look for &ldquo;Trust Listing&rdquo; or &ldquo;Client Trust Balances&rdquo;.</span>
++          Per-matter trust balances. Reconciled against your trust liability and trust-bank totals. Never auto-posted &mdash; see the IOLTA section below.
+         </li>
+         <li>
+           <strong>Customer / Vendor lists</strong> <span class="muted">(if your PCLaw build supports a direct export).</span>
+@@ -89,7 +83,7 @@
+       </ol>
+     </div>
+     <p class="muted" style="font-size:.85rem;margin-top:var(--space-3);">
+-      Don't worry about getting the column order &ldquo;right&rdquo; &mdash; we look at the header row, not the position. As long as the file is a CSV with sensible column headings, the app will figure the rest out.
++      Column order doesn&rsquo;t matter &mdash; we read the headers.
+     </p>
+   </section>
+ 
+@@ -132,14 +126,14 @@
+   <section style="margin-top:var(--space-10);">
+     <h2>The full workflow</h2>
+     <ol class="secure-list" style="margin-top:var(--space-4);">
+-      <li><strong>Export from PCLaw.</strong> Run the General Ledger report for the period you want and save as CSV.</li>
+-      <li><strong>Upload.</strong> From the dashboard, enter the firm name and pick the CSV. The file is encrypted before processing.</li>
+-      <li><strong>Review the preflight.</strong> The job page shows transaction count, debit / credit totals, whether the file balances, and which accounts were detected.</li>
+-      <li><strong>Map accounts.</strong> Open the matching screen and pair each PCLaw account with a QuickBooks account. The import is blocked until every account is matched.</li>
+-      <li><strong>Connect QuickBooks.</strong> Sign in with Intuit and pick the company that should receive these records.</li>
+-      <li><strong>Confirm.</strong> In production, type <code>IMPORT</code> on the confirmation card to enable the post.</li>
+-      <li><strong>Send.</strong> Each PCLaw transaction posts as one QuickBooks journal entry. Duplicate protection runs first.</li>
+-      <li><strong>Verify.</strong> Re-fetch every entry from QuickBooks and compare against the CSV.</li>
++      <li><strong>Export from PCLaw.</strong> The General Ledger for your period, as CSV.</li>
++      <li><strong>Upload.</strong> Files are encrypted before processing.</li>
++      <li><strong>Review the preflight.</strong> Counts, totals, and whether the file balances.</li>
++      <li><strong>Map accounts.</strong> Pair each PCLaw account with a QuickBooks account.</li>
++      <li><strong>Connect QuickBooks.</strong> Sign in and pick the receiving company.</li>
++      <li><strong>Confirm.</strong> Type <code>IMPORT</code> to enable the post.</li>
++      <li><strong>Send.</strong> One journal entry per transaction, with duplicate protection.</li>
++      <li><strong>Verify.</strong> Every entry is re-fetched and compared against your CSV.</li>
+       <li><strong>Reverse if needed.</strong> Type <code>REVERSE</code> to post offsetting entries.</li>
+     </ol>
+   </section>
+@@ -228,7 +222,7 @@
+       {% else %}
+         the address on the support page.
+       {% endif %}
+-      Include the job id and the exact flash message &mdash; please don&rsquo;t paste raw ledger content or OAuth tokens.
++      Include the job ID and the error message (never paste ledger data).
+     </p>
+   </section>
+ 
+diff --git a/templates/onboarding/step1.html b/templates/onboarding/step1.html
+index d5f0cb7..090bdcf 100644
+--- a/templates/onboarding/step1.html
++++ b/templates/onboarding/step1.html
+@@ -11,9 +11,8 @@
+       <p class="eyebrow">Start your {{ app_name }} onboarding</p>
+       <h1 class="display" data-testid="onboarding-step1-header">Choose how much history to move</h1>
+       <p class="lede" style="font-size:1.2rem;">
+-        Pick the plan that fits how far back you want us to go. Your price
+-        depends on how much history we move into QuickBooks &mdash; not the
+-        size of your firm.
++        Pricing is based on how much history we move &mdash; not your
++        firm&rsquo;s size.
+       </p>
+     </header>
+ 
+@@ -57,8 +56,6 @@
+       </div>
+     </form>
+ 
+-    <p class="note" data-testid="onboarding-pricing-basis">{{ pricing_basis_note }}</p>
+-
+   </div>
+ </section>
+ {% endblock %}
+diff --git a/templates/onboarding/step2.html b/templates/onboarding/step2.html
+index 636f24c..48d1af0 100644
+--- a/templates/onboarding/step2.html
++++ b/templates/onboarding/step2.html
+@@ -13,8 +13,7 @@
+       </p>
+       <h1 class="display" data-testid="onboarding-step2-header">Tell us about your firm</h1>
+       <p class="lede" style="font-size:1.2rem;">
+-        A few simple details, your Clio migration date, and the login you'll
+-        use for {{ app_name }}. Then pay securely through Stripe.
++        Your details, your migration date, and the login you&rsquo;ll use.
+       </p>
+     </header>
+ 
+@@ -58,25 +57,17 @@
+       <div class="card card--inset" data-testid="onboarding-payment">
+         <p class="eyebrow" style="margin:0 0 .35rem;">Pay securely</p>
+         <h2 style="margin:0;font-size:1.3rem;">{{ payment_heading }}</h2>
+-        <p class="muted" style="margin:.5rem 0 1rem;" data-testid="onboarding-payment-copy">
++        <p class="muted" style="margin:.5rem 0 0;" data-testid="onboarding-payment-copy">
+           {% if plan and plan.quote %}
+-          This plan is quote-based. Submit your details and our team will
+-          prepare a tailored quote &mdash; no payment is taken now.
++          This plan is quote-based &mdash; no payment is taken now.
+           {% elif stripe_enabled %}
+-          When you continue, we'll take you to Stripe's secure checkout to
+-          complete payment. We never see or store your card details.
++          Checkout is handled by Stripe &mdash; we never see or store your
++          card details.
+           {% else %}
+-          Secure card payment is handled by Stripe. It isn't connected in this
+-          environment, so no card details are collected and nothing is charged.
++          Payments are handled by Stripe. It isn't connected in this
++          environment, so nothing is charged.
+           {% endif %}
+         </p>
+-        <p class="note" style="margin:.2rem 0 0;font-weight:600;"
+-           data-testid="onboarding-payment-reassurance">{{ payment_reassurance }}</p>
+-      </div>
+-
+-      <div class="card card--inset" data-testid="onboarding-secure-access">
+-        <p style="margin:0;font-weight:600;">Trust ledger &amp; secure access</p>
+-        <p class="muted" style="margin:.4rem 0 0;">{{ secure_access_note }}</p>
+       </div>
+ 
+       <div style="display:flex;gap:.75rem;flex-wrap:wrap;">
+diff --git a/templates/onboarding/step3.html b/templates/onboarding/step3.html
+index ae13b35..5f00ad3 100644
+--- a/templates/onboarding/step3.html
++++ b/templates/onboarding/step3.html
+@@ -13,9 +13,7 @@
+       </p>
+       <h1 class="display" data-testid="onboarding-step3-header">Upload the reports we need</h1>
+       <p class="lede" style="font-size:1.2rem;">
+-        Now that your payment's in, here are the reports to export from PCLaw
+-        for your plan. Upload whatever you have &mdash; we'll tell you if
+-        anything is missing.
++        Upload what you have &mdash; we&rsquo;ll flag anything missing.
+       </p>
+       {% if payment_simulated %}
+       <p class="note" data-testid="onboarding-step3-demo">
+@@ -47,19 +45,13 @@
+       <article class="card card--inset" data-testid="onboarding-upload">
+         <p style="margin:0;font-weight:600;">Upload your reports</p>
+         <p class="muted" style="margin:.4rem 0 .75rem;">
+-          Choose your PCLaw exports. You can select more than one file, and you
+-          can always send more later &mdash; nothing is locked in.
++          Select one or more CSV files. You can add more later.
+         </p>
+         <input type="file" name="report_files" multiple
+                data-testid="onboarding-file-input"
+                style="display:block;width:100%;padding:.6rem;border:1px solid var(--line);border-radius:.5rem;background:var(--surface,#f7f7f5);">
+       </article>
+ 
+-      <article class="card card--inset" data-testid="onboarding-secure-access">
+-        <p style="margin:0;font-weight:600;">Trust ledger &amp; secure access</p>
+-        <p class="muted" style="margin:.4rem 0 0;">{{ secure_access_note }}</p>
+-      </article>
+-
+       {% if resource_links %}
+       <aside class="card card--quiet" data-testid="onboarding-resources">
+         <p class="eyebrow" style="margin:0 0 .5rem;">Helpful guides</p>
+diff --git a/templates/signup.html b/templates/signup.html
+index 9a595c0..de8d568 100644
+--- a/templates/signup.html
++++ b/templates/signup.html
+@@ -5,7 +5,7 @@
+   <div class="auth-card">
+     <p class="eyebrow">Create your account</p>
+     <h1 class="display">From PCLaw, <em>to</em> QuickBooks.</h1>
+-    <p class="lede">A secure account for your firm: encrypted uploads, a connected QuickBooks Online company, and a complete history of every migration.</p>
++    <p class="lede">One secure account for your firm&rsquo;s migration.</p>
+ 
+     <aside class="card" data-testid="signup-expectations" style="background:#f6f7fb;border-color:#e1e4ec;margin-bottom:var(--space-4);">
+       <h2 style="font-size:1rem;margin-top:0;">What happens after you sign up</h2>
+diff --git a/tests/smoke_beta_safety.py b/tests/smoke_beta_safety.py
+index f645af3..893470e 100644
+--- a/tests/smoke_beta_safety.py
++++ b/tests/smoke_beta_safety.py
+@@ -108,8 +108,8 @@ def t1_dashboard_sandbox_banner():
+     c = appmod.app.test_client()
+     _signup(c)
+     body = c.get("/dashboard").get_data(as_text=True)
+-    assert "Sandbox Testing Mode" in body, "expected sandbox banner on dashboard"
+-    assert "production approval" in body.lower(), body[:400]
++    assert "Sandbox mode" in body, "expected sandbox banner on dashboard"
++    assert "test company" in body.lower(), body[:400]
+ 
+     # Production: banner suppressed.
+     appmod2 = _fresh_app({
+@@ -120,7 +120,7 @@ def t1_dashboard_sandbox_banner():
+     c2 = appmod2.app.test_client()
+     _signup(c2)
+     body2 = c2.get("/dashboard").get_data(as_text=True)
+-    assert "Sandbox Testing Mode" not in body2, \
++    assert "Sandbox mode" not in body2, \
+         "sandbox banner should NOT render in production"
+     print("T1 OK: dashboard sandbox banner toggles on QBO_ENVIRONMENT")
+ 
+diff --git a/tests/smoke_landing_page.py b/tests/smoke_landing_page.py
+index c9bf633..0479c2f 100644
+--- a/tests/smoke_landing_page.py
++++ b/tests/smoke_landing_page.py
+@@ -49,7 +49,7 @@ def t1_landing_renders_with_marketing_content():
+         "PCLaw",
+         "QuickBooks",
+         "handled for you",
+-        "Answer a few simple questions",
++        "answer a few questions",
+         # Coverage section makes clear it's not GL-only
+         "More than just the General Ledger",
+         "Chart of Accounts",
+@@ -71,7 +71,7 @@ def t1_landing_renders_with_marketing_content():
+         "thousands",
+         "fraction of the cost",
+         # CTAs
+-        "Start your migration",
++        "Get started",
+         "Sign up",
+     ]
+     for needle in must_contain:
+diff --git a/tests/smoke_onboarding_flow.py b/tests/smoke_onboarding_flow.py
+index 54580ce..23fa809 100644
+--- a/tests/smoke_onboarding_flow.py
++++ b/tests/smoke_onboarding_flow.py
+@@ -168,8 +168,8 @@ def t8_no_card_fields_stripe_copy():
+                    'name="cvv"', 'name="card_number"',
+                    'autocomplete="cc-number"', 'autocomplete="cc-csc"'):
+         assert banned not in low, f"Step 2 must not collect {banned!r}"
+-    assert ("Secure payment happens through Stripe. Cutovr never stores your "
+-            "card details.") in body, "missing Stripe reassurance copy"
++    assert 'data-testid="onboarding-payment-copy"' in body, "missing payment copy block"
++    assert "Stripe" in body, "payment copy should name Stripe"
+     print("T8 OK: no raw card fields; Stripe reassurance copy present on Step 2")
+ 
+ 
+@@ -184,9 +184,11 @@ def t9_no_clio_credentials():
+                    'name="mfa"', 'name="totp"', 'name="2fa_code"',
+                    'type="otp"'):
+         assert banned not in low, f"Step 2 must not collect {banned!r}"
+-    assert "coordinate a secure access process separately" in body, \
+-        "missing safe secure-access copy"
+-    print("T9 OK: no Clio password/2FA fields; safe secure-access copy shown")
++    # The Clio secure-access explainer moved out of Step 2 (it only applies
++    # to one add-on). The safety property still holds: the page never asks
++    # for Clio credentials, and the only password field is the Cutovr login.
++    assert 'name="password"' in low, "Cutovr login password field missing"
++    print("T9 OK: no Clio password/2FA fields collected")
+ 
+ 
+ def t10_get_started_ctas_route_to_onboarding():
+diff --git a/tests/smoke_qa_launch_readiness.py b/tests/smoke_qa_launch_readiness.py
+index 7513016..caf0757 100644
+--- a/tests/smoke_qa_launch_readiness.py
++++ b/tests/smoke_qa_launch_readiness.py
+@@ -81,7 +81,7 @@ def t3_landing_scope_qualifier():
+     # leading with a turnaround-time claim.
+     assert "landing-hour-qualifier" in body
+     assert "supported PCLaw CSV exports" in body
+-    assert "we do the work" in body
++    assert "accounting-heavy parts" in body
+     print("T3 OK: landing scope qualifier reinforces hands-off framing")
+ 
+ 
