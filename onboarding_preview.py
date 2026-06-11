@@ -106,10 +106,8 @@ PRICING_BASIS_NOTE = (
 # that keeps us honest: a person reviews the files, we are not promising a
 # fully automated, self-serve migration yet.
 SEMI_MANAGED_NOTE = (
-    "While we get started, onboarding is hands-on: a Cutovr specialist "
-    "personally reviews your files, confirms anything that's missing, and "
-    "prepares your migration for you. You won't be left to figure out "
-    "accounting on your own."
+    "A Cutovr specialist reviews your files and prepares the migration "
+    "with you."
 )
 
 
@@ -141,8 +139,8 @@ PREVIEW_SECTIONS = (
         "step": "1",
         "title": STEP1_HEADING,
         "summary": (
-            "Pick the plan that fits how far back you want us to go. Your "
-            "price depends on how much history we move, not your firm's size."
+            "Pricing is based on how much history we move — not your "
+            "firm's size."
         ),
         "after_payment": False,
     },
@@ -151,8 +149,8 @@ PREVIEW_SECTIONS = (
         "step": "2",
         "title": STEP2_HEADING,
         "summary": (
-            "A few simple details, your Clio migration date, and the login "
-            "you'll use for Cutovr. Then pay securely through Stripe."
+            "Your details, your migration date, and the login you'll use. "
+            "Then secure checkout through Stripe."
         ),
         "after_payment": False,
     },
@@ -371,7 +369,7 @@ PAYMENT_HEADING = "Pay securely"
 
 # The exact reassurance line from the product copy guidance.
 PAYMENT_REASSURANCE = (
-    "Secure payment happens through Stripe. Cutovr never stores your card "
+    "Checkout is handled by Stripe — we never see or store your card "
     "details."
 )
 

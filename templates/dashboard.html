@@ -41,12 +41,10 @@
   {% if not at_upload_stage %}
     {% if qbo_configured and qbo_is_sandbox %}
       <div class="flash info" role="status" aria-label="Sandbox testing mode" style="margin-bottom:var(--space-6);">
-        <strong>Sandbox Testing Mode.</strong>
-        You&rsquo;re connected to a QuickBooks <em>sandbox</em> company for safe testing.
-        Nothing posts to a real firm&rsquo;s QuickBooks.
-        Real customer QuickBooks companies require Intuit production approval and production credentials, which this build does not yet have.
+        <strong>Sandbox mode.</strong>
+        Connected to a QuickBooks test company &mdash; nothing posts to real books.
         {% if support_email and "your-domain.example" not in support_email %}
-          Need the sandbox login? <a href="mailto:{{ support_email }}">Email support</a>.
+          <a href="mailto:{{ support_email }}">Email support</a> for the sandbox login.
         {% endif %}
       </div>
     {% elif not qbo_configured %}
