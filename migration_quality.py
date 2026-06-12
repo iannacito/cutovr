@@ -163,7 +163,8 @@ def build_dry_run_preview(
                     "mapped": mapped,
                     "qbo_account_id": qbo_id,
                     "qbo_account_name": qbo_name_by_id.get(qbo_id) if qbo_id else None,
-                    "qbo_acct_num": qbo_acctnum_by_id.get(qbo_id) if qbo_id else None,
+                    "qbo_acct_num": (qbo_acctnum_by_id.get(qbo_id) if qbo_id else None)
+                                    or (r.get("account_number") or "").strip() or None,
                     "line_count": 0,
                 },
             )
@@ -184,7 +185,8 @@ def build_dry_run_preview(
                     "date": r.get("date"),
                     "account": display,
                     "qbo_account_id": qbo_id,
-                    "qbo_acct_num": qbo_acctnum_by_id.get(qbo_id) if qbo_id else None,
+                    "qbo_acct_num": (qbo_acctnum_by_id.get(qbo_id) if qbo_id else None)
+                                    or (r.get("account_number") or "").strip() or None,
                     "posting_type": "Debit" if debit else "Credit",
                     "amount": _dollar(debit if debit else credit),
                     "description": (r.get("description") or "")[:120],
@@ -192,71 +194,23 @@ def build_dry_run_preview(
                 })
 
         if blockers:
+            txn_accounts = list(dict.fromkeys(
+                f"{(r.get('account_number') or '').strip()} {(r.get('account_name') or '').strip()}".strip()
+                for r in txn_rows
+                if r.get('account_number') or r.get('account_name')
+            ))
             blocked_transactions.append({
                 "transaction_id": txn_id,
                 "line_count": len(txn_rows),
                 "reasons": sorted(set(blockers)),
+                "date": (txn_rows[0].get("date") or "") if txn_rows else "",
+                "debits": _dollar(txn_debits),
+                "credits": _dollar(txn_credits),
+                "accounts": "; ".join(txn_accounts[:3]),
             })
 
     mapped_count = sum(1 for v in unique_accounts.values() if v["mapped"])
     unmapped_count = sum(1 for v in unique_accounts.values() if not v["mapped"])
-
-    # Group the review sample by transaction so the customer sees each
-    # journal entry as a self-contained block (its lines, its own debit/
-    # credit totals, whether it balances) instead of a flat list of rows
-    # they'd have to VLOOKUP back together (June 5 meeting, item 5). Each
-    # group keeps the full per-line detail an operator needs, but the
-    # template can render a clean "one entry, these lines" card. We sample
-    # the first ``sample_limit`` transactions in source order; a token
-    # links the group to its merged source-journal batch when it has one.
-    token_by_txn: dict[str, str] = {}
-    for g in (posting_plan.get("merged_groups") or []):
-        for tid in g.get("transaction_ids") or []:
-            token_by_txn[tid] = g.get("token")
-    blocked_by_txn = {b["transaction_id"]: b for b in blocked_transactions}
-    sample_groups: list[dict] = []
-    for txn_id, txn_rows in grouped.items():
-        if len(sample_groups) >= sample_limit:
-            break
-        g_debits = sum(money(r["debit"]) for r in txn_rows)
-        g_credits = sum(money(r["credit"]) for r in txn_rows)
-        # First non-empty description represents the entry; lawyers
-        # recognise an entry by its memo, not its internal id.
-        g_desc = ""
-        for r in txn_rows:
-            if (r.get("description") or "").strip():
-                g_desc = (r.get("description") or "").strip()[:120]
-                break
-        g_date = next((r.get("date") for r in txn_rows if r.get("date")), None)
-        lines = [
-            {
-                "date": r.get("date"),
-                "account": (
-                    f"{(r.get('account_number') or '').strip()} "
-                    f"{(r.get('account_name') or '').strip()}"
-                ).strip() or "(blank)",
-                "posting_type": "Debit" if money(r["debit"]) else (
-                    "Credit" if money(r["credit"]) else ""
-                ),
-                "amount": _dollar(money(r["debit"]) or money(r["credit"])),
-                "description": (r.get("description") or "")[:120],
-            }
-            for r in txn_rows
-            if money(r["debit"]) or money(r["credit"])
-        ]
-        sample_groups.append({
-            "transaction_id": txn_id,
-            "reference": txn_id,
-            "source_journal_token": token_by_txn.get(txn_id),
-            "date": g_date,
-            "description": g_desc,
-            "line_count": len(lines),
-            "debits": _dollar(g_debits),
-            "credits": _dollar(g_credits),
-            "balanced": g_debits == g_credits,
-            "blocked_reasons": (blocked_by_txn.get(txn_id) or {}).get("reasons", []),
-            "lines": lines,
-        })
 
     merged_groups_public = [
         {
@@ -311,7 +265,6 @@ def build_dry_run_preview(
         "beginning_balance_rows": [r.to_dict() for r in quality.beginning_balance_rows],
         "row_quality_counts": quality.counts_by_kind(),
         "sample_lines": sample_lines,
-        "sample_groups": sample_groups,
         "missing_required_columns": [
             c for c in GL_REQUIRED_COLUMNS
             if not rows or c not in (rows[0].keys() if rows else [])
@@ -422,6 +375,34 @@ def render_validation_csv(job: dict, preflight: dict, preview: Optional[dict] = 
         write("Unmapped accounts", preview.get("unmapped_account_count"))
         write("Unmapped account list", "; ".join(preview.get("unmapped_accounts") or []) or "None")
         write("Blocked transactions", len(preview.get("blocked_transactions") or []))
+
+        blocked = preview.get("blocked_transactions") or []
+        if blocked:
+            writer.writerow([])
+            writer.writerow([
+                sanitize_csv_cell("--- Transactions blocked from QuickBooks ---"),
+                sanitize_csv_cell(""),
+            ])
+            writer.writerow([
+                sanitize_csv_cell("Transaction ID"),
+                sanitize_csv_cell("Date"),
+                sanitize_csv_cell("Debits"),
+                sanitize_csv_cell("Credits"),
+                sanitize_csv_cell("Lines"),
+                sanitize_csv_cell("Accounts"),
+                sanitize_csv_cell("Reason"),
+            ])
+            for b in blocked:
+                writer.writerow([
+                    sanitize_csv_cell(b.get("transaction_id") or ""),
+                    sanitize_csv_cell(b.get("date") or ""),
+                    sanitize_csv_cell(b.get("debits") or ""),
+                    sanitize_csv_cell(b.get("credits") or ""),
+                    sanitize_csv_cell(b.get("line_count") or ""),
+                    sanitize_csv_cell(b.get("accounts") or ""),
+                    sanitize_csv_cell("; ".join(b.get("reasons") or [])),
+                ])
+
         write("Customers needed", len(preview.get("customers") or []))
         write("Vendors needed", len(preview.get("vendors") or []))
         write("Would post", "Yes" if preview.get("would_post") else "No")

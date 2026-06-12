@@ -888,7 +888,7 @@ def _build_qbo_payload(entry: CreatePlanEntry) -> dict:
     if entry.qbo_detail_type:
         payload["AccountSubType"] = entry.qbo_detail_type
     if entry.account_number:
-        payload["AcctNum"] = entry.account_number
+        payload["AcctNum"] = str(entry.account_number).strip()
     return payload
 
 
@@ -944,6 +944,42 @@ def apply_create_plan(qbo_client, plan: CreatePlan) -> dict:
                 "error": _safe_error_message(exc),
                 "intuit_tid": tid,
             })
+
+    # Back-fill AcctNum on matched QBO accounts that have no number.
+    # Matched accounts already exist in QBO (by AcctNum or Name), so we only
+    # PATCH them if their AcctNum is missing and we have a PCLaw account number.
+    import logging
+    for matched in plan.matched:
+        existing_acct_num = matched.get("qbo_acct_num") or ""
+        if not existing_acct_num and matched.get("account_number"):
+            try:
+                qbo_id = matched.get("qbo_account_id")
+                acct_num = str(matched.get("account_number")).strip()
+                # Fetch the full account to get SyncToken for the update.
+                result = qbo_client.query(
+                    f"SELECT Id, Name, AcctNum, SyncToken FROM Account WHERE Id = '{qbo_id}'"
+                )
+                accounts = result.get("QueryResponse", {}).get("Account", [])
+                if accounts:
+                    qbo_account = accounts[0]
+                    sync_token = qbo_account.get("SyncToken")
+                    if sync_token:
+                        patch_payload = {
+                            "Id": qbo_id,
+                            "SyncToken": sync_token,
+                            "sparse": True,
+                            "AcctNum": acct_num,
+                        }
+                        qbo_client.update_account(patch_payload)
+                        logging.getLogger("coa_apply").debug(
+                            "Back-filled AcctNum %r on matched QBO account %s",
+                            acct_num, matched.get("account_name"),
+                        )
+            except Exception as exc:  # noqa: BLE001
+                logging.getLogger("coa_apply").warning(
+                    "AcctNum back-fill failed for %s: %s",
+                    matched.get("account_name"), exc,
+                )
 
     # De-dupe intuit_tids while keeping insertion order.
     seen: set[str] = set()
