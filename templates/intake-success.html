@@ -7,8 +7,9 @@
     <p class="eyebrow">All done</p>
     <h1 class="display landing-cta__title">You're all set.</h1>
     <p class="landing-cta__lede" data-testid="intake-success-message">
-      We've received your information and files. We'll email you the next
-      steps shortly &mdash; there's nothing else you need to do right now.
+      We've received your details and any files you sent. Our team will scope,
+      review, and prepare your migration, then follow up to schedule your
+      discovery call &mdash; there's nothing else you need to do right now.
     </p>
     <p class="note">
       You can always send us more files later. The more complete your files
@@ -21,16 +22,18 @@
     </p>
     {% else %}
     <p class="note" data-testid="intake-success-payment">
-      Your request is saved. Secure card payment will be connected shortly &mdash;
-      we'll email you a secure link to complete it. You have not been charged yet.
+      No payment is needed yet. We scope every migration on a discovery call
+      and share a clear price then. You have not been charged.
     </p>
     {% endif %}
     <div class="landing-cta__buttons">
+      <a class="btn btn-primary btn-lg" href="{{ discovery_call_url }}"
+         {% if discovery_call_is_external %}target="_blank" rel="noopener"{% endif %}
+         data-testid="intake-success-book-call">Book your discovery call</a>
       {% if user %}
-        <a class="btn btn-primary btn-lg" href="{{ url_for('dashboard') }}">Continue to your migration</a>
+        <a class="btn btn-secondary btn-lg" href="{{ url_for('dashboard') }}">Continue to your migration</a>
       {% else %}
-        <a class="btn btn-primary btn-lg" href="{{ url_for('signup') }}">Create your workspace</a>
-        <a class="btn btn-secondary btn-lg" href="{{ url_for('login') }}">Sign in</a>
+        <a class="btn btn-link btn-lg" href="{{ url_for('login') }}">Sign in</a>
       {% endif %}
       <a class="btn btn-link btn-lg" href="{{ url_for('support') }}">Questions? Contact support</a>
     </div>

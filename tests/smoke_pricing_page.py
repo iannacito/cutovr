@@ -1,27 +1,24 @@
-"""Smoke tests for the public pricing page (/pricing) and landing teaser.
+"""Smoke tests for the public pricing page (/pricing).
 
 Run from project root:
 
     python3 tests/smoke_pricing_page.py
 
-Covers:
-  T1 GET /pricing renders publicly (no auth) and includes the three
-     packages, dollar amounts (or Quote for the Complete tier), and the
-     FAQ headings.
-  T2 The pricing page does NOT use firm-size / number-of-people wording.
-  T3 The landing page (/) includes a short pricing teaser with the three
-     headline tiers and a link to /pricing.
-  T4 /pricing is reachable for authenticated users too (it stays public,
-     and authenticated users should not be redirected away from it).
-  T5 The pricing page avoids accountant-jargon abbreviations (COA, GL,
-     QBO) in customer-facing copy.
-  T6 The pricing page no longer surfaces a "Custom" card or older
-     fixed-price amounts on the Complete tier.
-  T7 The pricing page renders exactly three pricing tier cards (so the
-     grid is balanced and not left-heavy with a phantom fourth slot).
-  T8 The site stylesheet centers the pricing grid and lays it out as
-     three columns on desktop, collapsing to a single centered column
-     on narrow viewports — no leftover 4-column rule.
+Pricing is now consultative: we scope each firm's migration on a discovery
+call and give a clear price afterward, instead of publishing fixed package
+prices. These tests cover:
+
+  T1 GET /pricing renders publicly (no auth) and explains that pricing is
+     scoped after a discovery call, with the dual CTAs (book a call /
+     submit migration details).
+  T2 The pricing page does NOT show public package prices ($999/$1,499/etc),
+     package names, or "Custom"/history-tier framing.
+  T3 The pricing page does NOT use firm-size / number-of-people wording.
+  T4 /pricing stays public for authenticated users too.
+  T5 The pricing page avoids accountant-jargon abbreviations (COA, GL, QBO)
+     in customer-facing copy.
+  T6 The pricing CTAs route to the discovery flow, never a Stripe checkout
+     or the retired package-selection workflow.
 """
 
 import os
@@ -48,94 +45,78 @@ def _get(path, client=None):
     return c.get(path)
 
 
-def t1_pricing_renders_with_packages_and_faq():
+def t1_pricing_explains_scoped_pricing_with_ctas():
     r = _get("/pricing")
     assert r.status_code == 200, f"GET /pricing -> {r.status_code}"
     body = r.get_data(as_text=True)
 
     must_contain = [
-        # Package names (three tiers — no Custom column)
-        "Essential",
-        "Standard",
-        "Complete",
-        # History framing
-        "Current Year",
-        "Up to 3 Years",
-        "3+ years of history",
-        # Prices (Essential repriced $799 -> $999)
-        "$999",
-        "$1,499",
-        # Quote-based tier signal for the Complete tier
-        "Quote",
-        # "Most common" badge for default tier
-        "Most common",
-        # Add-ons
-        "Extra historical year",
-        "Priority handling",
-        "Assisted review call",
-        "$250",
-        "$299",
-        "$199",
-        # FAQ questions (exact phrasings from the requirements)
-        "What if I am not sure how far back to go?",
-        "Do I need to know which reports to upload?",
-        "Does this include QuickBooks setup?",
-        "What happens after I pay?",
+        # Scoped-after-discovery framing.
+        "scoped",
+        "discovery call",
+        "clear",
+        "price",
+        # The reasons pricing varies (history, report quality, trust, scope).
+        "history",
+        "trust",
+        # Dual CTAs.
+        "Book a discovery call",
+        "Submit migration details",
+        # Reassuring, not "unavailable".
+        "before any work begins",
     ]
     for needle in must_contain:
         assert needle in body, f"/pricing missing expected copy: {needle!r}"
-    print("T1 OK: /pricing renders packages, prices, add-ons, and FAQ")
+    print("T1 OK: /pricing explains scoped pricing + discovery CTAs")
 
 
-def t2_pricing_avoids_firm_size_language():
+def t1b_pricing_positions_as_done_for_you_human_reviewed():
+    """Pricing must read as a done-for-you service scoped/reviewed by people,
+    not a self-serve tool the firm operates alone."""
+    body = _get("/pricing").get_data(as_text=True)
+    lower = body.lower()
+    assert "done-for-you" in lower, "/pricing missing 'done-for-you' positioning"
+    assert "our team" in lower, "/pricing missing 'our team' (human) framing"
+    # The scope step is explicitly a human review, not just software.
+    assert "scopes" in lower and "review" in lower, \
+        "/pricing missing scope-and-review (human-handled) framing"
+    assert "understand law-firm books" in lower, \
+        "/pricing missing the people-who-understand-the-details promise"
+    print("T1b OK: /pricing positions Cutovr as a done-for-you, human-reviewed service")
+
+
+def t2_pricing_has_no_public_prices_or_package_cards():
+    r = _get("/pricing")
+    body = r.get_data(as_text=True)
+    visible = re.sub(r"<[^>]+>", " ", body)
+
+    # No public self-serve amounts.
+    for amount in ("$999", "$1,499", "$1,999", "$499", "$250", "$299", "$199"):
+        assert amount not in body, f"/pricing still shows public price {amount}"
+
+    # No package names / history-tier framing / Custom column.
+    for label in ("Essential", "Standard", "Complete", "Current Year",
+                  "Up to 3 Years", "Most common"):
+        assert label not in body, f"/pricing still surfaces package label {label!r}"
+    assert not re.search(r"\bCustom\b", visible), "/pricing still shows a Custom tier"
+
+    # No leftover pricing-tier cards.
+    assert 'class="pricing-tier' not in body, "/pricing still renders package cards"
+    print("T2 OK: /pricing has no public prices, package cards, or tier labels")
+
+
+def t3_pricing_avoids_firm_size_language():
     r = _get("/pricing")
     body = r.get_data(as_text=True).lower()
-    # Pricing is explicitly NOT based on firm size. Guard against drift.
     forbidden_substrings = [
-        "number of lawyers",
-        "per lawyer",
-        "per user",
-        "per seat",
-        "per person",
-        "number of people",
-        "firm size",
-        "size of your firm",
-        "size of firm",
-        "headcount",
-        "head count",
-        "how many lawyers",
-        "how many people",
-        "how many users",
+        "number of lawyers", "per lawyer", "per user", "per seat",
+        "per person", "number of people", "firm size", "size of your firm",
+        "size of firm", "headcount", "head count", "how many lawyers",
+        "how many people", "how many users",
     ]
     for phrase in forbidden_substrings:
         assert phrase not in body, f"/pricing contains firm-size wording: {phrase!r}"
-    print("T2 OK: /pricing has no firm-size / per-person wording")
-
-
-def t3_landing_has_pricing_section_linking_to_pricing_page():
-    r = _get("/")
-    assert r.status_code == 200, f"GET / -> {r.status_code}"
-    body = r.get_data(as_text=True)
-
-    must_contain = [
-        # Section eyebrow + headline cues
-        "Pricing",
-        "history",
-        # Three teaser cards (names + prices)
-        "Essential",
-        "Standard",
-        "Complete",
-        "$999",
-        "$1,499",
-        "Quote",
-        # Recommended badge on the teaser too
-        "Most common",
-        # Link to full pricing page
-        'href="/pricing"',
-    ]
-    for needle in must_contain:
-        assert needle in body, f"landing page missing expected pricing teaser: {needle!r}"
-    print("T3 OK: / has pricing teaser with three tiers and link to /pricing")
+    print("T3 OK: /pricing has no firm-size / per-person wording")
 
 
 def t4_pricing_reachable_for_authenticated_users():
@@ -154,25 +135,16 @@ def t4_pricing_reachable_for_authenticated_users():
         f"/pricing should stay public for authenticated users, got {r.status_code}"
     )
     body = r.get_data(as_text=True)
-    assert "$1,499" in body, "/pricing for authed user missing tier content"
+    assert "discovery call" in body, "/pricing for authed user missing scoped content"
     print("T4 OK: /pricing is reachable while signed in")
 
 
 def t5_pricing_avoids_jargon_abbreviations():
-    """Audience is lawyers, not accountants — the pricing page should not
-    rely on COA / GL / QBO abbreviations."""
     r = _get("/pricing")
     body = r.get_data(as_text=True)
-
-    # Bound the check to visible text (drop HTML tags) so we don't trip on
-    # things like CSS class names or aria attributes.
     visible = re.sub(r"<[^>]+>", " ", body)
     visible = re.sub(r"&[a-z]+;", " ", visible)
-
-    # Match abbreviations only as whole words so we don't false-positive on
-    # words that happen to contain those letters.
-    forbidden_abbrevs = ["COA", "GL", "QBO"]
-    for abbrev in forbidden_abbrevs:
+    for abbrev in ("COA", "GL", "QBO"):
         pattern = r"\b" + re.escape(abbrev) + r"\b"
         assert not re.search(pattern, visible), (
             f"/pricing uses accountant abbreviation {abbrev!r} in visible copy"
@@ -180,93 +152,26 @@ def t5_pricing_avoids_jargon_abbreviations():
     print("T5 OK: /pricing avoids COA/GL/QBO abbreviations in visible copy")
 
 
-def t6_pricing_drops_custom_and_old_amounts():
-    """User revised pricing: Custom column removed; old fixed-price
-    amounts retired. The Complete tier is now quote-based."""
+def t6_pricing_ctas_route_to_discovery_not_stripe():
     r = _get("/pricing")
     body = r.get_data(as_text=True)
-    visible = re.sub(r"<[^>]+>", " ", body)
-
-    # No "Custom" card / column on the pricing page.
-    assert not re.search(r"\bCustom\b", visible), (
-        "/pricing still surfaces a 'Custom' tier/column — it should be removed"
-    )
-    # The retired "5-Year History" label should be gone — replaced by
-    # the cleaner "Complete" tier wording.
-    assert "5-Year History" not in visible, (
-        "/pricing still shows the retired '5-Year History' label"
-    )
-    assert "Up to 5 Years" not in visible, (
-        "/pricing still shows the retired 'Up to 5 Years' framing"
-    )
-    # The old base amounts must not appear (Complete is quote-based now,
-    # so $1,999 in particular must not resurface). Note: $999 is now the
-    # live Essential price, so it is intentionally NOT in this stale list.
-    for stale_amount in ("$499", "$1,999"):
-        assert stale_amount not in body, (
-            f"/pricing still references retired amount {stale_amount}"
-        )
-    print("T6 OK: /pricing has no Custom column and no retired amounts/labels")
-
-
-def t7_pricing_renders_exactly_three_tier_cards():
-    r = _get("/pricing")
-    body = r.get_data(as_text=True)
-    tier_cards = re.findall(r'class="pricing-tier(?:\s|")', body)
-    assert len(tier_cards) == 3, (
-        f"/pricing should render exactly 3 .pricing-tier cards, found {len(tier_cards)}"
-    )
-    print("T7 OK: /pricing renders exactly three pricing-tier cards")
-
-
-def t8_stylesheet_centers_three_column_grid():
-    css_path = ROOT / "static" / "style.css"
-    css = css_path.read_text()
-
-    # Locate the .pricing-tiers rule and inspect its declarations.
-    m = re.search(r"\.pricing-tiers\s*\{([^}]*)\}", css)
-    assert m, "could not find .pricing-tiers rule in style.css"
-    rule = m.group(1)
-    assert "repeat(3," in rule, (
-        ".pricing-tiers must use a 3-column grid on desktop "
-        "(found no repeat(3,...) in the rule)"
-    )
-    assert "margin: 0 auto" in rule or "margin:0 auto" in rule, (
-        ".pricing-tiers must be centered horizontally (margin: 0 auto)"
-    )
-
-    # Guard against the legacy 4-column rule resurfacing.
-    assert "repeat(4," not in rule, (
-        ".pricing-tiers must not declare a 4-column grid"
-    )
-
-    # A narrow-viewport rule must collapse pricing-tiers to a single column
-    # so three cards never end up as 2+1 with an orphan on the second row.
-    narrow_block = re.search(
-        r"@media\s*\(max-width:\s*1020px\)\s*\{([^@}]*\}[^@]*)*?\}",
-        css,
-        re.DOTALL,
-    )
-    assert narrow_block, "expected a max-width: 1020px responsive block"
-    # Search the whole post-1020px area for pricing-tiers collapsing to 1fr.
-    after_1020 = css[narrow_block.start():]
-    assert re.search(
-        r"\.pricing-tiers\s*\{[^}]*grid-template-columns:\s*1fr",
-        after_1020,
-    ), ".pricing-tiers should collapse to a single column at <=1020px"
-    print("T8 OK: stylesheet centers pricing grid and collapses cleanly on narrow viewports")
+    # No public Stripe checkout forms, no retired package picker.
+    assert "/pricing/checkout" not in body, "/pricing must not expose Stripe checkout"
+    assert "onboarding_step1" not in body
+    # The "submit details" CTA points at the public request form.
+    assert 'href="/onboarding/start"' in body, "/pricing missing request-form CTA"
+    print("T6 OK: /pricing CTAs route to the discovery flow, not Stripe/packages")
 
 
 if __name__ == "__main__":
     try:
-        t1_pricing_renders_with_packages_and_faq()
-        t2_pricing_avoids_firm_size_language()
-        t3_landing_has_pricing_section_linking_to_pricing_page()
+        t1_pricing_explains_scoped_pricing_with_ctas()
+        t1b_pricing_positions_as_done_for_you_human_reviewed()
+        t2_pricing_has_no_public_prices_or_package_cards()
+        t3_pricing_avoids_firm_size_language()
         t4_pricing_reachable_for_authenticated_users()
         t5_pricing_avoids_jargon_abbreviations()
-        t6_pricing_drops_custom_and_old_amounts()
-        t7_pricing_renders_exactly_three_tier_cards()
-        t8_stylesheet_centers_three_column_grid()
+        t6_pricing_ctas_route_to_discovery_not_stripe()
         print("\nALL PRICING-PAGE SMOKE TESTS PASSED")
     finally:
         for path in (APP_DB, HIST_DB):

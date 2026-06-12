@@ -2726,15 +2726,14 @@ def quote_request():
 def pricing():
     """Public pricing page.
 
-    Pricing tiers are keyed off how much historical PCLaw data a firm
-    wants to bring over, not firm size. Kept simple and lawyer-friendly:
-    no accounting jargon in the package names or descriptions.
+    Pricing is consultative: we scope each firm's migration on a discovery
+    call and give a clear price afterward, rather than publishing fixed
+    package prices. The page explains why and offers two ways to start
+    (book a call or submit migration details). Stripe checkout routes are
+    retained for future private/post-quote payment links but are no longer
+    part of the public customer journey.
     """
-    return render_template(
-        "pricing.html",
-        stripe_plans=stripe_checkout.plan_configs(),
-        stripe_enabled=stripe_checkout.stripe_enabled(),
-    )
+    return render_template("pricing.html")
 
 
 def _checkout_base_url() -> str:
@@ -2749,6 +2748,35 @@ def _checkout_base_url() -> str:
     if public:
         return public
     return request.url_root.rstrip("/")
+
+
+def discovery_call_url() -> str:
+    """Where the "Book a discovery call" CTA should point.
+
+    If DISCOVERY_CALL_URL is set (e.g. a Calendly/SavvyCal link), use it so
+    firms can book a call directly. If it is missing, fall back to the public
+    intake/request form so the CTA is never a broken external link — the firm
+    can still tell us about their migration and we follow up to schedule.
+    """
+    configured = (os.environ.get("DISCOVERY_CALL_URL") or "").strip()
+    if configured:
+        return configured
+    return url_for("intake_form")
+
+
+@app.context_processor
+def _inject_discovery_call_url():
+    """Expose the discovery-call CTA target to every template.
+
+    `discovery_call_url` is the booking link when configured, otherwise the
+    public intake form. `discovery_call_is_external` lets templates decide
+    whether to open it in a new tab.
+    """
+    configured = (os.environ.get("DISCOVERY_CALL_URL") or "").strip()
+    return {
+        "discovery_call_url": discovery_call_url(),
+        "discovery_call_is_external": bool(configured),
+    }
 
 
 @app.route("/pricing/checkout/<plan>", methods=["POST"])
@@ -3050,20 +3078,19 @@ def intake_form():
 
 def _render_intake_form(plan_slug, *, form, prefill_email="", prefill_firm="",
                         status=200):
-    """Render the intake form. Shared by the GET view and the validation
-    re-render so the template context stays identical."""
+    """Render the public, no-price migration-review intake form.
+
+    The form captures firm/contact details, the Clio migration date, and
+    optional report uploads. It no longer asks the firm to choose a paid
+    package or take payment — pricing is scoped on a discovery call. The
+    ``plan_slug`` argument is retained only so a legacy ?plan= URL still
+    resolves cleanly; it is not surfaced in the public flow.
+    """
     return render_template(
         "intake.html",
         recommended_reports=intake.RECOMMENDED_REPORTS,
         upload_tagline=intake.UPLOAD_GUIDANCE_TAGLINE,
         plan_slug=plan_slug,
-        plan_label=intake.plan_label(plan_slug),
-        plan_detail=intake.plan_detail(plan_slug),
-        plan_price=intake.plan_price_display(plan_slug),
-        selectable_plans=[
-            {"slug": s, "label": intake.PLAN_LABELS[s]}
-            for s in intake.SELECTABLE_PLANS
-        ],
         prefill_email=form.get("email", "") or prefill_email,
         prefill_firm=form.get("firm_name", "") or prefill_firm,
         form=form,
