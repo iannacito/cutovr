@@ -200,9 +200,28 @@ def is_zero_activity_row(row: dict) -> bool:
     return has_account
 
 
+def is_subtotal_row(row: dict) -> bool:
+    """True for PCLaw section-subtotal rows (non-zero amount, no transaction_id).
+
+    PCLaw GL exports append a "Total of Recoveries" (or similar) summary row
+    at the end of a CER section.  These carry a date, account, and a summed
+    debit/credit but have no transaction_id or reference number.  Left in,
+    they form a phantom one-line "transaction" that blocks the import.
+
+    They are distinct from zero-activity account-listing rows (those have no
+    amount) and from blank rows (those have no account).
+    """
+    if is_blank_row(row) or is_zero_activity_row(row):
+        return False
+    if (row.get("transaction_id") or "").strip():
+        return False  # real transaction row — has a reference
+    return money(row.get("debit")) != 0 or money(row.get("credit")) != 0
+
+
 def is_droppable_row(row: dict) -> bool:
-    """True when a row contributes nothing to the import (blank or zero-activity)."""
-    return is_blank_row(row) or is_zero_activity_row(row)
+    """True when a row contributes nothing to the import
+    (blank, zero-activity, or PCLaw section subtotal)."""
+    return is_blank_row(row) or is_zero_activity_row(row) or is_subtotal_row(row)
 
 
 @dataclass

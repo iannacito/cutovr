@@ -425,3 +425,113 @@ def plan_posting_groups(
         "would_post_via_grouping": bool(merged_groups),
         "rescued_transaction_ids": sorted(rescued_txn_ids),
     }
+
+
+def _first_date(entries, src_by_txn) -> str:
+    """Scan blocked entries to find the first available transaction date."""
+    for blocked in entries:
+        tid = str(blocked.get("transaction_id") or "").strip()
+        src = src_by_txn.get(tid) or {}
+        d = src.get("date", "")
+        if d:
+            return d
+    return ""
+
+
+def auto_balance_by_token_group(
+    still_blocked: list[dict],
+    original_rows: list[dict],
+    bank_account_name: str,
+    bank_account_number: str,
+    expense_offset_name: str = "",
+    expense_offset_number: str = "",
+) -> list[dict]:
+    """Generate one synthetic balancing row per blocked single-sided transaction.
+
+    For each entry in still_blocked, emits ONE synthetic row with the same
+    transaction_id as the original so the two rows group together at import
+    time and form a valid 2-line balanced journal entry.
+
+    Net-credit entry (credit > debit)  → ONE DEBIT row on the same account
+                                         as the source transaction.
+    Net-debit entry  (debit > credit)  → ONE CREDIT row on expense_offset
+                                         (falls back to bank_account if no
+                                         expense offset is supplied).
+
+    Subtotal rows (empty transaction_id) are skipped — they are PCLaw section
+    footers already excluded by is_droppable_row before this is called.
+    """
+    from decimal import Decimal
+
+    src_by_txn: dict = {}
+    for r in original_rows:
+        tid = (r.get("transaction_id") or r.get("reference_number") or "").strip()
+        if tid and tid not in src_by_txn:
+            src_by_txn[tid] = r
+
+    synthetic: list[dict] = []
+    for blocked in still_blocked:
+        txn_id = str(blocked.get("transaction_id") or "").strip()
+        if not txn_id:
+            continue  # subtotal / summary row — skip
+
+        total_debits = Decimal(str(blocked.get("debits") or "0"))
+        total_credits = Decimal(str(blocked.get("credits") or "0"))
+        net = total_credits - total_debits
+        if net == 0:
+            continue  # already balanced at the transaction level
+
+        src = src_by_txn.get(txn_id) or {}
+        date = (src.get("date") or "").strip() or _first_date([blocked], src_by_txn)
+        account_number = (src.get("account_number") or "").strip()
+        account_name = (src.get("account_name") or "").strip()
+        memo = (src.get("memo") or blocked.get("token") or "").strip()
+        token = (blocked.get("token") or "").strip()
+
+        if net > 0:
+            # Net credit entry (e.g. CER disbursement recovery posted credit-only).
+            # Add a matching debit on the same account so the transaction balances.
+            synthetic.append({
+                "date": date,
+                "account_number": account_number,
+                "account_name": account_name,
+                "memo": memo,
+                "reference_number": (src.get("reference_number") or "").strip(),
+                "transaction_id": txn_id,
+                "vendor_name": (src.get("vendor_name") or "").strip(),
+                "description": (src.get("description") or "").strip(),
+                "debit": str(net),
+                "credit": "",
+                "_synthetic": True,
+                "_token_group": token,
+                "_synthetic_reason": (
+                    f"auto-balanced: {txn_id} net-credit {net} "
+                    f"→ added debit on {account_number or account_name}"
+                ),
+            })
+        else:
+            # Net debit entry (e.g. GB bank refund posted debit-only).
+            # Add a matching credit on the expense-offset account (the account
+            # that originally carried the disbursement expense, typically 5010).
+            offset_number = expense_offset_number or account_number
+            offset_name = expense_offset_name or account_name
+            synthetic.append({
+                "date": date,
+                "account_number": offset_number,
+                "account_name": offset_name,
+                "memo": memo,
+                "reference_number": (src.get("reference_number") or "").strip(),
+                "transaction_id": txn_id,
+                "vendor_name": (src.get("vendor_name") or "").strip(),
+                "description": (src.get("description") or "").strip(),
+                "debit": "",
+                "credit": str(abs(net)),
+                "_synthetic": True,
+                "_token_group": token,
+                "_synthetic_reason": (
+                    f"auto-balanced: {txn_id} net-debit {abs(net)} "
+                    f"→ added credit on {offset_number or offset_name}"
+                ),
+            })
+
+    return synthetic

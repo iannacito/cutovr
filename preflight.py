@@ -16,7 +16,7 @@ flash messages and the job-detail page safe to share with support.
 
 from decimal import Decimal
 
-from gl_row_quality import classify_gl_rows, is_blank_row
+from gl_row_quality import classify_gl_rows, is_blank_row, is_droppable_row
 from pclaw_pipeline import (
     GL_REQUIRED_COLUMNS,
     group_rows_by_transaction,
@@ -68,7 +68,8 @@ def build_preflight_summary(rows, fieldnames=None):
     # so the counts the user sees reflect the real ledger content. Rows
     # with a real amount but a missing or unparseable date still count
     # against ``rows_missing_date`` so the preflight blocks them.
-    significant_rows = [r for r in rows if not is_blank_row(r)]
+    # Also exclude PCLaw subtotal rows (non-zero amount, no transaction_id).
+    significant_rows = [r for r in rows if not is_droppable_row(r)]
 
     quality = classify_gl_rows(significant_rows)
 
@@ -81,7 +82,11 @@ def build_preflight_summary(rows, fieldnames=None):
         else:
             rows_missing_account += 1
         if not (row.get("date") or "").strip():
-            rows_missing_date += 1
+            # Only flag rows that carry amounts — zero-activity account-header
+            # rows (no date AND no debit/credit) are handled by _classify_row
+            # as "zero_activity" and must not block the import gate.
+            if money(row.get("debit")) != 0 or money(row.get("credit")) != 0:
+                rows_missing_date += 1
 
     transactions = group_rows_by_transaction(significant_rows) if significant_rows else {}
 
@@ -178,61 +183,16 @@ def evaluate_import_gate(rows, fieldnames=None):
     return (len(blockers) == 0, blockers)
 
 
-_REPORT_TYPE_NAMES = {
-    "general_ledger": "Transaction history (general ledger)",
-    "chart_of_accounts": "Account list (Chart of Accounts)",
-    "trial_balance": "Starting/final balances (trial balance)",
-    "trust_listing": "Trust listing",
-    "unknown": "an unrecognized report",
-}
-
-
-def _report_name(rt):
-    """Plain-English label for a report-type key, for customer copy."""
-    if not rt:
-        return ""
-    return _REPORT_TYPE_NAMES.get(rt, rt.replace("_", " "))
-
-
-def friendly_validation_message(exc_or_msg, selected_type=None, detected_type=None):
+def friendly_validation_message(exc_or_msg):
     """Translate a raw ValueError / pipeline error into beginner-friendly copy.
 
     Returns a (headline, action) tuple that templates can render. The
     original message is never re-exposed verbatim — we want the customer
     to see something they can act on without leaking row contents into
     flash messages or audit logs.
-
-    ``selected_type`` / ``detected_type`` (report-type keys) let the
-    fallback message name what the customer chose and what the file looked
-    like, instead of always blaming "the ledger".
     """
     msg = str(exc_or_msg or "").strip()
     low = msg.lower()
-    if "report type mismatch" in low:
-        sel = _report_name(selected_type)
-        det = _report_name(detected_type)
-        return (
-            f"This file looks like {det}, but you chose {sel}.",
-            "Pick the report type that matches your file, or re-export the "
-            f"correct {sel} report from PCLaw, then upload again.",
-        )
-    if "report type not yet supported" in low:
-        # The label is everything after the colon in the raw message.
-        label = msg.split(":", 1)[1].strip() if ":" in msg else "this report"
-        return (
-            f"{label} reports aren't supported yet.",
-            "Right now Cutovr handles your general ledger, account list, "
-            "trial balance, and trust listing. We'll add more report types "
-            "soon — for now, upload one of those, or contact support if you "
-            "need help.",
-        )
-    if "no data rows" in low or "only a header row" in low:
-        return (
-            "This file has column headings but no rows of data.",
-            "Re-export the report from PCLaw with the correct date range so "
-            "it includes your transactions, then upload again. Your previous "
-            "upload was kept and is still active.",
-        )
     if "missing required columns" in low:
         return (
             "The CSV is missing one or more required columns.",
@@ -272,19 +232,8 @@ def friendly_validation_message(exc_or_msg, selected_type=None, detected_type=No
             "Each row needs at least one of account_number or account_name. "
             "Fix the missing rows in the CSV and re-upload.",
         )
-    # Generic fallback. Name the file the customer was trying to upload
-    # (and what it looked like, if the detector had a guess) instead of
-    # always blaming "the ledger" — the same path handles trust, bank,
-    # account-list and trial-balance uploads.
-    sel = _report_name(selected_type)
-    det = _report_name(detected_type)
-    what = f"your {sel} file" if sel else "this file"
-    headline = f"We could not read {what}."
-    if det and det != sel:
-        headline = f"We could not read {what} — it looks more like {det}."
     return (
-        headline,
-        "Check that you exported the report as CSV from PCLaw and that it "
-        "still has its column headings. If it looks right and still fails, "
-        "contact support.",
+        "We could not process the ledger.",
+        "Compare your CSV to the sample template on the onboarding page. "
+        "If the columns match and the file still fails, contact support.",
     )

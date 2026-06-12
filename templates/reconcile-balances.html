@@ -216,6 +216,31 @@
       </section>
     {% endif %}
 
+    {% if revert_job_id %}
+    <section class="card" data-testid="step6-revert-section"
+             style="padding:var(--space-6);margin-bottom:var(--space-6);
+                    border:1px solid var(--red-300,#fca5a5);">
+      <p class="eyebrow" style="color:var(--red-600,#dc2626);">Danger zone</p>
+      <h2 style="margin-top:0;">Revert this import</h2>
+      <p style="max-width:64ch;">
+        This permanently deletes every journal entry sent to QuickBooks in this
+        import. Use this if the import contained duplicates or incorrect data and
+        you need to start fresh. You will not be able to undo this in QuickBooks.
+      </p>
+      <form action="{{ url_for('revert_import', job_id=revert_job_id) }}"
+            method="post" data-testid="step6-revert-form"
+            onsubmit="return confirm('Delete all journal entries from QuickBooks? This cannot be undone.');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-danger btn-lg" type="submit"
+                data-testid="step6-revert-submit"
+                style="background:var(--red-600,#dc2626);color:#fff;
+                       border-color:var(--red-600,#dc2626);">
+          Delete all QuickBooks entries
+        </button>
+      </form>
+    </section>
+    {% endif %}
+
     <div class="actions-row" style="margin-bottom:var(--space-8);">
       {% if summary.is_complete %}
         {# Migration is finished — no next step. Offer a single, quiet way
