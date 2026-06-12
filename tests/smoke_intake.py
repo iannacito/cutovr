@@ -46,6 +46,8 @@ import email_sender  # noqa: E402
 
 
 def _complete_form(**overrides):
+    # Mirrors the public no-price intake form: firm/contact details, a Clio
+    # migration date, and (optionally) report files. No plan/package field.
     data = {
         "firm_name": "Smith & Hart LLP",
         "first_name": "Jordan",
@@ -54,7 +56,6 @@ def _complete_form(**overrides):
         "phone": "(555) 123-4567",
         "email": "jordan@smithhart.test",
         "clio_migration_date": "2026-03-05",
-        "plan": "standard",
     }
     data.update(overrides)
     return data
@@ -73,32 +74,35 @@ def t1_form_renders():
         "Trust Listing",
         "Upload whatever you have",
         # Guided one-page section headers.
-        "Your firm", "Migration date", "Upload your PCLaw reports", "Payment",
-        # Stripe-ready payment panel copy (no raw card fields).
-        "Payment will be completed securely by card",
-        "Continue to secure payment",
+        "Your firm", "Migration date", "Upload your PCLaw reports",
+        # No-price, consultative framing + discovery CTA.
+        "Start your migration review",
+        "No payment is required to start",
+        "Book a discovery call",
     ):
         assert needle in body, f"missing {needle!r} in /intake"
     # No raw card-collection inputs should ever render here.
     assert 'name="card_number"' not in body and "cardnumber" not in body.lower(), \
         "intake must not collect raw card details"
-    print("T1 OK: /intake renders with all fields + report guidance + payment panel")
+    print("T1 OK: /intake renders firm/contact/upload fields + discovery framing")
 
 
-def t1b_plan_preselection_shows_details():
+def t1b_intake_has_no_package_or_payment_gate():
+    """The public intake is a no-price intake flow: no package selection,
+    no price panel, no 'secure payment' CTA."""
     c = appmod.app.test_client()
-    # Essential: price + included summary.
-    body = c.get("/intake?plan=essential").get_data(as_text=True)
-    assert "$999" in body, "Essential price not shown"
-    assert "What's included" in body, "included summary missing"
-    assert 'name="plan" value="essential"' in body, "plan not preselected"
-    # Standard: $1,499.
+    body = c.get("/intake").get_data(as_text=True)
+    # No price panel / package picker remnants.
+    for stale in ("$999", "$1,499", "Quote", "Which plan did you purchase",
+                  "Payment will be completed securely by card",
+                  "Continue to secure payment", "secure payment"):
+        assert stale not in body, f"intake still surfaces payment/package copy: {stale!r}"
+    # A ?plan= query must NOT resurrect a price or package selector — the
+    # public flow is no-price regardless of legacy URLs.
     body = c.get("/intake?plan=standard").get_data(as_text=True)
-    assert "$1,499" in body, "Standard price not shown"
-    # Complete: quote-based wording, no charge today.
-    body = c.get("/intake?plan=complete").get_data(as_text=True)
-    assert "Quote" in body and "quote-based" in body, "Complete quote wording missing"
-    print("T1b OK: plan preselection shows price + what's included")
+    assert "$1,499" not in body and "What's included" not in body, \
+        "legacy ?plan= must not surface prices in the no-price flow"
+    print("T1b OK: intake has no package selection or payment gate")
 
 
 def t2_missing_required_fields_rejected():
@@ -127,18 +131,21 @@ def t3_complete_submission_succeeds():
     body = r.get_data(as_text=True)
     assert "You're all set" in body, body[:400]
     assert "INT-" in body, "reference not shown on success page"
-    # Payment is pending (Stripe not collecting here) — must NOT claim paid
-    # and must NOT show a receipt.
-    assert "have not been charged yet" in body, body[:600]
+    # No-price, consultative flow — must NOT claim paid or show a receipt,
+    # and must reassure that no charge happened.
+    assert "have not been charged" in body, body[:600]
+    assert "No payment is needed yet" in body, body[:600]
     assert "Payment received" not in body, "must not falsely confirm payment"
+    # Success page routes the firm toward booking a discovery call.
+    assert "Book your discovery call" in body, "success page missing discovery CTA"
     rows = appmod.db.recent_intake_submissions(limit=5)
     assert rows, "no intake record stored"
     rec = rows[0]
     assert rec["firm_name"] == "Smith & Hart LLP"
-    assert rec["plan"] == "standard"
     assert rec["clio_migration_date"] == "2026-03-05"
+    # The public flow never marks anything paid.
     assert rec["payment_status"] == "pending", rec["payment_status"]
-    print("T3 OK: complete submission stores record + pending payment + success page")
+    print("T3 OK: complete submission stores record + no-price success page + discovery CTA")
 
 
 def t4_email_fallback_when_smtp_unconfigured():
@@ -177,20 +184,22 @@ def t5_emails_attempted_when_configured(monkeypatch_env=True):
     tos = [m["to"] for m in sent]
     assert "cust@firm.test" in tos, f"customer email not sent: {tos}"
     assert "ops@cutovr.test" in tos and "team@cutovr.test" in tos, tos
-    # Internal email body must carry firm/plan/clio + uploaded count.
+    # Internal email body must carry firm/contact/clio + uploaded count.
     internal = [m for m in sent if m["to"] == "ops@cutovr.test"][0]
     assert "Smith & Hart LLP" in internal["body"]
-    assert "Standard" in internal["body"]
     assert "2026-03-05" in internal["body"]
-    # Internal email carries payment status; customer email says pending and
-    # is NOT a receipt.
+    # Internal email still carries a payment status field for the operator;
+    # the public flow leaves it pending.
     assert "Payment status:" in internal["body"] and "Pending" in internal["body"]
+    # Customer email is consultative: confirms receipt of the request, says
+    # nothing was charged, and points to the discovery call — never a receipt.
     customer = [m for m in sent if m["to"] == "cust@firm.test"][0]
-    assert "not been charged yet" in customer["body"], customer["body"]
+    assert "not been charged" in customer["body"], customer["body"]
     assert "this is not a receipt" in customer["body"]
+    assert "discovery call" in customer["body"], customer["body"]
     rec = appmod.db.recent_intake_submissions(limit=1)[0]
     assert rec["email_status"] == "sent", rec["email_status"]
-    print("T5 OK: customer + internal emails attempted; status=sent; payment pending")
+    print("T5 OK: customer + internal emails attempted; consultative copy; payment pending")
 
 
 def t6_internal_recipients_resolution():
@@ -244,9 +253,10 @@ def t9_paid_path_emits_receipt_wording():
     assert "not a receipt" not in paid_body
     _, pending_body = intake.customer_email_bodies(
         first_name="Jordan", app_name="Cutovr", support_email="support@cutovr.test",
-        plan="standard", payment_status=intake.PAYMENT_PENDING,
+        payment_status=intake.PAYMENT_PENDING,
     )
-    assert "not been charged yet" in pending_body
+    assert "not been charged" in pending_body
+    assert "discovery call" in pending_body
     assert "confirmation of payment" not in pending_body
     # is_paid is strict.
     assert intake.is_paid("paid") and not intake.is_paid("pending")
@@ -256,7 +266,7 @@ def t9_paid_path_emits_receipt_wording():
 
 if __name__ == "__main__":
     t1_form_renders()
-    t1b_plan_preselection_shows_details()
+    t1b_intake_has_no_package_or_payment_gate()
     t2_missing_required_fields_rejected()
     t3_complete_submission_succeeds()
     t4_email_fallback_when_smtp_unconfigured()

@@ -264,11 +264,12 @@ def _upload_summary_lines(uploads: list[dict]) -> list[str]:
 
 
 def _payment_block_customer(payment_status: Optional[str]) -> str:
-    """Customer-facing payment/receipt paragraph.
+    """Customer-facing next-steps paragraph.
 
-    Receipt/confirmation wording appears ONLY when payment is genuinely
-    paid. Otherwise we plainly say payment is still being set up — we never
-    imply a charge happened when it didn't.
+    The public intake flow is no-price and consultative: we never imply a
+    charge happened or promise pricing before the discovery call. Receipt
+    wording appears ONLY when payment is genuinely paid (e.g. a future
+    private/post-quote payment link), which the public flow never sets.
     """
     if is_paid(payment_status):
         return (
@@ -278,10 +279,10 @@ def _payment_block_customer(payment_status: Optional[str]) -> str:
             "  payment processor.\n"
         )
     return (
-        "Payment\n"
-        "  Your request is saved. Secure card payment will be connected\n"
-        "  shortly — we'll email you a secure link to complete it. You have\n"
-        "  not been charged yet, so this is not a receipt.\n"
+        "No payment needed yet\n"
+        "  There's nothing to pay right now. We'll review your details and\n"
+        "  scope your migration on a short discovery call, and share a clear\n"
+        "  price then. You have not been charged, so this is not a receipt.\n"
     )
 
 
@@ -323,16 +324,16 @@ def customer_email_bodies(
 
     body = f"""Hi {name},
 
-Thanks for choosing {app_name}. We've received your onboarding details and
-any files you uploaded.
+Thanks for reaching out to {app_name}. We've received your firm's details and
+any files you uploaded — there's nothing more you need to do right now.
 
 {plan_line}{clio_line}{upload_line}{payment_block}What happens next
   1. Our team reviews your information and your PCLaw reports.
-  2. We prepare your move into QuickBooks.
-  3. We start your migration on your Clio migration date.
-  4. We'll email you the next step.
+  2. We follow up to schedule a short discovery call.
+  3. On the call we scope your migration and give you a clear price.
+  4. If it's a fit, we handle the move into QuickBooks for you.
 
-You don't need to do anything else right now.
+We'll be in touch shortly to set up your discovery call.
 
 The reports that help us most
 {reports}

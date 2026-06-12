@@ -45,9 +45,17 @@ services:
         value: production    # enables Secure cookies + requires SECRET_KEY
       - key: PYTHON_VERSION
         value: "3.11.9"
-      # Stripe Checkout. Set all four in the Render dashboard once the
-      # Stripe products exist. The /pricing page degrades gracefully if
-      # they are missing — see STRIPE_SETUP.md.
+      # Discovery-call booking link. Drives the "Book a discovery call"
+      # CTAs on the landing, pricing, and intake-success pages. When unset,
+      # those CTAs fall back to the public request form (/onboarding/start)
+      # — never a broken link.
+      - key: DISCOVERY_CALL_URL
+        sync: false
+      # Stripe Checkout (backend only). The public pricing/onboarding flow is
+      # now consultative and does NOT render Stripe checkout, but the
+      # /pricing/checkout/<plan> routes are retained for future private
+      # post-quote payment links. Set these in the Render dashboard once the
+      # Stripe products exist — see STRIPE_SETUP.md.
       - key: STRIPE_SECRET_KEY
         sync: false
       - key: STRIPE_PRICE_ESSENTIAL

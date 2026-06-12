@@ -69,22 +69,56 @@ def t1_landing_renders_with_marketing_content():
         "consultant",
         "weeks",
         "thousands",
-        "fraction of the cost",
-        # CTAs
-        "Get started",
-        "Sign up",
+        "fraction of",
+        # Consultative, discovery-call CTAs (no public self-serve checkout)
+        "Book a discovery call",
+        "Send migration details",
+        # Positive framing of scoped pricing (no "unavailable" feel)
+        "scoped",
     ]
     for needle in must_contain:
         assert needle in body, f"landing page missing expected copy: {needle!r}"
-    print("T1 OK: / renders landing page with hero, coverage, steps, compare, CTAs")
+    print("T1 OK: / renders landing page with hero, coverage, steps, compare, discovery CTAs")
+
+
+def t1b_landing_has_no_public_prices_or_package_cards():
+    """The consultative flow must not surface self-serve prices or package
+    cards on the landing page — pricing is scoped on a discovery call."""
+    r = _get("/")
+    body = r.get_data(as_text=True)
+    for stale in ("$999", "$1,499", "$1,999", "$499"):
+        assert stale not in body, f"landing page still shows public price {stale}"
+    # The legacy plan teaser cards are gone.
+    assert "landing-plan-essential" not in body, "legacy package card still present"
+    assert "landing-plan-standard" not in body, "legacy package card still present"
+    assert "landing-price-anchor" not in body, "legacy 'From $999' anchor still present"
+    print("T1b OK: landing page has no public prices or package cards")
 
 
 def t2_landing_links_to_public_routes():
     r = _get("/")
     body = r.get_data(as_text=True)
-    for path in ("/signup", "/login", "/onboarding", "/support"):
+    # Discovery-first journey: the landing page routes prospects to the
+    # public request form (/onboarding/start) and keeps the supporting
+    # public pages reachable. Self-serve signup is no longer a hero CTA.
+    for path in ("/login", "/onboarding", "/onboarding/start", "/support", "/pricing"):
         assert f'href="{path}"' in body, f"landing page missing link to {path}"
-    print("T2 OK: landing links to /signup, /login, /onboarding, /support")
+    print("T2 OK: landing links to /login, /onboarding, /onboarding/start, /support, /pricing")
+
+
+def t2b_get_started_cta_routes_to_discovery_not_packages():
+    """The primary Get Started / discovery CTA must point at the discovery
+    flow (booking link or the public request form), never the retired
+    package-selection workflow or a Stripe checkout."""
+    r = _get("/")
+    body = r.get_data(as_text=True)
+    # No links into the retired multi-step package picker.
+    assert "onboarding_step1" not in body
+    assert "/pricing/checkout" not in body, "landing CTA must not hit Stripe checkout"
+    # When DISCOVERY_CALL_URL is unset (default in tests), the CTA falls
+    # back to the public request form.
+    assert 'data-testid="landing-book-call"' in body
+    print("T2b OK: Get Started CTA routes to discovery flow, not packages/Stripe")
 
 
 def t3_public_routes_render_unauthenticated():
@@ -137,13 +171,46 @@ def t5_landing_has_no_legacy_cutover_branding():
     print("T5 OK: landing page does not show legacy Cutover product name")
 
 
+def t6_discovery_call_url_external_when_set_else_fallback():
+    """DISCOVERY_CALL_URL drives the Book-a-discovery-call CTA.
+
+    When set, the CTA links straight to the external booking URL (opened in
+    a new tab). When unset, it gracefully falls back to the public request
+    form (/onboarding/start) — never a broken external link.
+    """
+    booking = "https://cal.example.com/cutovr/discovery"
+    prev = os.environ.get("DISCOVERY_CALL_URL")
+    try:
+        os.environ["DISCOVERY_CALL_URL"] = booking
+        body = _get("/").get_data(as_text=True)
+        assert f'href="{booking}"' in body, "external booking URL not used when set"
+        assert 'target="_blank"' in body, "external booking link should open in a new tab"
+
+        os.environ.pop("DISCOVERY_CALL_URL", None)
+        body = _get("/").get_data(as_text=True)
+        assert booking not in body, "stale external URL leaked after unset"
+        assert 'href="/onboarding/start"' in body, (
+            "discovery CTA should fall back to the public request form when "
+            "DISCOVERY_CALL_URL is missing"
+        )
+    finally:
+        if prev is None:
+            os.environ.pop("DISCOVERY_CALL_URL", None)
+        else:
+            os.environ["DISCOVERY_CALL_URL"] = prev
+    print("T6 OK: DISCOVERY_CALL_URL links external when set, falls back when missing")
+
+
 if __name__ == "__main__":
     try:
         t1_landing_renders_with_marketing_content()
+        t1b_landing_has_no_public_prices_or_package_cards()
         t2_landing_links_to_public_routes()
+        t2b_get_started_cta_routes_to_discovery_not_packages()
         t3_public_routes_render_unauthenticated()
         t4_authenticated_user_redirected_to_dashboard()
         t5_landing_has_no_legacy_cutover_branding()
+        t6_discovery_call_url_external_when_set_else_fallback()
         print("\nALL LANDING-PAGE SMOKE TESTS PASSED")
     finally:
         for path in (APP_DB, HIST_DB):

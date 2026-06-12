@@ -1,35 +1,33 @@
-"""Smoke tests for /pricing layout polish + Stripe Checkout integration.
+"""Smoke tests: Stripe checkout backend retained, but absent from the
+public pricing page.
 
 Run from project root:
 
     python3 tests/smoke_pricing_stripe.py
 
+The public customer journey is now consultative — pricing is scoped on a
+discovery call, so /pricing no longer renders package cards or Stripe
+checkout forms. The Stripe checkout *routes* are intentionally kept for a
+future private / post-quote payment link, so this suite verifies the
+backend still works while the public page stays free of it.
+
 Covers:
-  T1 Pricing cards appear early in the rendered HTML (before the FAQ
-     section), and the add-ons strip sits in between the cards and the
-     FAQ — so customers see add-ons without scrolling past another
-     hero.
-  T2 The pricing page never leaks the Stripe secret key into the
-     rendered HTML, even when Stripe is configured.
-  T3 With no Stripe env vars set, the page still renders, no buttons
-     point at /pricing/checkout, and the friendly "being set up"
-     message is shown. POSTing to /pricing/checkout/<plan> in that
-     state redirects back to /pricing instead of 500.
-  T4 With Stripe env vars set, each base plan (essential, standard)
-     renders a real POST form to /pricing/checkout/<plan>. POSTing
-     creates a Stripe Checkout Session (mocked) and redirects to the
-     Stripe-hosted URL.
-  T5 POSTing to /pricing/checkout/<unknown> returns 404 — and so do
-     retired or quote-only slugs (custom, complete, five_year). The
-     Complete tier is quote-based and has no Stripe slug.
-  T6 The Complete tier still links to /support (no Stripe),
-     regardless of env-var state.
-  T7 The success and cancel landing routes both render without
-     crashing.
+  T1 The public /pricing page renders no Stripe checkout forms and no
+     package cards, regardless of whether Stripe env vars are set.
+  T2 The pricing page never leaks the Stripe secret key (or price IDs)
+     into the rendered HTML, even when Stripe is configured.
+  T3 The /pricing/checkout/<plan> route still exists and degrades
+     gracefully (redirects back to /pricing, no 500) when Stripe is not
+     configured.
+  T4 With Stripe configured, POSTing /pricing/checkout/<plan> still
+     creates a Checkout Session (mocked) and redirects to the Stripe URL
+     — the route is retained for future private payment links.
+  T5 POSTing to /pricing/checkout/<unknown> (and retired/quote-only
+     slugs) returns 404.
+  T6 The success and cancel landing routes both render without crashing.
 """
 
 import os
-import re
 import sys
 import tempfile
 from pathlib import Path
@@ -66,31 +64,30 @@ def _client():
     return appmod.app.test_client()
 
 
-def t1_pricing_cards_appear_above_addons_and_faq():
-    r = _client().get("/pricing")
-    assert r.status_code == 200, f"GET /pricing -> {r.status_code}"
-    body = r.get_data(as_text=True)
-
-    # Anchor positions in HTML order. Cards should come first, then the
-    # add-ons strip, then the FAQ.
-    idx_tiers = body.find('class="pricing-tiers"')
-    idx_addons = body.find("pricing-addons-strip")
-    idx_faq = body.find("pricing-faq-section")
-    assert idx_tiers != -1, "pricing tier grid is missing"
-    assert idx_addons != -1, "compact add-ons strip is missing"
-    assert idx_faq != -1, "FAQ section is missing"
-    assert idx_tiers < idx_addons < idx_faq, (
-        "expected order: tiers -> add-ons strip -> FAQ, got positions "
-        f"tiers={idx_tiers}, addons={idx_addons}, faq={idx_faq}"
+def t1_public_pricing_has_no_checkout_forms_or_cards():
+    """The consultative pricing page never exposes Stripe checkout — with
+    or without Stripe env vars configured."""
+    # Unconfigured.
+    body = _client().get("/pricing").get_data(as_text=True)
+    assert 'action="/pricing/checkout/' not in body, (
+        "public /pricing must not render Stripe checkout forms"
     )
+    assert 'class="pricing-tier' not in body, "public /pricing must not render package cards"
 
-    # Compact hero modifier should be applied, otherwise we've drifted
-    # back to the tall hero.
-    assert "pricing-hero--compact" in body, (
-        "pricing hero is no longer using the compact variant — cards "
-        "will sit too far down the page"
-    )
-    print("T1 OK: cards above add-ons above FAQ; hero is compact")
+    # Configured — still no public checkout on the consultative page.
+    with mock.patch.dict(
+        os.environ,
+        {
+            "STRIPE_SECRET_KEY": "sk_test_dummy",
+            "STRIPE_PRICE_ESSENTIAL": "price_essential_x",
+            "STRIPE_PRICE_STANDARD": "price_standard_x",
+        },
+    ):
+        body2 = _client().get("/pricing").get_data(as_text=True)
+        assert 'action="/pricing/checkout/' not in body2, (
+            "configuring Stripe must not resurface public checkout forms"
+        )
+    print("T1 OK: public /pricing has no checkout forms or package cards")
 
 
 def t2_pricing_page_never_leaks_stripe_secret_key():
@@ -103,60 +100,32 @@ def t2_pricing_page_never_leaks_stripe_secret_key():
             "STRIPE_PRICE_STANDARD": "price_standard_x",
         },
     ):
-        r = _client().get("/pricing")
-        body = r.get_data(as_text=True)
+        body = _client().get("/pricing").get_data(as_text=True)
         assert sentinel not in body, "Stripe secret key leaked into /pricing HTML!"
-        # Price IDs are server-side metadata too — they're harmless to
-        # leak, but we don't need to render them either.
         for pid in ("price_essential_x", "price_standard_x"):
             assert pid not in body, f"Stripe price id {pid!r} leaked into HTML"
     print("T2 OK: Stripe secret key + price IDs are never rendered in HTML")
 
 
-def t3_checkout_graceful_when_stripe_not_configured():
-    # No env vars set at this point.
+def t3_checkout_route_graceful_when_stripe_not_configured():
     assert not stripe_checkout.stripe_enabled(), (
         "expected stripe_enabled() == False with no env vars"
     )
-
-    r = _client().get("/pricing")
-    body = r.get_data(as_text=True)
-    # The friendly note should be visible.
-    assert "Online checkout is being set up" in body, (
-        "expected fallback copy on /pricing when Stripe is not configured"
+    # POSTing the retained route when unconfigured should NOT 500 — it
+    # redirects back to /pricing with a flashed message.
+    r = _client().post("/pricing/checkout/standard", follow_redirects=False)
+    assert r.status_code in (302, 303), (
+        f"unconfigured checkout should redirect, got {r.status_code}"
     )
-    # No form should point at /pricing/checkout when unconfigured.
-    assert 'action="/pricing/checkout/' not in body, (
-        "checkout forms should not render when Stripe is not configured"
+    assert "/pricing" in r.headers.get("Location", ""), (
+        f"redirect should land on /pricing, got {r.headers.get('Location')!r}"
     )
-    # CTAs still work — when Stripe is unconfigured they route into the
-    # page-by-page onboarding flow (Step 1, the package-selection page) rather
-    # than dead-ending, with the plan preselected via ?plan=. Essential +
-    # Standard route into onboarding. Complete is quote-based and keeps its
-    # dedicated quote-request CTA (checked in T6).
-    assert "plan=essential" in body and "plan=standard" in body, body[:600]
-    for slug in ("essential", "standard"):
-        assert f'/onboarding/step-1?plan={slug}' in body, \
-            f"pricing CTA for {slug} must route into onboarding Step 1"
-    # The old create-account/intake workflow is no longer the Get Started path.
-    assert "/onboarding/start?plan=" not in body
-    assert "Get started with Essential" in body
-    assert "Get started with Standard" in body
-
-    # POSTing the endpoint when unconfigured should NOT 500. It should
-    # redirect back to /pricing with a flashed message.
-    c = _client()
-    r2 = c.post("/pricing/checkout/standard", follow_redirects=False)
-    assert r2.status_code in (302, 303), (
-        f"unconfigured checkout should redirect, got {r2.status_code}"
-    )
-    assert "/pricing" in r2.headers.get("Location", ""), (
-        f"redirect should land on /pricing, got {r2.headers.get('Location')!r}"
-    )
-    print("T3 OK: graceful fallback when Stripe is not configured")
+    print("T3 OK: checkout route degrades gracefully when Stripe is unconfigured")
 
 
-def t4_checkout_creates_session_when_stripe_configured():
+def t4_checkout_route_creates_session_when_configured():
+    """The backend route is retained for future private payment links: with
+    Stripe configured, it still creates a session and redirects."""
     with mock.patch.dict(
         os.environ,
         {
@@ -165,31 +134,11 @@ def t4_checkout_creates_session_when_stripe_configured():
             "STRIPE_PRICE_STANDARD": "price_standard_x",
         },
     ):
-        # The /pricing page should now render real POST forms for each
-        # base plan.
-        body = _client().get("/pricing").get_data(as_text=True)
-        for plan in ("essential", "standard"):
-            needle = f'action="/pricing/checkout/{plan}"'
-            assert needle in body, f"expected checkout form for {plan!r} on /pricing"
-        # The Complete tier is quote-based and must not have a Stripe
-        # checkout form — its CTA links to /support instead.
-        assert 'action="/pricing/checkout/complete"' not in body, (
-            "quote-based 'complete' tier should not have a checkout form"
-        )
-
-        # Mock the create_checkout_session call so we don't hit the
-        # network. We patch the helper in stripe_checkout, not the
-        # stripe SDK, so the assertion is independent of how we
-        # construct the Stripe call inside that module.
         fake_url = "https://checkout.stripe.com/c/pay/cs_test_FAKEFAKEFAKE"
         with mock.patch.object(
-            stripe_checkout,
-            "create_checkout_session",
-            return_value=fake_url,
+            stripe_checkout, "create_checkout_session", return_value=fake_url,
         ) as m:
-            r = _client().post(
-                "/pricing/checkout/standard", follow_redirects=False
-            )
+            r = _client().post("/pricing/checkout/standard", follow_redirects=False)
             assert r.status_code in (302, 303), (
                 f"checkout should redirect to Stripe URL, got {r.status_code}"
             )
@@ -198,11 +147,9 @@ def t4_checkout_creates_session_when_stripe_configured():
             )
             m.assert_called_once()
             args, kwargs = m.call_args
-            # plan should be passed positionally as first arg, base_url
-            # as kwarg.
             assert args[0] == "standard", f"plan should be 'standard', got {args!r}"
             assert "base_url" in kwargs, "base_url kwarg missing"
-    print("T4 OK: checkout posts redirect to Stripe-hosted URL when configured")
+    print("T4 OK: retained checkout route still creates a Stripe session when configured")
 
 
 def t5_unknown_plan_is_404():
@@ -215,60 +162,22 @@ def t5_unknown_plan_is_404():
         },
     ):
         r = _client().post("/pricing/checkout/lifetime", follow_redirects=False)
-        assert r.status_code == 404, (
-            f"unknown plan slug should 404, got {r.status_code}"
-        )
-        # Quote-only / retired slugs must NOT hit Stripe — they 404.
+        assert r.status_code == 404, f"unknown plan slug should 404, got {r.status_code}"
         for retired_slug in ("custom", "complete", "five_year"):
             r2 = _client().post(
                 f"/pricing/checkout/{retired_slug}", follow_redirects=False
             )
             assert r2.status_code == 404, (
-                f"quote-only/retired slug {retired_slug!r} should 404, "
-                f"got {r2.status_code}"
+                f"quote-only/retired slug {retired_slug!r} should 404, got {r2.status_code}"
             )
     print("T5 OK: unknown / quote-only / retired plan slugs return 404")
 
 
-def t6_complete_tier_still_links_to_support():
-    r = _client().get("/pricing")
-    body = r.get_data(as_text=True)
-    # The quote-based Complete tier must still route to /support,
-    # not Stripe.
-    assert "Request a quote" in body, "Complete tier CTA copy missing"
-    assert 'href="/support"' in body, "Complete tier should link to /support"
-    # And the rendered card must show a Quote-style price marker, not a
-    # dollar amount.
-    assert "pricing-tier__amount--quote" in body, (
-        "Complete tier should render the quote-style amount marker"
-    )
-    # The card must use the current "3+ years of history" wording, not
-    # any of the retired labels ("Up to 5 Years", "5-Year History",
-    # "Five or more years of history", "Four or more years of history").
-    assert "3+ years of history" in body, (
-        "Complete tier should use the '3+ years of history' wording"
-    )
-    for retired in (
-        "5-Year History",
-        "Up to 5 Years",
-        "Five or more years of history",
-        "Four or more years of history",
-    ):
-        assert retired not in body, (
-            f"retired pricing label {retired!r} should be gone"
-        )
-    print("T6 OK: Complete tier still routes to /support, not Stripe")
-
-
-def t7_success_and_cancel_routes_render():
+def t6_success_and_cancel_routes_render():
     r1 = _client().get("/pricing/checkout/success?session_id=cs_test_smoke")
-    assert r1.status_code == 200, (
-        f"success route should render, got {r1.status_code}"
-    )
+    assert r1.status_code == 200, f"success route should render, got {r1.status_code}"
     body1 = r1.get_data(as_text=True)
     assert "Payment received" in body1, "success page missing confirmation copy"
-    # Session id should be reflected in the HTML so customers can quote
-    # it to support, but only the safe slice.
     assert "cs_test_smoke" in body1
 
     r2 = _client().get("/pricing/checkout/cancel", follow_redirects=False)
@@ -276,18 +185,17 @@ def t7_success_and_cancel_routes_render():
         f"cancel should redirect back to /pricing, got {r2.status_code}"
     )
     assert "/pricing" in r2.headers.get("Location", "")
-    print("T7 OK: success page renders; cancel redirects back to /pricing")
+    print("T6 OK: success page renders; cancel redirects back to /pricing")
 
 
 if __name__ == "__main__":
     try:
-        t1_pricing_cards_appear_above_addons_and_faq()
+        t1_public_pricing_has_no_checkout_forms_or_cards()
         t2_pricing_page_never_leaks_stripe_secret_key()
-        t3_checkout_graceful_when_stripe_not_configured()
-        t4_checkout_creates_session_when_stripe_configured()
+        t3_checkout_route_graceful_when_stripe_not_configured()
+        t4_checkout_route_creates_session_when_configured()
         t5_unknown_plan_is_404()
-        t6_complete_tier_still_links_to_support()
-        t7_success_and_cancel_routes_render()
+        t6_success_and_cancel_routes_render()
         print("\nALL PRICING + STRIPE SMOKE TESTS PASSED")
     finally:
         for path in (APP_DB, HIST_DB):

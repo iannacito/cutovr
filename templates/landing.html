@@ -10,24 +10,25 @@
       PCLaw to QuickBooks migration, <em>handled for you</em>.
     </h1>
     <p class="landing-hero__lede">
-      Upload your PCLaw reports, answer a few questions, and we do the
-      accounting-heavy parts.
-    </p>
-    <p class="landing-hero__price-anchor"
-       data-testid="landing-price-anchor"
-       style="font-size:1rem;font-weight:600;margin-top:var(--space-3);">
-      From $999 &mdash; no subscription.
+      Book a discovery call, answer a few questions, and we handle the
+      accounting-heavy parts of moving your firm to QuickBooks.
     </p>
     <p class="landing-hero__qualifier muted"
-       data-testid="landing-hour-qualifier"
-       style="font-size:.85rem;margin-top:var(--space-2);max-width:60ch;">
-      For supported PCLaw CSV exports.
+       data-testid="landing-scoped-note"
+       style="font-size:.9rem;margin-top:var(--space-3);max-width:60ch;">
+      Every migration is scoped with our team, so your firm knows exactly
+      what is involved before any work begins.
     </p>
     <div class="landing-hero__ctas">
-      {# Get Started leads into the page-by-page onboarding flow: choose how
-         much history to move, enter firm details, pay, then upload reports. #}
-      <a class="btn btn-primary btn-lg" href="{{ url_for('onboarding_step1') }}"
-         data-testid="landing-get-started">Get started</a>
+      {# Primary path: book a discovery call. When no booking link is
+         configured, discovery_call_url falls back to the public request
+         form so the CTA is never a dead link. The secondary path always
+         points at the no-price request form. #}
+      <a class="btn btn-primary btn-lg" href="{{ discovery_call_url }}"
+         {% if discovery_call_is_external %}target="_blank" rel="noopener"{% endif %}
+         data-testid="landing-book-call">Book a discovery call</a>
+      <a class="btn btn-secondary btn-lg" href="{{ url_for('intake_form') }}"
+         data-testid="landing-send-details">Send migration details</a>
       <a class="landing-hero__signin" href="{{ url_for('login') }}">Sign in</a>
     </div>
     <ul class="landing-hero__bullets">
@@ -214,9 +215,10 @@
           <li>One-click reversal if something looks wrong.</li>
         </ul>
         <p class="muted" style="font-size:.8rem;margin-top:var(--space-2);">
-          A flat fee, no subscription &mdash; typically a fraction of the cost
-          of a consultant, which runs into the thousands. Costs are typical
-          industry estimates and vary by firm.
+          A traditional consultant-led migration can run into the thousands.
+          {{ app_name }} is typically a fraction of that cost &mdash; we scope
+          your migration on a discovery call so you know the price before any
+          work begins. Costs are typical industry estimates and vary by firm.
         </p>
       </article>
     </div>
@@ -270,44 +272,36 @@
   </div>
 </section>
 
-<!-- Pricing teaser --------------------------------------------------- -->
+<!-- Pricing (scoped after a discovery call) -------------------------- -->
 <section class="landing-section landing-section--pricing" id="pricing">
   <div class="landing-section__inner">
     <p class="eyebrow">Pricing</p>
-    <h2 class="h-serif landing-section__title">Choose how much history we handle.</h2>
-    <p class="muted landing-section__lede">
-      One firm. One migration. Pick how far back you want us to take it
-      &mdash; we handle the rest.
+    <h2 class="h-serif landing-section__title">Scoped to your firm, not a fixed menu.</h2>
+    <p class="muted landing-section__lede" data-testid="landing-pricing-scoped">
+      Every firm&rsquo;s books are a little different &mdash; how much history
+      you want to bring over, the quality of your reports, and whether you
+      handle client trust money all shape the work. So we scope your migration
+      on a short discovery call and give you a clear price before anything
+      begins.
     </p>
 
-    <div class="landing-pricing">
-      <a class="landing-pricing__card" data-testid="landing-plan-essential"
-         href="{{ url_for('intake_form', plan='essential') }}">
-        <p class="landing-pricing__eyebrow">Essential</p>
-        <h3 class="landing-pricing__name">Current Year</h3>
-        <p class="landing-pricing__amount">$999</p>
-        <p class="landing-pricing__sub">Just this year.</p>
-      </a>
-      <a class="landing-pricing__card landing-pricing__card--featured"
-         data-testid="landing-plan-standard"
-         href="{{ url_for('intake_form', plan='standard') }}">
-        <p class="landing-pricing__badge">Most common</p>
-        <p class="landing-pricing__eyebrow">Standard</p>
-        <h3 class="landing-pricing__name">Up to 3 Years</h3>
-        <p class="landing-pricing__amount">$1,499</p>
-        <p class="landing-pricing__sub">The default for most firms.</p>
-      </a>
-      <a class="landing-pricing__card" data-testid="landing-plan-complete"
-         href="{{ url_for('intake_form', plan='complete') }}">
-        <p class="landing-pricing__eyebrow">Complete</p>
-        <h3 class="landing-pricing__name">3+ years of history</h3>
-        <p class="landing-pricing__amount">Quote</p>
-        <p class="landing-pricing__sub">A deeper historical record.</p>
-      </a>
+    <div class="landing-pricing__steps" data-testid="landing-pricing-how">
+      <article class="card">
+        <h3>1. Book a discovery call</h3>
+        <p>Tell us about your firm and where you&rsquo;re moving from PCLaw.</p>
+      </article>
+      <article class="card">
+        <h3>2. We scope the migration</h3>
+        <p>We review your reports and what your firm needs to bring across.</p>
+      </article>
+      <article class="card">
+        <h3>3. You get a clear price</h3>
+        <p>We share pricing at the end of the call &mdash; no surprises.</p>
+      </article>
     </div>
 
     <p class="landing-pricing__footnote">
-      <a href="{{ url_for('pricing') }}">See full pricing &amp; FAQ &rarr;</a>
+      <a href="{{ url_for('pricing') }}">How pricing works &rarr;</a>
     </p>
   </div>
 </section>
@@ -320,16 +314,19 @@
       Let {{ app_name }} <em>handle the migration</em>.
     </h2>
     <p class="landing-cta__lede">
-      Create a workspace, upload your PCLaw exports, and answer a few
-      simple questions. You review and confirm; we handle the rest.
+      Start with a short discovery call. We&rsquo;ll scope your migration,
+      answer your questions, and give you a clear price &mdash; then we
+      handle the rest.
     </p>
     <div class="landing-cta__buttons">
-      <a class="btn btn-primary btn-lg" href="{{ url_for('signup') }}">Sign up &amp; start migration</a>
-      <a class="btn btn-secondary btn-lg" href="{{ url_for('onboarding') }}">Read the onboarding guide</a>
+      <a class="btn btn-primary btn-lg" href="{{ discovery_call_url }}"
+         {% if discovery_call_is_external %}target="_blank" rel="noopener"{% endif %}
+         data-testid="landing-cta-book-call">Book a discovery call</a>
+      <a class="btn btn-secondary btn-lg" href="{{ url_for('intake_form') }}">Send migration details</a>
       <a class="btn btn-link btn-lg" href="{{ url_for('login') }}">Sign in</a>
     </div>
     <p class="note landing-cta__footnote">
-      Questions before you sign up? <a href="{{ url_for('support') }}">Contact support</a>.
+      Questions first? <a href="{{ url_for('support') }}">Contact support</a>.
     </p>
   </div>
 </section>
