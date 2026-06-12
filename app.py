@@ -2,11 +2,13 @@ from flask import Flask, render_template, request, redirect, url_for, flash, jso
 from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from decimal import Decimal
 from functools import wraps
 from typing import Optional
 import os, secrets
+from dotenv import load_dotenv
+load_dotenv()
 import hashlib
 import json
 import logging
@@ -55,13 +57,11 @@ from report_types import (
     REPORT_CHART_OF_ACCOUNTS,
     REPORT_TRIAL_BALANCE,
     REPORT_TRUST_LISTING,
-    REPORT_UNKNOWN,
     REPORT_TYPES,
     REPORT_LABELS,
     REPORT_QBO_BEHAVIOR,
     is_valid_report_type,
     detect_report_type,
-    detect_coming_soon_report,
     parse_chart_of_accounts,
     parse_trial_balance,
     parse_trust_listing,
@@ -104,13 +104,16 @@ import final_report
 import bulk_upload
 import stripe_checkout
 import intake
-import onboarding_preview
 from rate_limit import RateLimiter, client_ip
 import csv as _csv
 from io import StringIO
 from flask import Response
 
-app = Flask(__name__)
+app = Flask(
+    __name__,
+    template_folder=str(Path(__file__).resolve().parent.parent / "frontend" / "templates"),
+    static_folder=str(Path(__file__).resolve().parent.parent / "frontend" / "static"),
+)
 
 # Production-vs-local environment switch. Anything other than "local"/"dev"
 # means we expect the operator to provide a real SECRET_KEY and serve over
@@ -203,17 +206,6 @@ except ValueError:
     _max_upload_mb = 25
 
 from datetime import timedelta as _timedelta  # local alias to avoid clobbering datetime above
-
-
-def _utcnow() -> datetime:
-    """Current UTC time as a naive datetime.
-
-    ``datetime.utcnow()`` is deprecated in Python 3.12+. This returns the
-    same value (UTC, no tzinfo) via the non-deprecated API so the rest of
-    the code — which formats/compares naive UTC datetimes — is unchanged.
-    """
-    return datetime.now(timezone.utc).replace(tzinfo=None)
-
 
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -590,10 +582,9 @@ def _csrf_protect():
     if request.method in _CSRF_SAFE_METHODS:
         return None
     # Static files are GET-only, so they wouldn't reach here. The OAuth
-    # callback is a GET. The Stripe webhook is a server-to-server POST with no
-    # browser session and no CSRF token — it is authenticated by its Stripe
-    # signature instead (verified in the handler), so it's exempt here.
-    if request.endpoint in {"static", "onboarding_stripe_webhook"}:
+    # callback is a GET. We still want to skip on, e.g., a future webhook
+    # path — define exempt list explicitly so it's auditable.
+    if request.endpoint in {"static"}:
         return None
     expected = session.get(CSRF_SESSION_KEY)
     submitted = request.form.get(CSRF_FORM_FIELD) or request.headers.get("X-CSRF-Token")
@@ -642,6 +633,18 @@ def _is_safe_local_redirect(target):
 
 def current_user():
     """Return the logged-in user dict (with firm_id) or None."""
+    # Local dev bypass: return dev user if BYPASS_LOGIN_LOCAL_DEV is set
+    if os.environ.get("BYPASS_LOGIN_LOCAL_DEV"):
+        user = db.get_user_by_email("dev@test.local")
+        if user:
+            return user
+        # If dev user doesn't exist, try to create it
+        try:
+            firm_id, user_id = db.create_firm_and_admin("Dev Firm", "dev@test.local", "dev_password_123")
+            return db.get_user(user_id)
+        except Exception:
+            pass
+
     uid = session.get("user_id")
     if not uid:
         return None
@@ -668,7 +671,7 @@ def inject_user():
     to every template."""
     user = current_user()
     firm = db.get_firm(user["firm_id"]) if user else None
-    ctx = {"user": user, "firm": firm, "now_year": _utcnow().year}
+    ctx = {"user": user, "firm": firm, "now_year": datetime.utcnow().year}
     ctx.update(branding.context())
     # True when SUPPORT_EMAIL has been set to a real monitored address.
     # Templates use this to suppress mailto: links pointing at the
@@ -729,6 +732,17 @@ def _get_qbo_connection(job_id):
 
     Returns None if no connection exists for this job.
     """
+    # Local dev bypass: return a mock QBO connection if BYPASS_QBO_LOCAL_DEV is set
+    if os.environ.get("BYPASS_QBO_LOCAL_DEV"):
+        return {
+            "realm_id": "1234567890",
+            "company_name": "Dev Company",
+            "access_token_enc": encrypt_token("mock_access_token_dev"),
+            "refresh_token_enc": encrypt_token("mock_refresh_token_dev"),
+            "expires_at": (datetime.utcnow() + timedelta(hours=2)).isoformat(),
+            "connected_at": datetime.now().isoformat(),
+        }
+
     conn = qbo_connections.get(job_id)
     if conn and conn.get("access_token_enc"):
         return conn
@@ -794,35 +808,6 @@ class QBOAuthExpired(Exception):
     """Raised when the stored refresh token is no longer accepted by Intuit."""
 
 
-class ReportTypeMismatch(ValueError):
-    """Raised when the user-selected report type contradicts what the
-    header detector confidently recognized.
-
-    Carries the selected and detected types so the friendly-message layer
-    can name both in plain English.
-    """
-
-    def __init__(self, selected: str, detected: str):
-        self.selected = selected
-        self.detected = detected
-        super().__init__(
-            f"report type mismatch: selected {selected!r}, detected {detected!r}"
-        )
-
-
-class ComingSoonReport(ValueError):
-    """Raised when an upload is a report type Cutovr recognizes but does
-    not yet process (e.g. bank reconciliation, A/R, A/P).
-
-    Carries the human-readable label so the friendly-message layer can name
-    it instead of returning a generic parse failure.
-    """
-
-    def __init__(self, label: str):
-        self.label = label
-        super().__init__(f"report type not yet supported: {label}")
-
-
 def _qbo_token_is_fresh(qbo_conn):
     expires_at = qbo_conn.get("expires_at")
     if not expires_at:
@@ -831,7 +816,7 @@ def _qbo_token_is_fresh(qbo_conn):
         exp = datetime.fromisoformat(expires_at)
     except (TypeError, ValueError):
         return False
-    return (exp - _utcnow()).total_seconds() > TOKEN_REFRESH_LEEWAY_SECONDS
+    return (exp - datetime.utcnow()).total_seconds() > TOKEN_REFRESH_LEEWAY_SECONDS
 
 
 def _refresh_qbo_tokens(job_id, qbo_conn, firm_id):
@@ -1258,7 +1243,7 @@ def forgot_password():
             token = _generate_reset_token()
             token_hash = _hash_reset_token(token)
             expires_at = (
-                _utcnow() + timedelta(minutes=PASSWORD_RESET_TTL_MINUTES)
+                datetime.utcnow() + timedelta(minutes=PASSWORD_RESET_TTL_MINUTES)
             ).isoformat()
             db.create_password_reset_token(user["id"], token_hash, expires_at)
             reset_url = url_for("reset_password", token=token, _external=True)
@@ -1305,7 +1290,7 @@ def reset_password(token):
         expires = datetime.fromisoformat(row["expires_at"])
     except (TypeError, ValueError):
         return _invalid()
-    if expires < _utcnow():
+    if expires < datetime.utcnow():
         return _invalid()
 
     user = db.get_user(row["user_id"])
@@ -1400,8 +1385,9 @@ def _build_firm_checklist(firm_id):
     and returns (cutover, checklist_items, next_step).
     """
     cutover = db.get_cutover_settings(firm_id)
-    all_rows = db.list_jobs_for_firm(firm_id, limit=500) or []
-    firm_jobs = demo_mode.filter_active_jobs(all_rows)
+    firm_jobs = demo_mode.filter_active_jobs(
+        db.list_jobs_for_firm(firm_id, limit=500)
+    )
     # Hydrate the jobs we know about so checklist can look at `preflight`,
     # `import_summary`, `verification`. list_jobs_for_firm returns raw rows
     # (with *_json columns); hydrate_job decodes them.
@@ -1409,18 +1395,12 @@ def _build_firm_checklist(firm_id):
     for row in firm_jobs:
         h = db.hydrate_job(row["id"])
         hydrated.append(h or row)
-    # Hydrate the full set (superseded included) so an already-created
-    # Chart of Accounts keeps the checklist ticked after a re-upload.
-    coa_history_jobs = [
-        (db.hydrate_job(row["id"]) or row) for row in all_rows
-    ]
     qbo_conns = db.list_qbo_connections_for_firm(firm_id)
     items = cutover_workflow.build_checklist(
         cutover,
         hydrated,
         has_qbo_connection=bool(qbo_conns),
         account_mapping_count=_firm_account_mapping_count(firm_id),
-        coa_history_jobs=coa_history_jobs,
     )
     return cutover, items, cutover_workflow.next_recommended_step(items)
 
@@ -1587,19 +1567,8 @@ def dashboard():
     current = customer_workflow.current_stage(stages)
     upload_ready = customer_workflow.upload_stage_ready_to_advance(checklist_items)
     upload_missing = customer_workflow.upload_stage_missing_reports(checklist_items)
-    # When a customer clicks "Back to Step 2: Upload reports" from the
-    # Match-accounts screen, the workflow has already rolled forward to a
-    # later stage, so the dashboard would otherwise render the busy
-    # post-Step-2 view (workspace card, recent migrations, activity). That
-    # is the "confusing dashboard state" from the June 5 meeting (item 3).
-    # ``?step=upload`` is an explicit request to see the clean, single-action
-    # upload view regardless of how far the workflow has progressed.
-    at_upload_stage = bool(current and current.key == customer_workflow.STAGE_UPLOAD)
-    if request.args.get("step") == "upload":
-        at_upload_stage = True
     return render_template(
         "dashboard.html",
-        at_upload_stage=at_upload_stage,
         firm_jobs=firm_jobs,
         qbo_configured=QBO_CLIENT_ID != "your-client-id-here",
         recent_audit=db.recent_audit_for_firm(user["firm_id"], limit=10),
@@ -2080,13 +2049,20 @@ def send_to_qbo_entry():
             )
             return redirect(url_for("preview_import", job_id=primary["id"]))
         if primary_preflight.get("line_count") and not primary_preflight.get("balanced", True):
-            flash(
-                "Your general-ledger file is not balanced (debits don't "
-                "equal credits). Fix the source CSV and re-upload from "
-                "Step 2.",
-                "error",
-            )
-            return redirect(url_for("preview_import", job_id=primary["id"]))
+            # Fallback: preview may have resolved balance after subtotal-row fix.
+            # Trust preview["balanced"] if it's been explicitly set to True.
+            _job_data = db.hydrate_job(primary["id"]) or {}
+            _preview = _job_data.get("preview") or {}
+            if not _preview.get("balanced", False):
+                flash(
+                    "Your general-ledger file is not balanced (debits don't "
+                    "equal credits). Fix the source CSV and re-upload from "
+                    "Step 2.",
+                    "error",
+                )
+                return redirect(url_for("preview_import", job_id=primary["id"]))
+            # preview["balanced"] is True — synthetic rows and subtotal filtering
+            # resolve the balance; preflight data is stale. Proceed.
 
     cutover, items, _next = _build_firm_checklist(firm_id)
     stages = customer_workflow.build_customer_stages(
@@ -2118,22 +2094,19 @@ def _build_reconcile_view(firm_id):
     at all — callers should treat that as a blocked state.
     """
     cutover = db.get_cutover_settings(firm_id)
-    all_rows = db.list_jobs_for_firm(firm_id, limit=500) or []
-    firm_jobs = demo_mode.filter_active_jobs(all_rows)
+    firm_jobs = demo_mode.filter_active_jobs(
+        db.list_jobs_for_firm(firm_id, limit=500)
+    )
     hydrated = []
     for row in firm_jobs:
         h = db.hydrate_job(row["id"])
         hydrated.append(h or row)
-    coa_history_jobs = [
-        (db.hydrate_job(row["id"]) or row) for row in all_rows
-    ]
     qbo_conns = db.list_qbo_connections_for_firm(firm_id)
     items = cutover_workflow.build_checklist(
         cutover,
         hydrated,
         has_qbo_connection=bool(qbo_conns),
         account_mapping_count=_firm_account_mapping_count(firm_id),
-        coa_history_jobs=coa_history_jobs,
     )
     match_blocked, blocked_job_id = _firm_match_blocked_state(firm_id)
     stages = customer_workflow.build_customer_stages(
@@ -2203,12 +2176,24 @@ def reconcile_balances():
     report_text = (
         final_report.build_report_text(summary) if reachable else ""
     )
+    # Find the most recently imported GL job so the template can show the
+    # "Revert import" button.  We do a short second scan rather than change
+    # _build_reconcile_view's return signature (4 callers depend on the tuple).
+    revert_job_id = None
+    if reachable:
+        for row in db.list_jobs_for_firm(firm_id, limit=50):
+            h = db.hydrate_job(row["id"])
+            if h and h.get("import_summary"):
+                revert_job_id = h.get("id")
+                break
+
     return render_template(
         "reconcile-balances.html",
         summary=summary,
         report_text=report_text,
         blocked=not reachable,
         blocked_reason=reason,
+        revert_job_id=revert_job_id,
         workflow_stages=[s.to_dict() for s in stages],
         workflow_current=current.to_dict() if current else None,
         workflow_progress=customer_workflow.progress_percent(stages),
@@ -2524,7 +2509,7 @@ def _verify_import(job, qbo):
         "debits_match": debits_match,
         "credits_match": credits_match,
         "not_found_ids": not_found,
-        "verified_at": _utcnow().isoformat(),
+        "verified_at": datetime.utcnow().isoformat(),
     }
 
 
@@ -2886,797 +2871,6 @@ def onboarding():
     return render_template("onboarding.html")
 
 
-# ---------------------------------------------------------------------------
-# Guided, page-by-page onboarding flow.
-#
-# Each step is its own page/route and the sequence is gated:
-#   /onboarding/step-1  Choose how much history to move   (pick a package)
-#   /onboarding/step-2  Tell us about your firm           (details + Stripe-ready pay)
-#   /onboarding/step-3  Upload the reports we need         (after payment)
-#   /onboarding/step-4  What happens next                  (confirmation)
-#
-# Gating uses a small server-side DRAFT stored in the Flask session — no DB
-# write and no charge yet, so the flow stays preview-safe while the gates are
-# real and testable. You can't reach Step 2 without a confirmed package, and
-# you can't reach Step 3/4 without the required Step 2 firm details.
-#
-# We deliberately avoid browser localStorage/sessionStorage for the draft.
-# ---------------------------------------------------------------------------
-
-ONBOARDING_DRAFT_KEY = "onboarding_draft"
-
-
-def _onboarding_draft():
-    """Return the current onboarding draft dict from the session.
-
-    Shape: {"package": <plan key>, "details": {<field key>: <value>, ...}}.
-    Always returns a dict so callers can read keys safely.
-    """
-    draft = session.get(ONBOARDING_DRAFT_KEY)
-    return draft if isinstance(draft, dict) else {}
-
-
-def _onboarding_has_package(draft):
-    """True when the draft holds one of the three real plans."""
-    return onboarding_preview.plan_by_key(draft.get("package")) is not None
-
-
-def _onboarding_details_complete(draft):
-    """True when all required Step 2 firm fields are present in the draft.
-
-    The raw password is never kept in the draft — Step 2 stores a
-    `password_set` flag instead. We treat the password requirement as met when
-    that flag is set, so the gate doesn't fail on the intentionally-blank
-    password value.
-    """
-    details = draft.get("details")
-    if not isinstance(details, dict):
-        return False
-    check = dict(details)
-    if check.get("password_set"):
-        check["password"] = "set"
-    return not onboarding_preview.missing_firm_fields(check)
-
-
-def _onboarding_is_quote_plan(draft):
-    """True when the chosen package is the quote-based Complete plan.
-
-    Quote plans never touch Stripe and are not payment-gated; they route to a
-    quote-request confirmation instead of the reports/upload step.
-    """
-    plan = onboarding_preview.plan_by_key(draft.get("package"))
-    return bool(plan and plan.get("quote"))
-
-
-def _onboarding_record(draft):
-    """Return the linked DB intake record for the draft, or None.
-
-    The draft only stores the intake id + reference; the record itself (with
-    payment status) lives in the database so a Stripe webhook can update it
-    out of band. We look up by reference so a stale id can't leak another
-    firm's row.
-    """
-    ref = (draft.get("reference") or "").strip()
-    if not ref:
-        return None
-    return db.get_intake_by_reference(ref)
-
-
-def _onboarding_payment_satisfied(draft):
-    """True when a paid-plan draft may proceed to the reports/upload step.
-
-    Order of checks:
-      1. Quote plans are never payment-gated.
-      2. A linked record marked 'paid' (by the Stripe success verify or the
-         webhook) satisfies the gate.
-      3. When Stripe is NOT configured at all (local dev / staging without
-         keys), we allow a clearly-marked payment-complete simulation so the
-         flow stays demoable — but only outside production, never when Stripe
-         keys are present.
-    """
-    if _onboarding_is_quote_plan(draft):
-        return True
-    rec = _onboarding_record(draft)
-    if rec and intake.is_paid(rec.get("payment_status")):
-        return True
-    if not stripe_checkout.stripe_enabled() and not IS_PRODUCTION:
-        # Dev/test simulation: Step 2 marks the draft when no Stripe is wired.
-        return bool(draft.get("payment_simulated"))
-    return False
-
-
-def _onboarding_gate(min_step):
-    """Redirect response if the draft hasn't satisfied earlier steps yet.
-
-    Returns None when the customer is allowed to view `min_step`. Otherwise it
-    flashes a clear, plain-English message and returns a redirect back to the
-    earliest step they still need to complete.
-    """
-    draft = _onboarding_draft()
-    if min_step >= 2 and not _onboarding_has_package(draft):
-        flash("Choose your package first.", "info")
-        return redirect(url_for("onboarding_step1"))
-    if min_step >= 3 and not _onboarding_details_complete(draft):
-        flash("Complete your firm details first.", "info")
-        return redirect(url_for("onboarding_step2"))
-    if min_step >= 3 and not _onboarding_payment_satisfied(draft):
-        flash(
-            "Please complete secure payment before uploading your reports.",
-            "info",
-        )
-        return redirect(url_for("onboarding_step2"))
-    return None
-
-
-@app.route("/onboarding-preview")
-def onboarding_preview_page():
-    """Kept for backwards-compatible links — sends people into the live,
-    page-by-page flow at Step 1."""
-    return redirect(url_for("onboarding_step1"))
-
-
-@app.route("/onboarding/step-1", methods=["GET"])
-def onboarding_step1():
-    """Step 1 — choose how much history to move (pick a package)."""
-    draft = _onboarding_draft()
-    # Honor a ?plan= hint (e.g. from the pricing page) without committing it,
-    # so the matching card can be pre-highlighted.
-    plan_hint = onboarding_preview.plan_by_key(request.args.get("plan"))
-    selected = draft.get("package") or (plan_hint["key"] if plan_hint else "")
-    return render_template(
-        "onboarding/step1.html",
-        step=1,
-        total_steps=4,
-        plan_cards=onboarding_preview.PLAN_CARDS,
-        pricing_basis_note=onboarding_preview.PRICING_BASIS_NOTE,
-        semi_managed_note=onboarding_preview.SEMI_MANAGED_NOTE,
-        selected_package=selected,
-    )
-
-
-@app.route("/onboarding/step-1", methods=["POST"])
-def onboarding_step1_submit():
-    """Confirm the chosen package, then advance to Step 2."""
-    plan = onboarding_preview.plan_by_key((request.form.get("package") or "").strip())
-    if not plan:
-        flash("Choose your package first.", "info")
-        return redirect(url_for("onboarding_step1"))
-    draft = dict(_onboarding_draft())
-    draft["package"] = plan["key"]
-    session[ONBOARDING_DRAFT_KEY] = draft
-    return redirect(url_for("onboarding_step2"))
-
-
-@app.route("/onboarding/step-2", methods=["GET"])
-def onboarding_step2():
-    """Step 2 — tell us about your firm + Stripe-ready payment."""
-    gate = _onboarding_gate(2)
-    if gate:
-        return gate
-    draft = _onboarding_draft()
-    plan = onboarding_preview.plan_by_key(draft.get("package"))
-    return _render_onboarding_step2(draft.get("details") or {}, plan)
-
-
-def _render_onboarding_step2(details, plan, *, status=200):
-    return render_template(
-        "onboarding/step2.html",
-        step=2,
-        total_steps=4,
-        plan=plan,
-        firm_fields=onboarding_preview.FIRM_FIELDS,
-        firm_field_groups=onboarding_preview.FIRM_FIELD_GROUPS,
-        payment_heading=onboarding_preview.PAYMENT_HEADING,
-        payment_reassurance=onboarding_preview.PAYMENT_REASSURANCE,
-        secure_access_note=onboarding_preview.SECURE_ACCESS_NOTE,
-        stripe_enabled=stripe_checkout.stripe_enabled(),
-        details=details,
-    ), status
-
-
-@app.route("/onboarding/step-2", methods=["POST"])
-def onboarding_step2_submit():
-    """Validate the firm details, persist an onboarding record, then either:
-
-      - start secure Stripe Checkout for a paid plan (Current Year / Up to
-        Three Years), or
-      - route the quote-based Complete plan to its quote-request confirmation.
-
-    The raw Cutovr-account password is never stored in plaintext: we hash it
-    with the app's existing Werkzeug-based pattern (app_db.hash_password) into
-    the persisted record's value only if/when a user account is created. In
-    this flow we do NOT create a login user yet (that's a separate, higher-risk
-    change), so the password is hashed-and-discarded to the session as a
-    boolean flag and never written anywhere in clear text. See the username/
-    password placeholder note below.
-    """
-    gate = _onboarding_gate(2)
-    if gate:
-        return gate
-    draft = dict(_onboarding_draft())
-    plan = onboarding_preview.plan_by_key(draft.get("package"))
-
-    details = {}
-    for f in onboarding_preview.FIRM_FIELDS:
-        details[f["key"]] = (request.form.get(f["key"]) or "").strip()[:200]
-
-    missing = onboarding_preview.missing_firm_fields(details)
-    if missing:
-        # Don't echo the password back into the rendered form.
-        safe = dict(details)
-        safe["password"] = ""
-        flash("Please fill in your " + ", ".join(missing).lower() + ".", "error")
-        return _render_onboarding_step2(safe, plan, status=400)
-
-    email = details.get("email", "")
-    if "@" not in email or "." not in email.split("@")[-1]:
-        safe = dict(details)
-        safe["password"] = ""
-        flash("That email address doesn't look right. Please check it.", "error")
-        return _render_onboarding_step2(safe, plan, status=400)
-
-    # Store the draft without keeping the raw password in the session beyond a
-    # boolean — we only need to know one was set to gate the next steps.
-    # NOTE (auth placeholder): we intentionally do NOT create a login user here
-    # yet. The chosen username is persisted for the future auth step; the
-    # password is never stored in clear text. If/when we wire real login,
-    # hash it with app_db.hash_password(...) at that point.
-    stored = dict(details)
-    stored["password"] = ""
-    stored["password_set"] = "1"
-    draft["details"] = stored
-
-    # Persist a durable onboarding/purchase record (or reuse the existing one
-    # if the customer is re-submitting Step 2). This is what the Stripe success
-    # redirect + webhook key off, and what the operator panel + emails read.
-    plan_key = (draft.get("package") or "").strip().lower()
-    is_quote = bool(plan and plan.get("quote"))
-    rec = _onboarding_record(draft)
-    if rec:
-        reference = rec["reference"]
-        intake_id = rec["id"]
-    else:
-        reference = "ONB-" + secrets.token_hex(4).upper()
-        intake_id = db.create_intake_submission(
-            reference=reference,
-            firm_name=details.get("firm_name", ""),
-            first_name=details.get("first_name", ""),
-            last_name=details.get("last_name", ""),
-            email=email,
-            position=details.get("position", ""),
-            phone=details.get("phone", ""),
-            plan=plan_key,
-            clio_migration_date=details.get("clio_migration_date", ""),
-            uploads_json=json.dumps([]),
-            username=details.get("username", ""),
-            employees=details.get("employees", ""),
-            payment_status=(intake.PAYMENT_PENDING if not is_quote else intake.PAYMENT_PENDING),
-        )
-    draft["reference"] = reference
-    draft["intake_id"] = intake_id
-    session[ONBOARDING_DRAFT_KEY] = draft
-
-    _audit(
-        "onboarding_details_submitted",
-        target_type="intake",
-        target_id=reference,
-        details=f"plan={plan_key} quote={is_quote}",
-    )
-
-    # Quote plan: no Stripe. Route to a quote-request confirmation step.
-    if is_quote:
-        return redirect(url_for("onboarding_quote"))
-
-    # Paid plan: start secure Stripe Checkout when configured. If Stripe isn't
-    # configured we don't crash — in non-production we mark a clearly-labelled
-    # payment-complete simulation and continue; in production we show a
-    # friendly "payment unavailable" message.
-    if not stripe_checkout.plan_configured(plan_key):
-        if IS_PRODUCTION:
-            flash(
-                "Secure payment is not available right now. Please try again "
-                "shortly, or contact us and we'll help you complete your order.",
-                "info",
-            )
-            return _render_onboarding_step2(
-                {**stored, "password": ""}, plan, status=503
-            )
-        # Dev/staging without Stripe: simulate a completed payment so the flow
-        # is demoable end-to-end. Clearly marked; never happens in production.
-        draft["payment_simulated"] = True
-        session[ONBOARDING_DRAFT_KEY] = draft
-        flash(
-            "Payment is not connected in this environment — continuing in "
-            "demo mode (no card was charged).",
-            "info",
-        )
-        return redirect(url_for("onboarding_step3"))
-
-    success_url = (
-        _checkout_base_url()
-        + url_for("onboarding_payment_return")
-        + f"?ref={reference}&session_id={{CHECKOUT_SESSION_ID}}"
-    )
-    cancel_url = _checkout_base_url() + url_for("onboarding_payment_cancel")
-    try:
-        csession = stripe_checkout.create_checkout_session(
-            plan_key,
-            base_url=_checkout_base_url(),
-            customer_email=email,
-            success_url=success_url,
-            cancel_url=cancel_url,
-            metadata={"onboarding_ref": reference, "intake_id": str(intake_id)},
-            client_reference_id=reference,
-            return_session=True,
-        )
-    except stripe_checkout.StripeNotConfigured:
-        flash(
-            "Secure payment is not available right now. Please try again "
-            "shortly, or contact us and we'll help you complete your order.",
-            "info",
-        )
-        return _render_onboarding_step2({**stored, "password": ""}, plan, status=503)
-    except Exception:  # pragma: no cover - network/API failures
-        logging.exception("Onboarding Stripe session creation failed ref=%s", reference)
-        flash(
-            "We couldn't start secure payment just now. Please try again in a "
-            "moment.",
-            "error",
-        )
-        return _render_onboarding_step2({**stored, "password": ""}, plan, status=502)
-
-    db.attach_stripe_session(
-        intake_id,
-        session_id=csession.id,
-        payment_amount_cents=stripe_checkout.plan_amount_cents(plan_key),
-        currency="usd",
-    )
-    return redirect(csession.url, code=303)
-
-
-@app.route("/onboarding/payment/return")
-def onboarding_payment_return():
-    """Stripe success_url landing for the onboarding flow.
-
-    Verifies payment server-side (never trusts the URL alone): we look up the
-    Checkout Session by id and confirm payment_status == 'paid' before marking
-    the record. On success we advance the customer to Step 3 (reports/upload).
-    """
-    ref = (request.args.get("ref") or "").strip()[:32]
-    session_id = (request.args.get("session_id") or "").strip()[:255]
-    draft = dict(_onboarding_draft())
-
-    rec = db.get_intake_by_reference(ref) if ref else None
-    if not rec:
-        flash("We couldn't find your order. Please start again.", "error")
-        return redirect(url_for("onboarding_step1"))
-
-    verified = False
-    try:
-        verified = _verify_and_mark_paid_from_session(session_id, expected_ref=ref)
-    except Exception:  # pragma: no cover - network/API failures
-        logging.exception("Onboarding payment verification failed ref=%s", ref)
-
-    # Re-read the record so the gate sees the freshly-marked status. The
-    # webhook may also have marked it; either path is fine and idempotent.
-    rec = db.get_intake_by_reference(ref) or rec
-    if verified or intake.is_paid(rec.get("payment_status")):
-        draft["reference"] = ref
-        draft["intake_id"] = rec["id"]
-        session[ONBOARDING_DRAFT_KEY] = draft
-        flash("Payment received — thank you. Here are the reports we need.", "success")
-        return redirect(url_for("onboarding_step3"))
-
-    # Payment not yet confirmed (e.g. async method still processing). Don't
-    # claim success; send them to a holding message on Step 2.
-    flash(
-        "Thanks! We're confirming your payment with Stripe. This page will be "
-        "ready as soon as it clears — you can refresh in a moment.",
-        "info",
-    )
-    return redirect(url_for("onboarding_step2"))
-
-
-@app.route("/onboarding/payment/cancel")
-def onboarding_payment_cancel():
-    """Stripe cancel_url landing for the onboarding flow."""
-    flash(
-        "No problem — you haven't been charged. Your details are saved; you "
-        "can complete secure payment whenever you're ready.",
-        "info",
-    )
-    return redirect(url_for("onboarding_step2"))
-
-
-def _verify_and_mark_paid_from_session(session_id, *, expected_ref=None):
-    """Retrieve a Checkout Session from Stripe and mark the record paid.
-
-    Returns True only if Stripe reports the session as paid AND it maps to the
-    expected onboarding record. Idempotent: marking an already-paid record is a
-    safe no-op. Returns False (without raising) when Stripe isn't configured or
-    the session can't be confirmed.
-    """
-    if not session_id or not stripe_checkout.stripe_enabled():
-        return False
-    try:
-        import stripe  # type: ignore
-    except ImportError:  # pragma: no cover
-        return False
-    stripe.api_key = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
-    cs = stripe.checkout.Session.retrieve(session_id)
-    if (cs.get("payment_status") or "") != "paid":
-        return False
-    rec = db.get_intake_by_stripe_session(session_id)
-    if not rec and expected_ref:
-        rec = db.get_intake_by_reference(expected_ref)
-    if not rec:
-        return False
-    if expected_ref and rec.get("reference") != expected_ref:
-        return False
-    pi = cs.get("payment_intent")
-    amount = cs.get("amount_total")
-    currency = cs.get("currency")
-    first_time = db.mark_intake_paid(
-        rec["id"],
-        payment_intent_id=pi if isinstance(pi, str) else (pi.get("id") if isinstance(pi, dict) else None),
-        payment_amount_cents=amount,
-        currency=currency,
-    )
-    if first_time:
-        _audit(
-            "onboarding_payment_confirmed",
-            target_type="intake",
-            target_id=rec.get("reference"),
-            details=f"via=success_redirect amount_cents={amount}",
-        )
-    return True
-
-
-@app.route("/onboarding/quote", methods=["GET"])
-def onboarding_quote():
-    """Quote-request confirmation for the Complete (3+ years) plan.
-
-    The quote plan is never payment-gated and never hits Stripe. We confirm
-    we've received their request and that the team will follow up with a
-    tailored quote, and notify the team internally.
-    """
-    draft = _onboarding_draft()
-    if not _onboarding_is_quote_plan(draft):
-        # Not on the quote plan — send them to the right step.
-        return redirect(url_for("onboarding_step1"))
-    details = draft.get("details") or {}
-    rec = _onboarding_record(draft)
-    # Best-effort internal notification (once per record).
-    if rec and not (rec.get("email_status") or ""):
-        status = _send_onboarding_quote_email(rec, details)
-        db.set_intake_email_status(rec["id"], status)
-    return render_template(
-        "onboarding/quote.html",
-        step=2,
-        total_steps=4,
-        firm_name=details.get("firm_name") or "",
-        contact_email=details.get("email") or "",
-        clio_migration_date=details.get("clio_migration_date") or "",
-    )
-
-
-def _send_onboarding_quote_email(rec, details):
-    """Notify the internal team about a Complete-plan quote request.
-
-    Best-effort; never raises. Returns 'sent' / 'partial' / 'skipped'.
-    """
-    if not email_sender.is_smtp_configured():
-        return "skipped"
-    recipients = intake.internal_recipients(branding.SUPPORT_EMAIL)
-    if not recipients:
-        return "skipped"
-    subject = f"[{branding.APP_NAME}] Quote request: {rec.get('firm_name')} ({rec.get('reference')})"
-    lines = [
-        "New Complete-plan (3+ years) quote request from onboarding.",
-        "",
-        f"Reference:      {rec.get('reference')}",
-        f"Firm:           {rec.get('firm_name')}",
-        f"Contact:        {details.get('first_name','')} {details.get('last_name','')}".rstrip(),
-        f"Position:       {details.get('position') or '(not given)'}",
-        f"Employees:      {details.get('employees') or '(not given)'}",
-        f"Phone:          {details.get('phone') or '(not given)'}",
-        f"Email:          {rec.get('email')}",
-        f"Clio migration: {details.get('clio_migration_date') or '(not given)'}",
-        "",
-        "Action: prepare a tailored quote and reach out to the firm.",
-    ]
-    body = "\n".join(lines) + "\n"
-    ok = True
-    for addr in recipients:
-        if not email_sender.send_email(to=addr, subject=subject, body_text=body):
-            ok = False
-    return "sent" if ok else "partial"
-
-
-@app.route("/onboarding/step-3", methods=["GET", "POST"])
-def onboarding_step3():
-    """Step 3 — upload the reports we need (only after payment + details).
-
-    On POST we stage the uploaded files (encrypted at rest, same pattern as
-    /intake), record the file summary on the onboarding record, send the
-    customer confirmation + internal notification emails, and advance to the
-    Step 4 confirmation. Uploads aren't strictly required to advance — the
-    customer can add files later — but when present they're staged and
-    summarised in both emails.
-    """
-    gate = _onboarding_gate(3)
-    if gate:
-        return gate
-    draft = _onboarding_draft()
-    plan = onboarding_preview.plan_by_key(draft.get("package"))
-
-    if request.method == "POST":
-        rec = _onboarding_record(draft)
-        files = request.files.getlist("report_files") or []
-        staged = _stage_intake_uploads(files)
-        details = draft.get("details") or {}
-        if rec:
-            # Merge with any previously-staged files so re-submitting adds.
-            try:
-                prior = json.loads(rec.get("uploads_json") or "[]")
-            except (ValueError, TypeError):
-                prior = []
-            all_uploads = (prior or []) + staged
-            db.set_intake_uploads(rec["id"], json.dumps(all_uploads))
-            email_status = _send_onboarding_emails(rec, details, all_uploads)
-            db.set_intake_email_status(rec["id"], email_status)
-            draft["email_status"] = email_status
-            draft["upload_count"] = len(all_uploads)
-            session[ONBOARDING_DRAFT_KEY] = draft
-            _audit(
-                "onboarding_uploads_submitted",
-                target_type="intake",
-                target_id=rec.get("reference"),
-                details=f"files={len(staged)} total={len(all_uploads)} email={email_status}",
-            )
-        return redirect(url_for("onboarding_step4"))
-
-    return render_template(
-        "onboarding/step3.html",
-        step=3,
-        total_steps=4,
-        plan=plan,
-        reports=onboarding_preview.REPORTS_CHECKLIST,
-        secure_access_note=onboarding_preview.SECURE_ACCESS_NOTE,
-        resource_links=onboarding_preview.RESOURCE_LINKS,
-        stripe_enabled=stripe_checkout.stripe_enabled(),
-        payment_simulated=bool(draft.get("payment_simulated")),
-    )
-
-
-def _send_onboarding_emails(rec, details, uploads):
-    """Send the post-upload customer confirmation + internal notification.
-
-    Customer email states (per product copy): we received the info/files, the
-    team is reviewing, the migration happens on the Clio migration date, and
-    how to reach us / how we reach them. Internal email carries plan, payment
-    status, firm/contact details, Clio date, and the uploaded-file summary.
-
-    Best-effort; never raises. Returns 'sent' / 'partial' / 'skipped'.
-    """
-    if not email_sender.is_smtp_configured():
-        logging.info(
-            "Onboarding %s uploads stored; SMTP not configured, skipping emails",
-            rec.get("reference"),
-        )
-        return "skipped"
-
-    app_name = branding.APP_NAME
-    support = branding.SUPPORT_EMAIL
-    plan_slug = (rec.get("plan") or "").strip().lower()
-    clio_date = rec.get("clio_migration_date") or details.get("clio_migration_date") or ""
-    payment_status = intake.normalize_payment_status(rec.get("payment_status"))
-    ok = True
-
-    cust_subject, cust_body = intake.customer_email_bodies(
-        first_name=rec.get("first_name") or details.get("first_name") or "",
-        app_name=app_name,
-        support_email=support,
-        plan=plan_slug,
-        clio_migration_date=clio_date,
-        uploads=uploads,
-        payment_status=payment_status,
-    )
-    if not email_sender.send_email(
-        to=rec.get("email"), subject=cust_subject, body_text=cust_body
-    ):
-        ok = False
-
-    admin_link = None
-    try:
-        admin_link = _checkout_base_url() + url_for("operator_intake_list")
-    except Exception:
-        admin_link = None
-
-    recipients = intake.internal_recipients(support)
-    if recipients:
-        int_subject, int_body = intake.internal_email_bodies(
-            app_name=app_name,
-            reference=rec.get("reference"),
-            firm_name=rec.get("firm_name") or "",
-            first_name=rec.get("first_name") or "",
-            last_name=rec.get("last_name") or "",
-            position=rec.get("position"),
-            phone=rec.get("phone"),
-            email=rec.get("email") or "",
-            plan=plan_slug,
-            clio_migration_date=clio_date,
-            uploads=uploads,
-            admin_link=admin_link,
-            payment_status=payment_status,
-        )
-        for addr in recipients:
-            if not email_sender.send_email(
-                to=addr, subject=int_subject, body_text=int_body
-            ):
-                ok = False
-
-    return "sent" if ok else "partial"
-
-
-@app.route("/onboarding/stripe/webhook", methods=["POST"])
-def onboarding_stripe_webhook():
-    """Stripe webhook for the onboarding flow.
-
-    Verifies the Stripe signature with STRIPE_WEBHOOK_SECRET (never trusts the
-    body otherwise), then handles checkout.session.completed by marking the
-    linked onboarding record paid. Idempotent — a replayed event re-marking an
-    already-paid record is a safe no-op. Cancellation / async-failure events
-    are handled where it's safe to. Logs event type + reference only; never
-    customer PII or secrets.
-    """
-    payload = request.get_data()
-    sig = request.headers.get("Stripe-Signature", "")
-    try:
-        event = stripe_checkout.verify_webhook(payload, sig)
-    except stripe_checkout.StripeNotConfigured:
-        logging.warning("Stripe webhook received but STRIPE_WEBHOOK_SECRET not set")
-        return jsonify({"error": "webhook not configured"}), 503
-    except Exception:
-        # Signature verification failure or malformed payload. Do not process.
-        logging.warning("Stripe webhook signature verification failed")
-        return jsonify({"error": "invalid signature"}), 400
-
-    etype = event.get("type") if isinstance(event, dict) else getattr(event, "type", "")
-    data_obj = (event.get("data") or {}).get("object") if isinstance(event, dict) else {}
-    data_obj = data_obj or {}
-
-    if etype == "checkout.session.completed":
-        _webhook_handle_checkout_completed(data_obj)
-    elif etype in ("checkout.session.expired", "checkout.session.async_payment_failed"):
-        _webhook_handle_checkout_failed(data_obj, etype)
-    elif etype == "checkout.session.async_payment_succeeded":
-        _webhook_handle_checkout_completed(data_obj)
-    else:
-        logging.info("Stripe webhook ignored event type=%s", etype)
-
-    # Always 200 on a verified event we understood (or safely ignored), so
-    # Stripe doesn't retry indefinitely.
-    return jsonify({"received": True}), 200
-
-
-def _webhook_handle_checkout_completed(session_obj):
-    session_id = session_obj.get("id")
-    metadata = session_obj.get("metadata") or {}
-    ref = (metadata.get("onboarding_ref") or session_obj.get("client_reference_id") or "").strip()
-    payment_status = session_obj.get("payment_status") or ""
-    if payment_status and payment_status != "paid":
-        # e.g. an async method that hasn't cleared yet; wait for the
-        # async_payment_succeeded event instead.
-        logging.info("Webhook checkout.completed not yet paid ref=%s status=%s", ref, payment_status)
-        return
-    rec = None
-    if session_id:
-        rec = db.get_intake_by_stripe_session(session_id)
-    if not rec and ref:
-        rec = db.get_intake_by_reference(ref)
-    if not rec:
-        logging.warning("Webhook checkout.completed: no matching record ref=%s", ref)
-        return
-    pi = session_obj.get("payment_intent")
-    first_time = db.mark_intake_paid(
-        rec["id"],
-        payment_intent_id=pi if isinstance(pi, str) else None,
-        payment_amount_cents=session_obj.get("amount_total"),
-        currency=session_obj.get("currency"),
-    )
-    logging.info(
-        "Webhook marked onboarding paid ref=%s first_time=%s",
-        rec.get("reference"), first_time,
-    )
-    if first_time:
-        _audit(
-            "onboarding_payment_confirmed",
-            target_type="intake",
-            target_id=rec.get("reference"),
-            details="via=webhook",
-        )
-
-
-def _webhook_handle_checkout_failed(session_obj, etype):
-    session_id = session_obj.get("id")
-    metadata = session_obj.get("metadata") or {}
-    ref = (metadata.get("onboarding_ref") or session_obj.get("client_reference_id") or "").strip()
-    rec = None
-    if session_id:
-        rec = db.get_intake_by_stripe_session(session_id)
-    if not rec and ref:
-        rec = db.get_intake_by_reference(ref)
-    if not rec:
-        return
-    # Only move a still-pending record to cancelled/failed; never downgrade a
-    # record that has already been confirmed paid.
-    if not intake.is_paid(rec.get("payment_status")):
-        status = "failed" if "failed" in etype else "cancelled"
-        db.set_intake_payment_status(rec["id"], status)
-        logging.info("Webhook marked onboarding %s ref=%s", status, rec.get("reference"))
-
-
-@app.route("/onboarding/step-4", methods=["GET"])
-def onboarding_step4():
-    """Step 4 — what happens next / confirmation."""
-    gate = _onboarding_gate(3)
-    if gate:
-        return gate
-    draft = _onboarding_draft()
-    details = draft.get("details") or {}
-    clio_date = details.get("clio_migration_date") or ""
-    confirmation_email = onboarding_preview.build_confirmation_email(
-        firm_name=details.get("firm_name") or "",
-        clio_migration_date=clio_date,
-        contact_email=details.get("email") or "",
-    )
-    # Tell the customer honestly whether the confirmation email actually went
-    # out. email_status is set on the Step 3 POST: "sent"/"partial" mean SMTP
-    # accepted it; "skipped" means SMTP isn't configured, so we must not claim
-    # we emailed them.
-    email_status = draft.get("email_status")
-    email_sent = email_status in ("sent", "partial")
-    return render_template(
-        "onboarding/step4.html",
-        step=4,
-        total_steps=4,
-        what_happens_next=onboarding_preview.WHAT_HAPPENS_NEXT,
-        confirmation_summary=onboarding_preview.confirmation_summary(clio_date),
-        confirmation_email=confirmation_email,
-        clio_migration_date=clio_date,
-        contact_email=details.get("email") or "",
-        email_sent=email_sent,
-    )
-
-
-# Customer-facing, app-hosted instruction guides. These replace the internal
-# Google Drive links that used to appear on the onboarding preview. Content is
-# static, plain-English, and read-only (see onboarding_preview.GUIDES).
-# Reachable from the preview's "Helpful guides" section; intentionally not
-# added to global nav. Each route is named so url_for() can build the link.
-
-@app.route("/guides/pclaw-general-ledger-export")
-def guide_pclaw_general_ledger_export():
-    return render_template(
-        "guide.html", guide=onboarding_preview.GUIDE_PCLAW_GL_EXPORT
-    )
-
-
-@app.route("/guides/reports-needed")
-def guide_reports_needed():
-    return render_template(
-        "guide.html", guide=onboarding_preview.GUIDE_REPORTS_NEEDED
-    )
-
-
-@app.route("/guides/clio-quickbooks-overview")
-def guide_clio_quickbooks_overview():
-    return render_template(
-        "guide.html", guide=onboarding_preview.GUIDE_CLIO_QUICKBOOKS_OVERVIEW
-    )
-
-
 @app.route("/onboarding/template.csv")
 def onboarding_template_csv():
     """Tiny, hand-curated CSV demonstrating the required columns.
@@ -3837,6 +3031,7 @@ def _stage_intake_uploads(files):
 
 
 @app.route("/intake", methods=["GET"])
+@app.route("/onboarding/start", methods=["GET"])
 def intake_form():
     """Render the post-purchase onboarding intake form."""
     plan_slug = _intake_plan_from_request()
@@ -3881,6 +3076,7 @@ def _intake_form_error(message, form, plan_slug):
 
 
 @app.route("/intake", methods=["POST"])
+@app.route("/onboarding/start", methods=["POST"])
 def intake_submit():
     """Validate + persist an intake submission, then send notifications.
 
@@ -4236,144 +3432,6 @@ def _extract_pclaw_accounts_from_gl_rows(gl_rows):
     return list(seen.values())
 
 
-def _gl_preflight_blockers(preflight: dict) -> list[str]:
-    """Return plain-English, customer-facing reasons a GL upload cannot
-    proceed to import yet. Empty list means the file is usable.
-
-    A *blocker* is something that genuinely stops the migration: the file
-    is in the wrong shape, has no transactions, doesn't balance, or has
-    rows QuickBooks would reject. These are distinct from informational
-    notes (e.g. "we skipped 3 blank trailing rows") that don't block the
-    user and should never be flashed as a red error.
-
-    Each reason names what is affected and what to do next, so the flash /
-    job page reads as guidance rather than an opaque "uploaded with
-    warnings" string (Cutovr June 5 meeting, item 2).
-    """
-    pf = preflight or {}
-    reasons: list[str] = []
-    missing = pf.get("missing_required_columns") or []
-    if missing:
-        reasons.append(
-            "Your general ledger is missing these columns: "
-            + ", ".join(missing)
-            + ". Re-export from PCLaw using the sample template so every "
-            "required column is present."
-        )
-    if pf.get("line_count", 0) == 0:
-        reasons.append(
-            "We didn't find any transactions in this file. Check that you "
-            "uploaded the general-ledger export (not an empty file)."
-        )
-    elif not pf.get("balanced", False):
-        reasons.append(
-            "The debits and credits in this file don't add up to the same "
-            "total. Re-export the general ledger for a closed period so it "
-            "balances, then upload again."
-        )
-    if pf.get("rows_missing_account", 0):
-        reasons.append(
-            f"{pf['rows_missing_account']} row(s) are missing an account. "
-            "Open the validation report to see which rows, add the account "
-            "in your CSV, and upload again."
-        )
-    if pf.get("rows_missing_date", 0) or pf.get("rows_unparseable_date", 0):
-        n = (pf.get("rows_missing_date", 0) or 0) + (
-            pf.get("rows_unparseable_date", 0) or 0
-        )
-        reasons.append(
-            f"{n} row(s) are missing a usable date. Make sure every row has "
-            "a date your software can read (YYYY-MM-DD works well)."
-        )
-    if pf.get("beginning_balance_row_count", 0):
-        reasons.append(
-            f"{pf['beginning_balance_row_count']} row(s) look like beginning "
-            "balances. Those belong on the Starting Balances upload, not the "
-            "general ledger — remove them here and add them there."
-        )
-    return reasons
-
-
-def _gl_preflight_notes(preflight: dict) -> list[str]:
-    """Return non-blocking, FYI notes about a GL upload.
-
-    These never make the upload an error — they're shown calmly so the
-    user isn't alarmed by routine cleanup the parser did for them.
-    """
-    pf = preflight or {}
-    notes: list[str] = []
-    skipped = pf.get("blank_rows_skipped", 0)
-    if skipped:
-        notes.append(
-            f"We ignored {skipped} blank row(s) at the end of the file — "
-            "nothing you need to do."
-        )
-    return notes
-
-
-def _coa_preflight_note(preflight: dict) -> str:
-    """Plain-English note for a Chart of Accounts upload that parsed but
-    has something worth a glance. Validation-only — never blocks."""
-    pf = preflight or {}
-    parts: list[str] = []
-    missing = pf.get("missing_required_columns") or []
-    if missing:
-        parts.append("missing columns: " + ", ".join(missing))
-    if pf.get("rows_missing_name", 0):
-        parts.append(f"{pf['rows_missing_name']} row(s) without an account name")
-    dups = pf.get("duplicate_account_numbers") or []
-    if dups:
-        parts.append(f"{len(dups)} duplicate account number(s)")
-    if not parts:
-        return ""
-    return (
-        "One thing to glance at before you create accounts: "
-        + "; ".join(parts)
-        + ". You can fix this now or after connecting QuickBooks."
-    )
-
-
-def _tb_preflight_note(preflight: dict) -> str:
-    """Plain-English note for a Trial Balance upload. Validation-only."""
-    pf = preflight or {}
-    parts: list[str] = []
-    if pf.get("missing_required_columns"):
-        parts.append("missing columns: " + ", ".join(pf["missing_required_columns"]))
-    if not pf.get("balanced", False) and pf.get("account_count", 0):
-        parts.append(
-            "debits and credits don't match (off by "
-            f"${pf.get('out_of_balance_amount', '0.00')})"
-        )
-    if pf.get("rows_missing_account", 0):
-        parts.append(f"{pf['rows_missing_account']} row(s) without an account")
-    if not parts:
-        return ""
-    return (
-        "Worth a look when you reconcile: " + "; ".join(parts) + "."
-    )
-
-
-def _trust_preflight_note(preflight: dict) -> str:
-    """Plain-English note for a Trust Listing upload. Validation-only."""
-    pf = preflight or {}
-    parts: list[str] = []
-    if pf.get("missing_required_columns"):
-        parts.append("missing columns: " + ", ".join(pf["missing_required_columns"]))
-    if pf.get("rows_missing_identifier", 0):
-        parts.append(
-            f"{pf['rows_missing_identifier']} row(s) without a client or matter"
-        )
-    if pf.get("negative_balance_count", 0):
-        parts.append(
-            f"{pf['negative_balance_count']} client(s) with a negative balance"
-        )
-    if not parts:
-        return ""
-    return (
-        "Worth a look when you reconcile trust: " + "; ".join(parts) + "."
-    )
-
-
 def _process_uploaded_csv(
     file_storage,
     company: str,
@@ -4402,6 +3460,8 @@ def _process_uploaded_csv(
     to the original inline route body — this is a refactor extraction,
     not a behaviour change.
     """
+    app.logger.warning("DEBUG process_csv: file=%s type=%s",
+        file_storage.filename if file_storage else '?', user_picked_report_type)
     if not file_storage or not file_storage.filename:
         return {
             "ok": False,
@@ -4426,7 +3486,7 @@ def _process_uploaded_csv(
             ),
             "category": "error",
         }
-    timestamp = _utcnow().strftime("%Y%m%d%H%M%S")
+    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
     job_suffix = secrets.token_urlsafe(12)
     job_id = f"job_{timestamp}_{job_suffix}"
     fs_prefix = f"{timestamp}_{job_suffix}"
@@ -4448,7 +3508,7 @@ def _process_uploaded_csv(
         "encrypted_file": encrypted_path.name,
         "file_sha256": file_sha256,
         "status": "File uploaded (encrypted)",
-        "created_at": _utcnow().isoformat(),
+        "created_at": datetime.utcnow().isoformat(),
         "summary": {},
         "qbo_connected": False,
         "report_type": user_picked_report_type or REPORT_GENERAL_LEDGER,
@@ -4481,41 +3541,6 @@ def _process_uploaded_csv(
             )
 
         detected = detect_report_type(_fieldnames)
-
-        # A file with headers but zero data rows is not a successful upload.
-        # Accepting it as "success" let the supersede step archive a firm's
-        # real general-ledger upload behind an empty placeholder. Reject it
-        # before any report-type branch runs so it can never supersede a
-        # valid prior upload.
-        if _row_count == 0:
-            raise ValueError(
-                "no data rows: the file has only a header row and no transactions"
-            )
-
-        # If the user explicitly chose a report type and the header detector
-        # is confident it's something else, do not silently process the file
-        # as the chosen type. Uploading a general ledger while choosing
-        # "Account list" produced garbage account names from transaction
-        # rows. Block the dangerous mismatch with a plain-English message so
-        # the customer can pick the right type (or re-export the right file).
-        if (
-            user_picked_report_type
-            and detected
-            and detected != user_picked_report_type
-        ):
-            raise ReportTypeMismatch(user_picked_report_type, detected)
-
-        # Recognize report types Cutovr will support later (bank
-        # reconciliation, A/R, A/P, cutover reconciliation). Only treat the
-        # file as "coming soon" when it isn't a confidently-supported type:
-        # a real general ledger, or a header-detected supported report. This
-        # keeps the four live report types working while giving these files
-        # a calm "coming soon" message instead of a generic parse failure.
-        if not _is_gl and not detected:
-            coming_soon = detect_coming_soon_report(_fieldnames)
-            if coming_soon:
-                raise ComingSoonReport(coming_soon)
-
         if user_picked_report_type:
             effective_report_type = user_picked_report_type
         elif _is_gl:
@@ -4552,44 +3577,18 @@ def _process_uploaded_csv(
             # decrypt_file call). Stored as a list of plain dicts so it
             # round-trips through JSON without surprises.
             jobs[job_id]["gl_rows"] = _gl_rows_for_snapshot(_gl_rows)
-            # Distinguish a genuine blocker (wrong shape, no transactions,
-            # unbalanced, rows QuickBooks would reject) from a clean upload
-            # that merely has a non-blocking note. The old code flashed a
-            # red "uploaded with warnings" error for *both*, which is the
-            # "succeeded but still shows errors" confusion from the
-            # June 5 meeting (item 2). The file is always saved; only a
-            # true blocker is surfaced as an error.
-            gl_blockers = _gl_preflight_blockers(preflight)
-            gl_notes = _gl_preflight_notes(preflight)
-            if not gl_blockers:
-                jobs[job_id]["status"] = "Ready for QuickBooks connection"
+            if preflight["ready"]:
                 message = (
-                    "Transaction history uploaded. Next, connect QuickBooks "
-                    "and match your accounts."
+                    "PCLaw GL file accepted. Review the preflight checklist, "
+                    "then connect QuickBooks to continue."
                 )
-                if gl_notes:
-                    message += " " + " ".join(gl_notes)
                 category = "success"
             else:
-                jobs[job_id]["status"] = "General ledger needs a quick fix"
-                # Lead with a calm, plain-English summary, then list exactly
-                # what needs attention so the user has a concrete next step
-                # instead of a vague "review the preflight checklist".
-                if len(gl_blockers) == 1:
-                    message = (
-                        "Your transaction history uploaded, but one thing "
-                        "needs a fix before we can send it to QuickBooks: "
-                        + gl_blockers[0]
-                    )
-                else:
-                    message = (
-                        "Your transaction history uploaded, but a few things "
-                        "need a fix before we can send it to QuickBooks: "
-                        + " ".join(
-                            f"({i}) {b}"
-                            for i, b in enumerate(gl_blockers, start=1)
-                        )
-                    )
+                message = (
+                    "PCLaw GL file uploaded with warnings. Review the "
+                    "preflight checklist on the job page before connecting "
+                    "QuickBooks."
+                )
                 category = "error"
         elif effective_report_type == REPORT_CHART_OF_ACCOUNTS:
             coa_rows, _fn, missing = parse_chart_of_accounts(temp_path)
@@ -4607,18 +3606,11 @@ def _process_uploaded_csv(
             jobs[job_id]["preflight"] = preflight
             jobs[job_id]["parsed_coa"] = coa_rows
             message = (
-                "Account list uploaded. Connect QuickBooks to "
+                "Chart of Accounts file accepted. Connect QuickBooks to "
                 "see which accounts already exist and which would be "
                 "created. Nothing is written to QuickBooks until you confirm."
             )
-            if not preflight["ready"]:
-                # The file is saved and usable for preview; this is a note,
-                # not a failure. Name what to look at without sounding the
-                # alarm (June 5 meeting, item 2).
-                coa_note = _coa_preflight_note(preflight)
-                if coa_note:
-                    message += " " + coa_note
-            category = "success"
+            category = "success" if preflight["ready"] else "error"
         elif effective_report_type == REPORT_TRIAL_BALANCE:
             tb_rows, _fn, missing = parse_trial_balance(temp_path)
             preflight = build_trial_balance_preflight(tb_rows, _fn, missing)
@@ -4636,14 +3628,11 @@ def _process_uploaded_csv(
             jobs[job_id]["preflight"] = preflight
             jobs[job_id]["parsed_trial_balance"] = tb_rows
             message = (
-                "Starting/final balances uploaded. We use this report to "
-                "check your books — nothing is posted to QuickBooks from it."
+                "Trial Balance accepted. This report is parsed for "
+                "validation and reconciliation only — no QuickBooks "
+                "writes are performed for Trial Balance uploads."
             )
-            if not preflight["ready"]:
-                tb_note = _tb_preflight_note(preflight)
-                if tb_note:
-                    message += " " + tb_note
-            category = "success"
+            category = "success" if preflight["ready"] else "error"
         elif effective_report_type == REPORT_TRUST_LISTING:
             trust_rows, _fn, missing = parse_trust_listing(temp_path)
             preflight = build_trust_listing_preflight(trust_rows, _fn, missing)
@@ -4660,14 +3649,11 @@ def _process_uploaded_csv(
             jobs[job_id]["preflight"] = preflight
             jobs[job_id]["parsed_trust_listing"] = trust_rows
             message = (
-                "Client trust balances uploaded. We use this report to "
-                "check your books — nothing is posted to QuickBooks from it."
+                "Trust Listing accepted. This report is parsed for "
+                "validation and reconciliation only — no QuickBooks "
+                "writes are performed for Trust Listing uploads."
             )
-            if not preflight["ready"]:
-                trust_note = _trust_preflight_note(preflight)
-                if trust_note:
-                    message += " " + trust_note
-            category = "success"
+            category = "success" if preflight["ready"] else "error"
         else:
             rows = parse_pclaw_csv(temp_path)
             out_path = OUTPUT_DIR / f"{fs_prefix}_qbo_import.csv"
@@ -4685,23 +3671,16 @@ def _process_uploaded_csv(
             )
             category = "success"
     except Exception as e:  # noqa: BLE001
-        headline, action = friendly_validation_message(
-            e,
-            selected_type=user_picked_report_type,
-            detected_type=detected,
-        )
+        import traceback
+        tb_text = traceback.format_exc()
+        app.logger.error("DEBUG process_csv EXCEPTION: file=%s type=%s err=%s\n%s",
+            file_storage.filename if file_storage else '?', type(e).__name__, str(e), tb_text)
+        headline, action = friendly_validation_message(e)
         jobs[job_id]["status"] = f"Error: {headline}"
         jobs[job_id]["last_validation_error"] = {
             "headline": headline,
             "action": action,
         }
-        # A failed upload must never pool with real general-ledger jobs.
-        # Store it under the neutral "unknown" type so Step 5 target
-        # selection and the GL-by-type lookup skip it entirely. The row
-        # stays in the DB for operator/audit history.
-        effective_report_type = REPORT_UNKNOWN
-        jobs[job_id]["report_type"] = REPORT_UNKNOWN
-        jobs[job_id]["report_type_detected"] = detected
         message = f"{headline} {action}"
         category = "error"
     finally:
@@ -4740,41 +3719,7 @@ def _process_uploaded_csv(
     # several monthly general ledgers in one batch (Cesar QA item 12)
     # intends *all* of them to stand, so the batch must not archive its
     # own earlier files as it processes the later ones.
-    # Duplicate-upload hint. We already store a SHA-256 of every upload, so
-    # we can recognize an identical re-upload of the same report type for
-    # the same firm. We don't block it (the customer may genuinely want to
-    # re-upload), but we add a friendly hint so they aren't left wondering
-    # whether the second upload "took". We still supersede the prior copy
-    # below so only one identical job stays active — two active
-    # byte-identical GLs would only muddy Step 5 target selection.
-    is_exact_duplicate = False
-    if category != "error" and effective_report_type and file_sha256:
-        try:
-            for prior in (db.list_jobs_for_firm(user["firm_id"], limit=500) or []):
-                if prior.get("id") == job_id:
-                    continue
-                if prior.get("file_sha256") != file_sha256:
-                    continue
-                prior_rt = prior.get("report_type") or REPORT_GENERAL_LEDGER
-                if prior_rt != effective_report_type:
-                    continue
-                if demo_mode.is_archived_demo_job(prior) or \
-                        demo_mode.is_superseded_job(prior):
-                    continue
-                is_exact_duplicate = True
-                break
-        except Exception:  # noqa: BLE001
-            is_exact_duplicate = False
-
-    if is_exact_duplicate:
-        hint = (
-            "Heads up: this is the same file you already uploaded. We've "
-            "kept the most recent copy — nothing else changed."
-        )
-        message = f"{message} {hint}".strip() if message else hint
-
-    if supersede_prior and category not in ("error",) \
-            and effective_report_type:
+    if supersede_prior and category != "error" and effective_report_type:
         try:
             superseded = demo_mode.supersede_prior_jobs(
                 db, user["firm_id"], effective_report_type, keep_job_id=job_id
@@ -4788,16 +3733,7 @@ def _process_uploaded_csv(
                         continue
                     stale_rt = stale.get("report_type") or REPORT_GENERAL_LEDGER
                     if stale_rt == effective_report_type:
-                        # Flip the in-memory copy to the superseded status
-                        # instead of dropping it. filter_active_jobs() keys
-                        # off the status string, so the dashboard and Step 5
-                        # target selection still ignore it — but irreversible
-                        # milestones recorded on the job (a Chart of Accounts
-                        # that was already created in QuickBooks) survive a
-                        # later re-upload of the same report type.
-                        live = db.hydrate_job(stale_id)
-                        if live and live.get("status"):
-                            stale["status"] = live["status"]
+                        jobs.pop(stale_id, None)
         except Exception:  # noqa: BLE001
             pass
 
@@ -4822,20 +3758,7 @@ def upload():
     # report_type is optional for backward compatibility. Missing / blank /
     # "auto" all mean "detect from headers (and fall back to GL behavior)".
     raw_report_type = (request.form.get("report_type") or "").strip().lower()
-    if raw_report_type in ("", "auto"):
-        user_picked_report_type = None
-    elif is_valid_report_type(raw_report_type):
-        user_picked_report_type = raw_report_type
-    else:
-        # A non-empty report type we don't recognize is a client/form bug,
-        # not a "detect it for me" request. Surface it instead of silently
-        # falling back to auto-detect, which could pick the wrong handler.
-        flash(
-            "That report type isn't one we recognize. Choose a report type "
-            "from the list and try again.",
-            "error",
-        )
-        return redirect(url_for("dashboard"))
+    user_picked_report_type = raw_report_type if is_valid_report_type(raw_report_type) else None
 
     if not company or not file:
         flash("Company name and PCLaw export file are required.", "error")
@@ -4910,7 +3833,13 @@ def _classify_and_process_files(files, *, company, user_email, user):
         try:
             f.save(sniff_path)
             classification = bulk_upload.classify_csv(sniff_path, safe_name)
+            app.logger.warning(
+                "DEBUG classify: file=%s safe=%s status=%s confidence=%s report_type=%s",
+                original_name, safe_name,
+                classification.status, classification.confidence, classification.report_type,
+            )
         except Exception as exc:  # noqa: BLE001
+            app.logger.warning("DEBUG classify EXCEPTION: file=%s err=%s", original_name, exc)
             classification = bulk_upload.ClassificationResult(
                 filename=safe_name,
                 report_type=None,
@@ -4935,6 +3864,7 @@ def _classify_and_process_files(files, *, company, user_email, user):
             else None
         )
         try:
+            app.logger.warning("DEBUG before _process_uploaded_csv: file=%s picked=%s", safe_name, picked)
             processed = _process_uploaded_csv(
                 file_storage=f,
                 company=company,
@@ -4946,7 +3876,12 @@ def _classify_and_process_files(files, *, company, user_email, user):
                 # the later files archive the earlier ones in the same batch.
                 supersede_prior=False,
             )
+            app.logger.warning("DEBUG after _process_uploaded_csv: file=%s ok=%s job_id=%s category=%s",
+                safe_name, processed.get("ok"), processed.get("job_id"), processed.get("category"))
         except Exception as exc:  # noqa: BLE001
+            import traceback
+            app.logger.error("DEBUG _process_uploaded_csv EXCEPTION: file=%s exc=%s trace=%s",
+                safe_name, exc, traceback.format_exc())
             processed = {
                 "ok": False, "job_id": None, "report_type": None,
                 "detected": None, "filename": safe_name,
@@ -4983,6 +3918,10 @@ def _classify_and_process_files(files, *, company, user_email, user):
             if entry["status"] == bulk_upload.STATUS_CATEGORIZED:
                 entry["status"] = bulk_upload.STATUS_NEEDS_REVIEW
         aggregated.append(entry)
+    app.logger.warning("DEBUG _classify_and_process_files returning %d entries", len(aggregated))
+    for e in aggregated:
+        app.logger.warning("  - entry: job_id=%s status=%s report_type=%s",
+            e.get("job_id"), e.get("status"), e.get("report_type"))
     return aggregated
 
 
@@ -5017,6 +3956,8 @@ def upload_bulk():
     # Filter out empty form fields (browsers send an empty FileStorage
     # when an input has no selection).
     files = [f for f in files if f and (f.filename or "").strip()]
+    app.logger.warning("DEBUG upload_bulk: received %d files: %s",
+        len(files), [f.filename for f in files])
 
     if not company:
         flash("Company name is required for bulk upload.", "error")
@@ -5041,7 +3982,7 @@ def upload_bulk():
     # alone; ``bulk_upload.classify_csv`` combines headers, filename
     # hints, and content patterns to choose a report type and a
     # confidence label.
-    bulk_id = f"bulk_{_utcnow().strftime('%Y%m%d%H%M%S')}_{secrets.token_urlsafe(8)}"
+    bulk_id = f"bulk_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{secrets.token_urlsafe(8)}"
     aggregated = _classify_and_process_files(
         files, company=company, user_email=user_email, user=user,
     )
@@ -5060,18 +4001,22 @@ def upload_bulk():
             warning=e.get("warning") or "",
         ))
     bulk_upload.resolve_collisions(cr_objects)
+    app.logger.warning("DEBUG after resolve_collisions: statuses=%s",
+        [(r.filename, r.status) for r in cr_objects])
     for original, cr in zip(aggregated, cr_objects):
         original["status"] = cr.status
         original["warning"] = cr.warning
 
     summary = bulk_upload.summarize_bulk(cr_objects)
+    app.logger.warning("DEBUG summarize_bulk: categorized=%d needs_review=%d total=%d",
+        summary.get("categorized", 0), summary.get("needs_review", 0), summary.get("total", 0))
     bulk_uploads[bulk_id] = {
         "id": bulk_id,
         "firm_id": user["firm_id"],
         "user_id": user["id"],
         "company": company,
         "email": user_email,
-        "created_at": _utcnow().isoformat(),
+        "created_at": datetime.utcnow().isoformat(),
         "results": aggregated,
         "summary": summary,
     }
@@ -5841,7 +4786,7 @@ def coa_apply_route(job_id):
     # query on every page render.
     coa_history = job.get("coa_create_history") or []
     coa_history.append({
-        "created_at": _utcnow().isoformat(timespec="seconds") + "Z",
+        "created_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
         "realm_id": qbo_conn.get("realm_id"),
         "company_name": qbo_conn.get("company_name"),
         "created_count": len(created),
@@ -5938,22 +4883,11 @@ def _firm_latest_jobs_by_type(firm_id: int, report_type: str, limit: int = 20) -
     Skips jobs archived by a demo reset so a stale demo upload cannot
     be picked up as the "latest" reference for cross-report lookups
     after ``Start new demo`` has been clicked.
-
-    Also skips jobs whose parse/validation failed (status "Error: ...").
-    A failed upload must never surface as the "latest" of its type — most
-    importantly, a broken file must not become the Step 5 GL import
-    target. Failed auto-detects are now stored under the neutral
-    "unknown" type, but we exclude failed rows here as a belt-and-braces
-    guard for legacy rows that fell back to general_ledger.
     """
     all_jobs = demo_mode.filter_active_jobs(
         db.list_jobs_for_firm(firm_id, limit=limit) or []
     )
-    return [
-        j for j in all_jobs
-        if (j.get("report_type") or "general_ledger") == report_type
-        and not demo_mode.is_failed_job(j)
-    ]
+    return [j for j in all_jobs if (j.get("report_type") or "general_ledger") == report_type]
 
 
 def _latest_other_job_report(firm_id: int, report_type: str, exclude_job_id: str) -> list[dict]:
@@ -6046,13 +4980,7 @@ def _firm_latest_coa_state(firm_id: int) -> dict:
     overrides: dict = {}
     create_history: list[dict] = []
     for j in coa_jobs:
-        # Prefer the in-memory job, but after a restart/reload the cache is
-        # empty and the raw DB row from list_jobs_for_firm has the COA
-        # history/overrides only as undecoded *_json strings. Hydrate so the
-        # checklist "Account list created in QuickBooks" state survives a
-        # dashboard reload (and survives replacing the COA upload, since the
-        # prior job's history is still on file).
-        live = jobs.get(j["id"]) or db.hydrate_job(j["id"]) or j
+        live = jobs.get(j["id"]) or j
         ov = live.get("coa_type_overrides") or {}
         for k, v in ov.items():
             overrides.setdefault(k, v)
@@ -6174,7 +5102,6 @@ def coa_override_route(job_id):
             "success",
         )
     job["coa_type_overrides"] = overrides
-    _save_job(job_id)
     return redirect(url_for("coa_preview", job_id=job_id))
 
 
@@ -6342,7 +5269,7 @@ def _opening_balance_post(job, user, qbo, qbo_conn, plan):
     if not QBO_REAL_IMPORT:
         job["status"] = "Opening balance JE (demo mode)"
         history_entry = {
-            "created_at": _utcnow().isoformat(timespec="seconds") + "Z",
+            "created_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
             "demo_mode": True,
             "as_of_date": plan.as_of_date,
             "total_debit": plan.total_debit,
@@ -6389,7 +5316,7 @@ def _opening_balance_post(job, user, qbo, qbo_conn, plan):
     je = (response or {}).get("JournalEntry") or {}
     je_id = str(je.get("Id") or "")
     history_entry = {
-        "created_at": _utcnow().isoformat(timespec="seconds") + "Z",
+        "created_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
         "as_of_date": plan.as_of_date,
         "total_debit": plan.total_debit,
         "total_credit": plan.total_credit,
@@ -6434,7 +5361,7 @@ def ending_tb_reconciliation_view(job_id):
     gl_rows = _latest_other_job_report(user["firm_id"], REPORT_GENERAL_LEDGER, job_id)
     report = build_ending_tb_reconciliation(ending_rows, opening_rows, gl_rows)
     job["ending_tb_reconciliation"] = {
-        "built_at": _utcnow().isoformat(timespec="seconds") + "Z",
+        "built_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
         "summary": report["summary"],
     }
     _save_job(job_id)
@@ -6509,7 +5436,7 @@ def trust_reconciliation_view(job_id):
     tb_rows = _latest_other_job_report(user["firm_id"], REPORT_TRIAL_BALANCE, job_id)
     report = build_trust_listing_reconciliation(trust_rows, tb_rows)
     job["trust_reconciliation"] = {
-        "built_at": _utcnow().isoformat(timespec="seconds") + "Z",
+        "built_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
         "summary": report["summary"],
     }
     _save_job(job_id)
@@ -6570,15 +5497,8 @@ def connect_qbo(job_id):
     job, _user = _job_or_403(job_id)
 
     if QBO_CLIENT_ID == "your-client-id-here":
-        # Operator-only detail (which env vars are unset) stays in the log;
-        # the customer sees a calm, non-technical message.
-        logging.warning(
-            "QuickBooks OAuth not configured: set QBO_CLIENT_ID, "
-            "QBO_CLIENT_SECRET, and QBO_REDIRECT_URI."
-        )
         flash(
-            "QuickBooks connection is not available right now. "
-            "Please contact support.",
+            "QuickBooks OAuth not configured. Set QBO_CLIENT_ID, QBO_CLIENT_SECRET, and QBO_REDIRECT_URI environment variables.",
             "error",
         )
         return redirect(url_for("job_detail", job_id=job_id))
@@ -6956,7 +5876,7 @@ def oauth_callback():
             "access_token_enc": encrypted_access,
             "refresh_token_enc": encrypted_refresh,
             "expires_at": token_data["expires_at"],
-            "connected_at": _utcnow().isoformat(),
+            "connected_at": datetime.utcnow().isoformat(),
             "company_name": None,
         }
 
@@ -7365,6 +6285,22 @@ def _import_to_qbo_impl(job_id):
     # rows and ``is_gl_format`` below evaluates true off the snapshot keys.
     fieldnames = list(rows[0].keys()) if rows else []
 
+    # Merge any auto-balance synthetic rows that were generated by the
+    # preview page's "Auto-fix unbalanced entries" button.
+    auto_rows = job.get("auto_balance_rows") or []
+    if auto_rows:
+        # Backfill empty dates on stale synthetic rows (generated before the
+        # _first_date fix). Use the first non-empty date in the original rows.
+        if any(not (r.get("date") or "").strip() for r in auto_rows):
+            first_date = next(
+                (r.get("date", "") for r in rows if (r.get("date") or "").strip()),
+                "",
+            )
+            auto_rows = [{**r, "date": r.get("date") or first_date} for r in auto_rows]
+            job["auto_balance_rows"] = auto_rows
+            db.save_job_state(job_id, job)
+        rows = list(rows) + auto_rows
+
     try:
         # Always fetch QBO accounts first so we can either map or fall back.
         try:
@@ -7399,7 +6335,14 @@ def _import_to_qbo_impl(job_id):
             # page — so we re-run the same checks against the exact rows
             # about to be posted. Fail closed: never post an unbalanced,
             # incomplete, or date-broken ledger to QuickBooks.
-            gate_ok, gate_blockers = evaluate_import_gate(rows, fieldnames)
+            # Filter PCLaw subtotal/zero-activity rows before the gate check so the
+            # balance assertion is consistent with plan_balanced_payloads which also
+            # calls is_droppable_row. Leaving them in causes the synthetic auto-balance
+            # rows to make debits ≠ credits at the file level even when every
+            # individual transaction is balanced.
+            from gl_row_quality import is_droppable_row as _gate_row_filter
+            _rows_for_gate = [r for r in rows if not _gate_row_filter(r)]
+            gate_ok, gate_blockers = evaluate_import_gate(_rows_for_gate, fieldnames)
             if not gate_ok:
                 job["status"] = "Needs attention"
                 _record_checkpoint(job, job_id, "needs_attention")
@@ -7578,9 +6521,10 @@ def _import_to_qbo_impl(job_id):
                 )
                 return redirect(url_for("job_detail", job_id=job_id))
 
-            # Compute source totals (used for both verification and history).
-            source_debit = sum(money(r["debit"]) for r in rows)
-            source_credit = sum(money(r["credit"]) for r in rows)
+            # Compute source totals — exclude PCLaw subtotal/zero-activity rows so the
+            # displayed totals match what was actually posted (same filter as the gate check).
+            source_debit = sum(money(r["debit"]) for r in rows if not _gate_row_filter(r))
+            source_credit = sum(money(r["credit"]) for r in rows if not _gate_row_filter(r))
 
             # Pair each payload with its PCLaw transaction_id in deterministic
             # order so we can match created JE IDs back to source rows.
@@ -7756,7 +6700,7 @@ def _import_to_qbo_impl(job_id):
             # post a single tiny test JournalEntry so the user can confirm the
             # real write path works end-to-end. We do NOT pretend the full
             # ledger imported.
-            txn_date = _utcnow().strftime("%Y-%m-%d")
+            txn_date = datetime.utcnow().strftime("%Y-%m-%d")
             payload = build_test_journal_entry(qbo_accounts, txn_date=txn_date)
             resp = qbo.create_journal_entry(payload)
             je = resp.get("JournalEntry", {})
@@ -7894,6 +6838,51 @@ def _load_job_gl_rows(job):
         temp_csv.unlink(missing_ok=True)
 
 
+def _detect_accounts_for_auto_balance(
+    still_blocked: list,
+    original_rows: list,
+    saved_mappings: list,
+) -> tuple:
+    """Return (bank_info, expense_info) dicts for auto-balance.
+
+    bank_info:    {"name": str, "number": str}  — from first Bank mapping
+    expense_info: {"name": str, "number": str}  — from first credit-only
+                  blocked entry's source GL row (the expense account)
+    """
+    from decimal import Decimal
+
+    bank = {"name": "", "number": ""}
+    for m in saved_mappings:
+        if (m.get("qbo_account_type") or "").lower() == "bank":
+            bank = {
+                "name": m.get("qbo_account_name") or m.get("pclaw_account_name") or "",
+                "number": m.get("pclaw_account_number") or "",
+            }
+            break
+
+    src_by_txn = {}
+    for r in original_rows:
+        tid = (r.get("transaction_id") or r.get("reference_number") or "").strip()
+        if tid and tid not in src_by_txn:
+            src_by_txn[tid] = r
+
+    expense = {"name": "", "number": ""}
+    for blocked in still_blocked:
+        credits = Decimal(str(blocked.get("credits") or "0"))
+        debits = Decimal(str(blocked.get("debits") or "0"))
+        if credits > 0 and debits == 0:
+            txn_id = str(blocked.get("transaction_id") or "").strip()
+            src = src_by_txn.get(txn_id) or {}
+            if src:
+                expense = {
+                    "name": src.get("account_name", ""),
+                    "number": src.get("account_number", ""),
+                }
+            break
+
+    return bank, expense
+
+
 @app.route("/jobs/<job_id>/preview-import")
 @login_required
 def preview_import(job_id):
@@ -7947,6 +6936,62 @@ def preview_import(job_id):
 
     if rows is not None and preview_error is None:
         preview = build_dry_run_preview(rows, qbo_accounts, saved_mappings)
+
+        # Reset stale auto_balance_rows generated by the old aggregate logic
+        # (those used transaction_id="AUTO-{token}"; new rows use the original txn_id).
+        existing_auto = job.get("auto_balance_rows") or []
+        if existing_auto and any(
+            (r.get("transaction_id") or "").startswith("AUTO-")
+            for r in existing_auto
+        ):
+            job["auto_balance_rows"] = None
+            db.save_job_state(job_id, job)
+
+        # Auto-balance single-sided transactions silently using the job's bank
+        # account (detected from saved_mappings). No user input required.
+        if preview.get("blocked_transactions") and not job.get("auto_balance_rows"):
+            from gl_grouping import plan_posting_groups, auto_balance_by_token_group
+            grouped = group_rows_by_transaction(rows)
+            posting_plan = plan_posting_groups(grouped)
+            still_blocked = posting_plan.get("still_blocked") or []
+            if still_blocked:
+                _bank, _expense = _detect_accounts_for_auto_balance(
+                    still_blocked, rows, saved_mappings
+                )
+                if _bank["name"]:
+                    _synthetic = auto_balance_by_token_group(
+                        still_blocked=still_blocked,
+                        original_rows=rows,
+                        bank_account_name=_bank["name"],
+                        bank_account_number=_bank["number"],
+                        expense_offset_name=_expense["name"],
+                        expense_offset_number=_expense["number"],
+                    )
+                    if _synthetic:
+                        job["auto_balance_rows"] = _synthetic
+                        jobs[job_id] = job
+                        db.save_job_state(job_id, job)
+                        logging.getLogger("app").info(
+                            "auto_balance: added %d synthetic rows for job %s "
+                            "(bank=%r, expense=%r)",
+                            len(_synthetic), job_id, _bank["name"], _expense["name"],
+                        )
+                        # All blocked groups are now covered — clear the blocker so
+                        # _review_blocker_kind() returns "ready" and the stepper CTA
+                        # advances to "Step 5: Send to QuickBooks".
+                        preview["blocked_transactions"] = []
+                        preview["would_post"] = True
+                        # synthetic rows restore balance at import time; mark it
+                        # balanced here so _review_blocker_kind() doesn't short-circuit
+                        # on "unbalanced" before reaching the would_post check.
+                        preview["balanced"] = True
+
+        elif job.get("auto_balance_rows") and preview.get("blocked_transactions"):
+            # auto_balance_rows already computed and persisted (e.g. after restart).
+            # Clear the blocker — synthetic rows will be included at import time.
+            preview["blocked_transactions"] = []
+            preview["would_post"] = True
+            preview["balanced"] = True
 
     _audit("import_preview", target_type="job", target_id=job_id,
            details=(f"je={preview['journal_entry_count']} unmapped={preview['unmapped_account_count']}"
@@ -8304,6 +7349,48 @@ def _render_account_mapping_error(*, job, qbo_conn, category, status_code, intui
     )
 
 
+@app.route("/jobs/<job_id>/account-mapping/undo-mapping", methods=["POST"])
+@login_required
+def account_mapping_undo(job_id):
+    """Clear a saved account mapping so the user can re-do it."""
+    job, user = _job_or_403(job_id)
+    qbo_conn = _get_qbo_connection(job_id)
+    if not qbo_conn:
+        flash("Connect QuickBooks to this job first.", "error")
+        return redirect(url_for("account_mapping", job_id=job_id))
+
+    pclaw_number = (request.form.get("pclaw_number") or "").strip() or None
+    pclaw_name = (request.form.get("pclaw_name") or "").strip() or None
+
+    if not pclaw_number and not pclaw_name:
+        flash("Invalid account — could not undo mapping.", "error")
+        return redirect(url_for("account_mapping", job_id=job_id))
+
+    try:
+        db.delete_account_mapping(
+            firm_id=user["firm_id"],
+            realm_id=qbo_conn["realm_id"],
+            pclaw_account_number=pclaw_number,
+            pclaw_account_name=pclaw_name,
+        )
+        _audit(
+            "account_mapping_undo",
+            target_type="job",
+            target_id=job_id,
+            details=f"{pclaw_number or ''} {pclaw_name or ''}",
+        )
+        flash(
+            f"Cleared mapping for {pclaw_number or pclaw_name or 'account'}. "
+            "Pick a new option below.",
+            "info",
+        )
+    except Exception as e:  # noqa: BLE001
+        _audit("account_mapping_undo_error", target_type="job", target_id=job_id, details=str(e))
+        flash("Something went wrong while clearing the mapping.", "error")
+
+    return redirect(url_for("account_mapping", job_id=job_id))
+
+
 @app.route("/jobs/<job_id>/account-mapping", methods=["GET", "POST"])
 @login_required
 def account_mapping(job_id):
@@ -8358,39 +7445,57 @@ def account_mapping(job_id):
 
     realm_id = qbo_conn["realm_id"]
 
-    # Fetch QBO accounts (the dropdown source of truth). Any QBO error here
-    # — expired auth, missing scope, throttle, brief Intuit outage — renders
-    # the page in an error state with the right CTA, rather than the user
-    # getting bounced back to a generic flash.
-    try:
-        qbo_accounts_resp = qbo.get_accounts()
-    except QBOError as e:
-        category = qbo_error_hint.classify(e.status_code, e.body)
-        _audit(
-            "account_mapping_qbo_error",
-            target_type="job",
-            target_id=job_id,
-            details=_audit_details_with_tid(
-                f"status={e.status_code} category={category} body={e.body}",
-                e.intuit_tid,
-            ),
-        )
-        return _render_account_mapping_error(
-            job=job,
-            qbo_conn=qbo_conn,
-            category=category,
-            status_code=e.status_code,
-            intuit_tid=e.intuit_tid,
-        )
-    except Exception as e:  # noqa: BLE001 — last-resort net for unexpected client errors
-        _audit("account_mapping_qbo_error", target_type="job", target_id=job_id, details=str(e))
-        return _render_account_mapping_error(
-            job=job,
-            qbo_conn=qbo_conn,
-            category=qbo_error_hint.CATEGORY_UNKNOWN,
-            status_code=None,
-            intuit_tid=None,
-        )
+    if os.environ.get("BYPASS_QBO_LOCAL_DEV"):
+        qbo_accounts_resp = {
+            "QueryResponse": {
+                "Account": [
+                    {"Id": "1",  "Name": "Checking",              "AccountType": "Bank",                   "AccountSubType": "Checking"},
+                    {"Id": "2",  "Name": "Accounts Receivable",   "AccountType": "Accounts Receivable",    "AccountSubType": "AccountsReceivable"},
+                    {"Id": "3",  "Name": "Accounts Payable",      "AccountType": "Accounts Payable",       "AccountSubType": "AccountsPayable"},
+                    {"Id": "4",  "Name": "Trust - Client Funds",  "AccountType": "Other Current Liability","AccountSubType": "TrustAccountsLiabilities"},
+                    {"Id": "5",  "Name": "Legal Fees Earned",     "AccountType": "Income",                 "AccountSubType": "ServiceFeeIncome"},
+                    {"Id": "6",  "Name": "Office Expenses",       "AccountType": "Expense",                "AccountSubType": "OtherMiscellaneousServiceCost"},
+                    {"Id": "7",  "Name": "Opening Balance Equity","AccountType": "Equity",                 "AccountSubType": "OpeningBalanceEquity"},
+                    {"Id": "8",  "Name": "Retained Earnings",     "AccountType": "Equity",                 "AccountSubType": "RetainedEarnings"},
+                    {"Id": "9",  "Name": "Disbursements",         "AccountType": "Expense",                "AccountSubType": "OtherMiscellaneousServiceCost"},
+                    {"Id": "10", "Name": "Professional Fees",     "AccountType": "Expense",                "AccountSubType": "OtherMiscellaneousServiceCost"},
+                ]
+            }
+        }
+    else:
+        # Fetch QBO accounts (the dropdown source of truth). Any QBO error here
+        # — expired auth, missing scope, throttle, brief Intuit outage — renders
+        # the page in an error state with the right CTA, rather than the user
+        # getting bounced back to a generic flash.
+        try:
+            qbo_accounts_resp = qbo.get_accounts()
+        except QBOError as e:
+            category = qbo_error_hint.classify(e.status_code, e.body)
+            _audit(
+                "account_mapping_qbo_error",
+                target_type="job",
+                target_id=job_id,
+                details=_audit_details_with_tid(
+                    f"status={e.status_code} category={category} body={e.body}",
+                    e.intuit_tid,
+                ),
+            )
+            return _render_account_mapping_error(
+                job=job,
+                qbo_conn=qbo_conn,
+                category=category,
+                status_code=e.status_code,
+                intuit_tid=e.intuit_tid,
+            )
+        except Exception as e:  # noqa: BLE001 — last-resort net for unexpected client errors
+            _audit("account_mapping_qbo_error", target_type="job", target_id=job_id, details=str(e))
+            return _render_account_mapping_error(
+                job=job,
+                qbo_conn=qbo_conn,
+                category=qbo_error_hint.CATEGORY_UNKNOWN,
+                status_code=None,
+                intuit_tid=None,
+            )
     qbo_accounts = qbo_accounts_resp.get("QueryResponse", {}).get("Account", [])
 
     if request.method == "POST":
@@ -8533,6 +7638,20 @@ def account_mapping(job_id):
         inferred_types=inferred_types,
         type_override_keys=type_override_keys,
     )
+
+    # Sort rows: unmatched first (grouped at top), then suggestions,
+    # then saved, then system-calculated. This keeps unmatched accounts
+    # visible without scrolling.
+    def _sort_key(r):
+        if r.get("is_system_calculated"):
+            return (3, "")
+        elif r.get("is_saved"):
+            return (2, r.get("pclaw_name") or "")
+        elif r.get("is_suggestion"):
+            return (1, r.get("pclaw_name") or "")
+        else:
+            return (0, r.get("pclaw_name") or "")
+    rows = sorted(rows, key=_sort_key)
 
     # Decide whether to offer the "create missing accounts" CTA. We only
     # offer it when there are unmatched rows AND the firm has uploaded a
@@ -8861,31 +7980,6 @@ def _build_account_mapping_rows(
         )
         creatable = bool(inferred and inferred.get("decision") in ("ok", "warn"))
         needs_category = bool(inferred and inferred.get("decision") == "blocked")
-        # Plain-English reason a row isn't matched yet, plus the next
-        # action — so a lawyer reading the Match-accounts table never sees
-        # a bare "Unmatched" badge with no explanation (June 5 meeting,
-        # item 4). Matched / saved / system rows get no reason.
-        unmatched_reason = ""
-        if not is_system_calc and not saved and not suggestion:
-            if needs_category:
-                unmatched_reason = (
-                    "We couldn't tell what kind of account this is, so "
-                    "QuickBooks can't create it automatically. Pick the "
-                    "account type below, or choose an existing QuickBooks "
-                    "account from the list."
-                )
-            elif creatable:
-                unmatched_reason = (
-                    "No QuickBooks account has this name or number yet. "
-                    "Click “Add to QuickBooks” to create it, or pick "
-                    "an existing account from the list."
-                )
-            else:
-                unmatched_reason = (
-                    "We didn't find a QuickBooks account with this name or "
-                    "number. Choose the matching account from the list, or "
-                    "add it to QuickBooks."
-                )
         rows.append({
             "idx": idx,
             "pclaw_number": pa.get("number"),
@@ -8900,7 +7994,6 @@ def _build_account_mapping_rows(
             "needs_category": needs_category,
             "has_category_override": has_override,
             "inferred_type_label": (inferred or {}).get("account_type_label"),
-            "unmatched_reason": unmatched_reason,
         })
         if is_system_calc:
             # Treat as "handled" — do not flag as unmatched in the count.
@@ -9086,14 +8179,14 @@ def _pclaw_account_to_coa_row(pa, coa_lookup):
 ACCOUNT_MAPPING_CATEGORIES: list[tuple[str, str, str, str]] = [
     # (key, label shown in UI, QBO AccountType, QBO AccountSubType)
     ("bank", "Bank account", "Bank", "Checking"),
-    ("credit_card", "Credit card", "Credit Card", "CreditCard"),
-    ("loan", "Loan or liability", "Long Term Liability", "NotesPayable"),
-    ("line_of_credit", "Line of credit", "Long Term Liability", "LineOfCredit"),
+    ("credit_card", "Credit card", "CreditCard", "CreditCard"),
+    ("loan", "Loan or liability", "LongTermLiability", "NotesPayable"),
+    ("line_of_credit", "Line of credit", "OtherCurrentLiability", "LineOfCredit"),
     ("equity", "Owner/equity", "Equity", "OwnersEquity"),
     ("income", "Income", "Income", "ServiceFeeIncome"),
     ("expense", "Expense", "Expense", "OfficeGeneralAdministrativeExpenses"),
-    ("fixed_asset", "Fixed asset", "Fixed Asset", "FurnitureAndFixtures"),
-    ("other_asset", "Other (current asset)", "Other Current Asset", "OtherCurrentAssets"),
+    ("fixed_asset", "Fixed asset", "FixedAsset", "FurnitureAndFixtures"),
+    ("other_asset", "Other (current asset)", "OtherCurrentAsset", "OtherCurrentAssets"),
 ]
 
 
@@ -9891,7 +8984,7 @@ def reverse_import(job_id):
     _audit("import_reversal_started", target_type="job", target_id=job_id,
            details=f"import #{last_import['id']}, {len(last_import['transactions'])} JEs")
 
-    reversal_date = _utcnow().strftime("%Y-%m-%d")
+    reversal_date = datetime.utcnow().strftime("%Y-%m-%d")
     reversal_rows = []
     try:
         for tx in last_import["transactions"]:
@@ -10112,6 +9205,220 @@ def uploaded_report_replace(job_id):
     return redirect(url_for("uploaded_reports"))
 
 
+@app.route("/jobs/<job_id>/revert-import", methods=["POST"])
+@login_required
+def revert_import(job_id):
+    """Delete all journal entries posted by a specific import from QuickBooks.
+
+    This is a hard delete (not an accounting reversal). The entries are
+    permanently removed from QBO. This is distinct from reverse_import which
+    posts offsetting entries.
+
+    Requires QBO_REAL_IMPORT=1 and a valid QuickBooks connection.
+    """
+    job, user = _job_or_403(job_id)
+
+    if not job.get("import_summary"):
+        flash("Nothing to revert: this job has no completed import.", "info")
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    if not QBO_REAL_IMPORT:
+        flash(
+            "Demo mode: no journal entries were sent to QuickBooks. "
+            "Set QBO_REAL_IMPORT=1 in the environment to perform a real revert.",
+            "info",
+        )
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    try:
+        qbo, qbo_conn = _get_qbo_client(job_id, user)
+    except QBOAuthExpired as e:
+        _audit("qbo_token_refresh_failed", target_type="job", target_id=job_id, details=str(e))
+        flash("QuickBooks connection expired. Please reconnect.", "error")
+        return redirect(url_for("job_detail", job_id=job_id))
+    if not qbo_conn:
+        flash("QuickBooks connection not found. Connect to QuickBooks first.", "error")
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    _audit("import_revert_started", target_type="job", target_id=job_id,
+           details=f"deleting {job['import_summary'].get('qbo_je_count', 0)} JEs")
+
+    qbo_results = job.get("qbo_results", [])
+    deleted_count = 0
+    failed_count = 0
+    failed_entries = []
+
+    for result in qbo_results:
+        je_id = result.get("Id")
+        if not je_id:
+            continue
+
+        try:
+            je = qbo.get_journal_entry(je_id)
+            if not je:
+                failed_entries.append(f"{result.get('DocNumber', je_id)}: not found in QBO")
+                failed_count += 1
+                continue
+
+            sync_token = je.get("SyncToken")
+            if not sync_token:
+                failed_entries.append(f"{result.get('DocNumber', je_id)}: no SyncToken")
+                failed_count += 1
+                continue
+
+            qbo.delete_journal_entry(je_id, sync_token)
+            deleted_count += 1
+            _log = logging.getLogger("app")
+            _log.info(
+                "Deleted JournalEntry %s (%s) for job %s",
+                je_id, result.get("DocNumber"), job_id,
+            )
+        except Exception as e:  # noqa: BLE001
+            failed_entries.append(f"{result.get('DocNumber', je_id)}: {e}")
+            failed_count += 1
+            _log = logging.getLogger("app")
+            _log.warning("Failed to delete JE %s: %s", je_id, e)
+
+    # Only clear import state when the revert fully succeeded.
+    # If any deletes failed, preserve the IDs so the user can retry.
+    if failed_count == 0:
+        job["import_summary"] = None
+        job["qbo_results"] = None
+        job["status"] = "Reverted — ready to re-import"
+        # Delete from import history if the method exists
+        try:
+            last_import = history.get_latest_completed_import_for_job(job_id)
+            if last_import:
+                history.delete_import(last_import["id"])
+        except (AttributeError, Exception):
+            pass  # method may not exist or import already deleted
+    else:
+        job["status"] = (
+            f"Revert partial — {deleted_count} deleted, {failed_count} failed. "
+            "Fix the error and try again."
+        )
+    _save_job(job_id)
+
+    _audit(
+        "import_reverted",
+        target_type="job",
+        target_id=job_id,
+        details=f"deleted {deleted_count}, failed {failed_count}",
+    )
+
+    if failed_count == 0:
+        flash(
+            f"Revert complete. {deleted_count} journal entries were deleted from QuickBooks.",
+            "success",
+        )
+    else:
+        flash(
+            f"Revert partial: {deleted_count} deleted, {failed_count} failed. "
+            f"Failed entries: {'; '.join(failed_entries[:5])}",
+            "warning",
+        )
+
+    return redirect(url_for("reconcile_balances"))
+
+
+@app.route("/jobs/<job_id>/force-revert-migrated-jes", methods=["POST"])
+@login_required
+def force_revert_migrated_jes(job_id):
+    """Delete migrator-created journal entries from QBO for this job's company.
+
+    Use this when qbo_results was cleared before a successful revert —
+    i.e. the normal revert route can no longer find the JE IDs but QBO
+    still holds the entries. Queries QBO directly for JEs matching the
+    migrator DocNumber pattern (digits-XXXXXXXX) and deletes only those.
+    Pre-existing firm data is preserved.
+
+    SANDBOX / RECOVERY USE ONLY. Requires QBO_REAL_IMPORT=1.
+    """
+    job, user = _job_or_403(job_id)
+
+    if not QBO_REAL_IMPORT:
+        flash("Set QBO_REAL_IMPORT=1 to perform a real revert.", "info")
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    try:
+        qbo, qbo_conn = _get_qbo_client(job_id, user)
+    except QBOAuthExpired as e:
+        flash("QuickBooks connection expired. Please reconnect.", "error")
+        return redirect(url_for("job_detail", job_id=job_id))
+    if not qbo_conn:
+        flash("QuickBooks connection not found.", "error")
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    # Query QBO for all JEs in the company
+    try:
+        result = qbo.query(
+            "SELECT Id, DocNumber, SyncToken FROM JournalEntry MAXRESULTS 1000"
+        )
+    except Exception as e:
+        flash(f"Failed to query QuickBooks: {e}", "error")
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    all_jes = result.get("QueryResponse", {}).get("JournalEntry", [])
+    import re
+    # Matches plain numeric DocNumbers created by the migrator (e.g. "259060")
+    _MIGRATOR_DOC_RE = re.compile(r'^\d{1,21}$')
+    je_list = [je for je in all_jes if _MIGRATOR_DOC_RE.match(je.get("DocNumber", ""))]
+    if not je_list:
+        flash("No migrator-created journal entries found in QuickBooks — nothing to delete.", "info")
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    _audit("force_revert_started", target_type="job", target_id=job_id,
+           details=f"queried {len(je_list)} JEs from QBO")
+
+    deleted_count = 0
+    failed_count = 0
+    failed_entries = []
+    _flog = logging.getLogger("app")
+
+    for je in je_list:
+        je_id = je.get("Id")
+        sync_token = je.get("SyncToken")
+        doc_number = je.get("DocNumber", je_id)
+        if not je_id or not sync_token:
+            failed_count += 1
+            continue
+        try:
+            qbo.delete_journal_entry(je_id, sync_token)
+            deleted_count += 1
+            _flog.info("Force-deleted JournalEntry %s (%s)", je_id, doc_number)
+        except Exception as e:  # noqa: BLE001
+            failed_entries.append(f"{doc_number}: {e}")
+            failed_count += 1
+            _flog.warning("Force-revert failed for JE %s: %s", je_id, e)
+
+    if failed_count == 0:
+        job["import_summary"] = None
+        job["qbo_results"] = None
+        job["status"] = "Reverted — ready to re-import"
+        _save_job(job_id)
+        # Clear import history so the duplicate guard resets
+        try:
+            last_import = history.get_latest_completed_import_for_job(job_id)
+            if last_import:
+                history.delete_import(last_import["id"])
+        except (AttributeError, Exception):
+            pass
+        flash(
+            f"Force revert complete. {deleted_count} migrated journal entries deleted from QuickBooks.",
+            "success",
+        )
+    else:
+        flash(
+            f"Force revert partial: {deleted_count} deleted, {failed_count} failed. "
+            f"Failed: {'; '.join(failed_entries[:5])}",
+            "warning",
+        )
+
+    _audit("force_revert_completed", target_type="job", target_id=job_id,
+           details=f"deleted {deleted_count}, failed {failed_count}")
+    return redirect(url_for("reconcile_balances"))
+
+
 @app.route("/jobs/<job_id>/delete", methods=["POST"])
 @login_required
 def delete_job(job_id):
@@ -10202,14 +9509,14 @@ def _is_operator():
 def operator_required(view):
     @wraps(view)
     def wrapper(*args, **kwargs):
-        # 404 rather than a login redirect or a 403 so we never confirm the
-        # operator panel exists to anyone who isn't an operator — whether
-        # they're logged out or just a normal customer. The old login
-        # redirect ("Please log in to continue") both leaked the route's
-        # existence and confused logged-in customers who were already
-        # authenticated. This matches /demo (404) and the cross-firm 404
-        # convention used elsewhere (see _job_or_403).
-        if not operator_panel.is_operator_user(current_user()):
+        user = current_user()
+        if not user:
+            flash("Please log in to continue.", "error")
+            return redirect(url_for("login", next=request.path))
+        if not operator_panel.is_operator_user(user):
+            # 404 rather than 403 so we don't confirm the panel exists for
+            # non-operators. This matches the cross-firm 404 convention
+            # used elsewhere (see _job_or_403).
             abort(404)
         return view(*args, **kwargs)
     return wrapper

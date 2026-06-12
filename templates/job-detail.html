@@ -135,6 +135,14 @@
         Open QuickBooks and review imported data &rarr;
       </a>
     </div>
+    <form method="post" action="{{ url_for('revert_import', job_id=job.id) }}"
+          style="margin-top:var(--space-3);"
+          onsubmit="return confirm('This will permanently delete all {{ job.import_summary.qbo_je_count }} journal entries from QuickBooks. Are you sure?')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-danger">
+        Revert Import (delete from QuickBooks)
+      </button>
+    </form>
     {% if job.qbo_results %}
       <details class="quiet">
         <summary>QuickBooks entry IDs ({{ job.qbo_results|length }})</summary>
@@ -156,6 +164,26 @@
       </details>
     {% endif %}
   </section>
+  {% endif %}
+
+  {# ---- Force revert button (recovery when import_summary is cleared) --- #}
+  {% if not job.import_summary and job.qbo_connected %}
+  <form method="post"
+        action="{{ url_for('force_revert_migrated_jes', job_id=job.id) }}"
+        style="margin-top:var(--space-3);"
+        onsubmit="return confirm('This deletes only journal entries created by this migration tool (DocNumber pattern: 123456). Continue?')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="card danger-zone">
+      <h3 style="color:var(--error);">Danger zone</h3>
+      <p class="muted">Use this when a previous revert failed and cleared the stored import IDs but QuickBooks still has the journal entries.</p>
+      <button class="btn btn-danger" type="submit">
+        Delete migrated journal entries from QuickBooks
+      </button>
+      <p class="muted" style="margin-top:var(--space-2);font-size:.85rem;">
+        Queries QBO directly and deletes only this migrator&rsquo;s journal entries (DocNumber: numeric only).
+      </p>
+    </div>
+  </form>
   {% endif %}
 
   {# ---- Report-type next action (non-GL reports) --------------------- #}
@@ -199,7 +227,7 @@
 
   {# ---- Migration sequence (GL) -------------------------------------- #}
   {% if not report_type or report_type == 'general_ledger' %}
-  {% set step_validated = preflight and not preflight.missing_required_columns and preflight.balanced %}
+  {% set step_validated = preflight and not preflight.missing_required_columns and (preflight.balanced or (job.preview and job.preview.balanced)) %}
   {% set step_mapped = unmapped_count == 0 %}
   {% set step_connected = job.qbo_connected %}
   {% set step_imported = job.qbo_results %}
@@ -334,7 +362,7 @@
           <div>
             <dt>Balanced</dt>
             <dd>
-              {% if preflight.balanced %}
+              {% if preflight.balanced or (job.preview and job.preview.balanced) %}
                 <span class="badge success">Yes</span>
               {% else %}
                 <span class="badge error">Off by ${{ preflight.out_of_balance_amount }}</span>
@@ -365,7 +393,7 @@
           <div>
             <dt>Balanced</dt>
             <dd>
-              {% if preflight.balanced %}
+              {% if preflight.balanced or (job.preview and job.preview.balanced) %}
                 <span class="badge success">Yes</span>
               {% else %}
                 <span class="badge error">No</span>

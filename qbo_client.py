@@ -125,7 +125,7 @@ class QBOClient:
 
     def query(self, sql):
         encoded_query = quote(sql)
-        url = f"{self.base_url}/v3/company/{self.realm_id}/query?query={encoded_query}&minorversion=65"
+        url = f"{self.base_url}/v3/company/{self.realm_id}/query?query={encoded_query}&minorversion=75"
         try:
             response = requests.get(url, headers=self._headers(), timeout=30)
         except requests.RequestException as e:
@@ -161,7 +161,7 @@ class QBOClient:
         """
         url = (
             f"{self.base_url}/v3/company/{self.realm_id}/companyinfo/"
-            f"{self.realm_id}?minorversion=65"
+            f"{self.realm_id}?minorversion=75"
         )
         response = requests.get(url, headers=self._headers(), timeout=30)
         self._record_tid(response)
@@ -174,7 +174,7 @@ class QBOClient:
         """
         url = (
             f"{self.base_url}/v3/company/{self.realm_id}/journalentry/{je_id}"
-            f"?minorversion=65"
+            f"?minorversion=75"
         )
         response = requests.get(url, headers=self._headers(), timeout=30)
         tid = self._record_tid(response)
@@ -212,7 +212,7 @@ class QBOClient:
         send path rejects already-imported transaction ids.
         """
         url = (
-            f"{self.base_url}/v3/company/{self.realm_id}/journalentry?minorversion=65"
+            f"{self.base_url}/v3/company/{self.realm_id}/journalentry?minorversion=75"
         )
         attempts = max(1, int(max_retries) + 1)
         last_exc: Exception | None = None
@@ -325,6 +325,32 @@ class QBOClient:
         items = result.get("QueryResponse", {}).get("JournalEntry", [])
         return items[0] if items else None
 
+    def delete_journal_entry(self, je_id: str, sync_token: str) -> dict:
+        """Delete (void) a Journal Entry from QuickBooks.
+
+        QBO requires the current SyncToken to delete. Raises QBOAuthExpired on 401,
+        QBOError on any other non-200 response.
+        """
+        url = f"{self.base_url}/v3/company/{self.realm_id}/journalentry?operation=delete&minorversion=75"
+        # QBO delete endpoint requires fields at top level — NOT wrapped
+        # in the entity name. Wrapper causes error 2010 on ?operation=delete.
+        payload = {
+            "Id": je_id,
+            "SyncToken": sync_token,
+        }
+        response = requests.post(
+            url, headers=self._headers(), json=payload, timeout=30
+        )
+        tid = self._record_tid(response)
+        if response.status_code >= 400:
+            raise QBOError(
+                f"QBO returned {response.status_code} deleting JournalEntry {je_id}: {response.text}",
+                status_code=response.status_code,
+                body=response.text,
+                intuit_tid=tid,
+            )
+        return response.json()
+
     def create_account(self, payload):
         """Create a QBO Account. Returns the parsed JSON response.
 
@@ -334,7 +360,7 @@ class QBOClient:
         compatibility — callers must pass safe combinations (see
         coa_apply.map_pclaw_account_to_qbo_type).
         """
-        url = f"{self.base_url}/v3/company/{self.realm_id}/account?minorversion=65"
+        url = f"{self.base_url}/v3/company/{self.realm_id}/account?minorversion=75"
         response = requests.post(
             url, headers=self._headers(), json=payload, timeout=30
         )
@@ -342,6 +368,26 @@ class QBOClient:
         if response.status_code >= 400:
             raise QBOError(
                 f"QBO returned {response.status_code} creating Account: {response.text}",
+                status_code=response.status_code,
+                body=response.text,
+                intuit_tid=tid,
+            )
+        return response.json()
+
+    def update_account(self, payload):
+        """Update a QBO Account (sparse update). Returns the parsed JSON response.
+
+        ``payload`` should contain ``Id``, ``SyncToken``, ``sparse: True``,
+        and the fields to update (e.g., ``AcctNum``).
+        """
+        url = f"{self.base_url}/v3/company/{self.realm_id}/account?minorversion=75"
+        response = requests.post(
+            url, headers=self._headers(), json=payload, timeout=30
+        )
+        tid = self._record_tid(response)
+        if response.status_code >= 400:
+            raise QBOError(
+                f"QBO returned {response.status_code} updating Account: {response.text}",
                 status_code=response.status_code,
                 body=response.text,
                 intuit_tid=tid,
@@ -368,7 +414,7 @@ class QBOClient:
         return items[0] if items else None
 
     def create_customer(self, display_name):
-        url = f"{self.base_url}/v3/company/{self.realm_id}/customer?minorversion=65"
+        url = f"{self.base_url}/v3/company/{self.realm_id}/customer?minorversion=75"
         response = requests.post(
             url, headers=self._headers(), json={"DisplayName": display_name}, timeout=30
         )
@@ -383,7 +429,7 @@ class QBOClient:
         return response.json().get("Customer", {})
 
     def create_vendor(self, display_name):
-        url = f"{self.base_url}/v3/company/{self.realm_id}/vendor?minorversion=65"
+        url = f"{self.base_url}/v3/company/{self.realm_id}/vendor?minorversion=75"
         response = requests.post(
             url, headers=self._headers(), json={"DisplayName": display_name}, timeout=30
         )
