@@ -32,13 +32,9 @@
      bleeding to the viewport edges (Cesar 2026-06-03: the Step 3 buttons
      looked "stretched" because the stepper rendered full-bleed above the
      contained hero). #}
-  {# The workflow stepper above already renders the single, canonical
-     "Back to Step 2: Upload reports" link. A second, differently-worded
-     "Back to migration" link here (pointing at the job-detail page) gave
-     Step 3 two competing back buttons going to two different places —
-     the confusing back navigation from the June 5 meeting (item 3).
-     Removed so each page has exactly one clear way back. #}
   {% include "_workflow_stepper.html" %}
+
+  <a href="{{ url_for('job_detail', job_id=job.id) }}" class="back-link">&larr; Back to migration</a>
 
   <div class="hero">
     <p class="eyebrow">Step 3 of 6 &middot; Match accounts</p>
@@ -302,6 +298,33 @@
   </p>
   {% endif %}
 
+  {# Hidden per-row forms — live OUTSIDE the main save-matches form.
+     Controls inside the table bind to these via the HTML5 form= attribute. #}
+  {% for r in rows %}
+    {% if not r.is_system_calculated and not r.is_saved %}
+      <form id="add-form-{{ r.idx }}"
+            method="post"
+            action="{{ url_for('account_mapping_add_account', job_id=job.id) }}"
+            data-testid="row-add-outer-form-{{ r.idx }}"
+            style="display:none;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="pclaw_number" value="{{ r.pclaw_number or '' }}">
+        <input type="hidden" name="pclaw_name" value="{{ r.pclaw_name or '' }}">
+      </form>
+    {% endif %}
+    {% if r.is_saved or r.is_suggestion %}
+      <form id="undo-form-{{ r.idx }}"
+            method="post"
+            action="{{ url_for('account_mapping_undo', job_id=job.id) }}"
+            data-testid="row-undo-outer-form-{{ r.idx }}"
+            style="display:none;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="pclaw_number" value="{{ r.pclaw_number or '' }}">
+        <input type="hidden" name="pclaw_name" value="{{ r.pclaw_name or '' }}">
+      </form>
+    {% endif %}
+  {% endfor %}
+
   <section class="card" style="padding:0;">
     <form method="post" id="account-mapping-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -336,19 +359,40 @@
                 </td>
                 <td>
                   {% if r.is_system_calculated %}
-                    <span class="muted" style="font-size:.9rem;">
-                      No match needed
+                    <span class="muted" style="font-size:.9rem;">No match needed</span>
+                  {% elif r.creatable %}
+                    <span class="muted" style="font-size:.85rem;">
+                      Will be created in QuickBooks as
+                      <strong>{{ r.pclaw_name or r.pclaw_number }}</strong>
+                    </span>
+                    <details style="margin-top:.4rem;">
+                      <summary style="cursor:pointer;font-size:.8rem;color:var(--muted);">
+                        Change type
+                      </summary>
+                      <select name="category"
+                              form="add-form-{{ r.idx }}"
+                              style="margin-top:.3rem;max-width:18rem;">
+                        <option value="">&mdash; use inferred type &mdash;</option>
+                        {% for cat in account_mapping_categories %}
+                          <option value="{{ cat[0] }}">{{ cat[1] }}</option>
+                        {% endfor %}
+                      </select>
+                    </details>
+                  {% elif r.needs_category %}
+                    <span class="muted" style="font-size:.85rem;">
+                      Will be created in QuickBooks as
+                      <strong>{{ r.pclaw_name or r.pclaw_number }}</strong>
                     </span>
                   {% else %}
-                  <select name="mapping[{{ r.idx }}]" style="width:100%;">
-                    <option value="">&mdash; pick an existing QuickBooks account &mdash;</option>
-                    {% for a in qbo_accounts %}
-                      <option value="{{ a.Id }}"
-                        {% if r.current_qbo_id == a.Id %}selected{% endif %}>
-                        {{ a.Name }}{% if a.AcctNum %} ({{ a.AcctNum }}){% endif %} &mdash; {{ ACCOUNT_TYPE_LABELS.get(a.AccountType, a.AccountType) }}
-                      </option>
-                    {% endfor %}
-                  </select>
+                    <select name="mapping[{{ r.idx }}]" style="width:100%;">
+                      <option value="">&mdash; pick an existing QuickBooks account &mdash;</option>
+                      {% for a in qbo_accounts %}
+                        <option value="{{ a.Id }}"
+                          {% if r.current_qbo_id == a.Id %}selected{% endif %}>
+                          {{ a.Name }}{% if a.AcctNum %} ({{ a.AcctNum }}){% endif %} &mdash; {{ ACCOUNT_TYPE_LABELS.get(a.AccountType, a.AccountType) }}
+                        </option>
+                      {% endfor %}
+                    </select>
                   {% endif %}
                 </td>
                 <td>
@@ -358,16 +402,59 @@
                     </span>
                   {% elif r.is_saved %}
                     <span class="badge success">Saved</span>
+                    <button class="btn btn-sm"
+                            type="submit"
+                            form="undo-form-{{ r.idx }}"
+                            data-testid="row-undo-button-{{ r.idx }}"
+                            style="margin-left:.35rem;">
+                      Change mapping
+                    </button>
                   {% elif r.is_suggestion %}
                     <span class="badge">Auto-match</span>
+                    {# Show undo button so the user can dismiss the suggestion and
+                       interact with the row like an unmatched account. #}
+                    {% if r.idx is defined and not r.is_system_calculated %}
+                      <button class="btn btn-sm"
+                              type="submit"
+                              form="undo-form-{{ r.idx }}"
+                              data-testid="row-undo-button-{{ r.idx }}"
+                              style="margin-left:.35rem;">
+                        Change mapping
+                      </button>
+                    {% endif %}
+                    {# For suggestion rows, always show a category picker so users
+                       can override the auto-match and create a new account with
+                       a specific category. The inferred_type is never computed for
+                       suggestions (create-plan only runs on unmatched accounts),
+                       so we can't rely on creatable/needs_category — show the
+                       category picker unconditionally. #}
+                    <div style="margin:.35rem 0 0;">
+                      <label for="row-category-{{ r.idx }}"
+                             style="display:block;margin:0 0 .25rem;font-size:.8rem;">
+                        What kind of account is this? (to override the auto-match)
+                      </label>
+                      <select id="row-category-{{ r.idx }}"
+                              name="category"
+                              form="add-form-{{ r.idx }}"
+                              data-testid="row-category-select-{{ r.idx }}"
+                              style="margin:0 .35rem .35rem 0;max-width:18rem;">
+                        <option value="">&mdash; accept auto-match or pick a category &mdash;</option>
+                        {% for cat in account_mapping_categories %}
+                          <option value="{{ cat[0] }}">{{ cat[1] }}</option>
+                        {% endfor %}
+                      </select>
+                      <button class="btn btn-sm" type="submit"
+                              form="add-form-{{ r.idx }}"
+                              data-testid="row-add-button-{{ r.idx }}">
+                        Add to QuickBooks (with selected category)
+                      </button>
+                      <p class="muted" style="margin:.25rem 0 0;font-size:.75rem;max-width:36ch;">
+                        Leave blank to accept the auto-match, or pick a category
+                        to create this account with a specific type.
+                      </p>
+                    </div>
                   {% else %}
                     <span class="badge error">Unmatched</span>
-                    {% if r.unmatched_reason %}
-                    <p class="muted" data-testid="row-unmatched-reason-{{ r.idx }}"
-                       style="margin:.35rem 0 0;font-size:.8rem;max-width:40ch;">
-                      {{ r.unmatched_reason }}
-                    </p>
-                    {% endif %}
                     {# Row-level "Add to QuickBooks" CTA. Three states:
                        (1) creatable=True -> simple Add button, the safe
                            type was inferred from the name / COA upload.
@@ -378,13 +465,7 @@
                            "Add to QuickBooks" link the banner already
                            anchored to. #}
                     {% if r.creatable %}
-                      <form method="post"
-                            action="{{ url_for('account_mapping_add_account', job_id=job.id) }}"
-                            data-testid="row-add-form-{{ r.idx }}"
-                            style="margin:.35rem 0 0;">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="pclaw_number" value="{{ r.pclaw_number or '' }}">
-                        <input type="hidden" name="pclaw_name" value="{{ r.pclaw_name or '' }}">
+                      <div style="margin:.35rem 0 0;">
                         {% if r.inferred_type_label %}
                           <p class="muted" data-testid="row-inferred-type-{{ r.idx }}"
                              style="margin:0 0 .35rem;font-size:.8rem;">
@@ -394,24 +475,20 @@
                           </p>
                         {% endif %}
                         <button class="btn btn-sm" type="submit"
+                                form="add-form-{{ r.idx }}"
                                 data-testid="row-add-button-{{ r.idx }}">
                           Add this account to QuickBooks
                         </button>
-                      </form>
+                      </div>
                     {% elif r.needs_category %}
-                      <form method="post"
-                            action="{{ url_for('account_mapping_add_account', job_id=job.id) }}"
-                            data-testid="row-category-form-{{ r.idx }}"
-                            style="margin:.35rem 0 0;">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="pclaw_number" value="{{ r.pclaw_number or '' }}">
-                        <input type="hidden" name="pclaw_name" value="{{ r.pclaw_name or '' }}">
+                      <div style="margin:.35rem 0 0;">
                         <label for="row-category-{{ r.idx }}"
                                style="display:block;margin:0 0 .25rem;font-size:.8rem;">
                           What kind of account is this?
                         </label>
                         <select id="row-category-{{ r.idx }}"
                                 name="category"
+                                form="add-form-{{ r.idx }}"
                                 data-testid="row-category-select-{{ r.idx }}"
                                 style="margin:0 .35rem .35rem 0;max-width:18rem;"
                                 required>
@@ -421,6 +498,7 @@
                           {% endfor %}
                         </select>
                         <button class="btn btn-sm" type="submit"
+                                form="add-form-{{ r.idx }}"
                                 data-testid="row-add-button-{{ r.idx }}">
                           Add to QuickBooks
                         </button>
@@ -430,26 +508,21 @@
                           Pick the closest match &mdash; you can always
                           rename or recategorise it in QuickBooks later.
                         </p>
-                      </form>
+                      </div>
                     {% else %}
-                      <form method="post"
-                            action="{{ url_for('account_mapping_add_account', job_id=job.id) }}"
-                            data-testid="row-add-form-{{ r.idx }}"
-                            style="margin:.35rem 0 0;">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="pclaw_number" value="{{ r.pclaw_number or '' }}">
-                        <input type="hidden" name="pclaw_name" value="{{ r.pclaw_name or '' }}">
+                      <div style="margin:.35rem 0 0;">
                         <button class="btn btn-sm" type="submit"
+                                form="add-form-{{ r.idx }}"
                                 data-testid="row-add-button-{{ r.idx }}">
                           Add this account to QuickBooks
                         </button>
-                      </form>
-                      <p class="muted"
-                         data-testid="row-create-hint-{{ r.idx }}"
-                         style="margin:.35rem 0 0;font-size:.8rem;">
-                         This only creates the empty account, no
-                         transactions are posted.
-                      </p>
+                        <p class="muted"
+                           data-testid="row-create-hint-{{ r.idx }}"
+                           style="margin:.35rem 0 0;font-size:.8rem;">
+                           This only creates the empty account, no
+                           transactions are posted.
+                        </p>
+                      </div>
                     {% endif %}
                   {% endif %}
                 </td>
@@ -473,7 +546,7 @@
   <div class="actions-row" data-testid="step3-nav-footer"
        style="margin-top:var(--space-6);">
     <a class="btn"
-       href="{{ url_for('dashboard') }}?step=upload#intake"
+       href="{{ url_for('dashboard') }}#intake"
        data-testid="step3-back-to-step2">
       &larr; Back to Step 2: Upload reports
     </a>
