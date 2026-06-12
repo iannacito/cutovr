@@ -70,6 +70,21 @@ def t1_pricing_explains_scoped_pricing_with_ctas():
     print("T1 OK: /pricing explains scoped pricing + discovery CTAs")
 
 
+def t1b_pricing_positions_as_done_for_you_human_reviewed():
+    """Pricing must read as a done-for-you service scoped/reviewed by people,
+    not a self-serve tool the firm operates alone."""
+    body = _get("/pricing").get_data(as_text=True)
+    lower = body.lower()
+    assert "done-for-you" in lower, "/pricing missing 'done-for-you' positioning"
+    assert "our team" in lower, "/pricing missing 'our team' (human) framing"
+    # The scope step is explicitly a human review, not just software.
+    assert "scopes" in lower and "review" in lower, \
+        "/pricing missing scope-and-review (human-handled) framing"
+    assert "understand law-firm books" in lower, \
+        "/pricing missing the people-who-understand-the-details promise"
+    print("T1b OK: /pricing positions Cutovr as a done-for-you, human-reviewed service")
+
+
 def t2_pricing_has_no_public_prices_or_package_cards():
     r = _get("/pricing")
     body = r.get_data(as_text=True)
@@ -151,6 +166,7 @@ def t6_pricing_ctas_route_to_discovery_not_stripe():
 if __name__ == "__main__":
     try:
         t1_pricing_explains_scoped_pricing_with_ctas()
+        t1b_pricing_positions_as_done_for_you_human_reviewed()
         t2_pricing_has_no_public_prices_or_package_cards()
         t3_pricing_avoids_firm_size_language()
         t4_pricing_reachable_for_authenticated_users()

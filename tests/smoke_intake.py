@@ -84,7 +84,13 @@ def t1_form_renders():
     # No raw card-collection inputs should ever render here.
     assert 'name="card_number"' not in body and "cardnumber" not in body.lower(), \
         "intake must not collect raw card details"
-    print("T1 OK: /intake renders firm/contact/upload fields + discovery framing")
+    # Done-for-you, human-reviewed positioning: the firm shares reports, our
+    # team scopes/reviews/prepares — not a self-serve tool.
+    lower = body.lower()
+    assert "our team" in lower, "intake missing 'our team' (human) framing"
+    for phrase in ("scope", "review", "prepare"):
+        assert phrase in lower, f"intake missing '{phrase}' (human-handled) framing"
+    print("T1 OK: /intake renders firm/contact/upload fields + discovery + done-for-you framing")
 
 
 def t1b_intake_has_no_package_or_payment_gate():
@@ -197,9 +203,15 @@ def t5_emails_attempted_when_configured(monkeypatch_env=True):
     assert "not been charged" in customer["body"], customer["body"]
     assert "this is not a receipt" in customer["body"]
     assert "discovery call" in customer["body"], customer["body"]
+    # Done-for-you, human-reviewed positioning: the email tells the firm our
+    # team scopes/reviews/prepares the migration (not a self-serve tool).
+    cbody = customer["body"].lower()
+    assert "done-for-you" in cbody, customer["body"]
+    assert "our team" in cbody, customer["body"]
+    assert "review" in cbody, customer["body"]
     rec = appmod.db.recent_intake_submissions(limit=1)[0]
     assert rec["email_status"] == "sent", rec["email_status"]
-    print("T5 OK: customer + internal emails attempted; consultative copy; payment pending")
+    print("T5 OK: customer + internal emails attempted; consultative + done-for-you copy; payment pending")
 
 
 def t6_internal_recipients_resolution():

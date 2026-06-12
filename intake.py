@@ -324,14 +324,17 @@ def customer_email_bodies(
 
     body = f"""Hi {name},
 
-Thanks for reaching out to {app_name}. We've received your firm's details and
-any files you uploaded — there's nothing more you need to do right now.
+Thanks for reaching out to {app_name}. {app_name} is a done-for-you PCLaw to
+QuickBooks migration: you share your reports, and our team scopes, reviews, and
+prepares the move. We've received your firm's details and any files you
+uploaded — there's nothing more you need to do right now.
 
 {plan_line}{clio_line}{upload_line}{payment_block}What happens next
   1. Our team reviews your information and your PCLaw reports.
   2. We follow up to schedule a short discovery call.
   3. On the call we scope your migration and give you a clear price.
-  4. If it's a fit, we handle the move into QuickBooks for you.
+  4. If it's a fit, our team prepares and reviews the move into QuickBooks
+     for you — nothing posts until the details have been checked.
 
 We'll be in touch shortly to set up your discovery call.
 

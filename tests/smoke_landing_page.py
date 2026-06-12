@@ -44,12 +44,13 @@ def t1_landing_renders_with_marketing_content():
     body = r.get_data(as_text=True)
 
     must_contain = [
-        # Hero / value prop — leads with hands-off, handled-for-you
-        # convenience (not speed/cost).
+        # Hero / value prop — leads with the done-for-you, human-reviewed
+        # positioning (a service scoped/reviewed by people, not a self-serve
+        # tool), not speed/cost.
         "PCLaw",
         "QuickBooks",
-        "handled for you",
-        "answer a few questions",
+        "done-for-you",
+        "reviewed by people who understand the details",
         # Coverage section makes clear it's not GL-only
         "More than just the General Ledger",
         "Chart of Accounts",
@@ -93,6 +94,27 @@ def t1b_landing_has_no_public_prices_or_package_cards():
     assert "landing-plan-standard" not in body, "legacy package card still present"
     assert "landing-price-anchor" not in body, "legacy 'From $999' anchor still present"
     print("T1b OK: landing page has no public prices or package cards")
+
+
+def t1c_landing_positions_as_done_for_you_human_reviewed():
+    """The landing page must position Cutovr as a done-for-you service that
+    humans scope/review — not a purely self-serve software tool."""
+    body = _get("/").get_data(as_text=True)
+    lower = body.lower()
+    # Done-for-you, human-reviewed framing must be present.
+    assert "done-for-you" in lower, "landing missing 'done-for-you' positioning"
+    assert "our team" in lower, "landing missing 'our team' (human) framing"
+    for phrase in ("scope", "review", "prepare"):
+        assert phrase in lower, f"landing missing '{phrase}' (human-handled) framing"
+    # The hero explicitly leads with the people-reviewed promise.
+    assert "reviewed by people who understand the details" in body, \
+        "landing hero missing the human-reviewed promise"
+    # It must NOT read as a self-serve tool the firm runs alone.
+    for selfserve in ("do it yourself", "self-serve", "no accounting expertise needed",
+                      "without an accountant"):
+        assert selfserve not in lower, \
+            f"landing still uses self-serve framing: {selfserve!r}"
+    print("T1c OK: landing positions Cutovr as a done-for-you, human-reviewed service")
 
 
 def t2_landing_links_to_public_routes():
@@ -205,6 +227,7 @@ if __name__ == "__main__":
     try:
         t1_landing_renders_with_marketing_content()
         t1b_landing_has_no_public_prices_or_package_cards()
+        t1c_landing_positions_as_done_for_you_human_reviewed()
         t2_landing_links_to_public_routes()
         t2b_get_started_cta_routes_to_discovery_not_packages()
         t3_public_routes_render_unauthenticated()

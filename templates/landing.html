@@ -1,5 +1,5 @@
 {% extends "_base.html" %}
-{% block title %}{{ app_name }} &mdash; PCLaw to QuickBooks migration, handled for you{% endblock %}
+{% block title %}{{ app_name }} &mdash; A done-for-you PCLaw to QuickBooks migration{% endblock %}
 {% block content %}
 
 <!-- Hero ------------------------------------------------------------- -->
@@ -7,17 +7,18 @@
   <div class="landing-hero__inner">
     <p class="eyebrow">PCLaw &rarr; QuickBooks</p>
     <h1 class="display landing-hero__title">
-      PCLaw to QuickBooks migration, <em>handled for you</em>.
+      A <em>done-for-you</em> PCLaw to QuickBooks migration, reviewed by people who understand the details.
     </h1>
-    <p class="landing-hero__lede">
-      Book a discovery call, answer a few questions, and we handle the
-      accounting-heavy parts of moving your firm to QuickBooks.
+    <p class="landing-hero__lede" data-testid="landing-done-for-you-lede">
+      Your firm shares the reports. Our team scopes, reviews, and prepares
+      the migration &mdash; so the move to QuickBooks is handled for you,
+      not handed to you.
     </p>
     <p class="landing-hero__qualifier muted"
        data-testid="landing-scoped-note"
        style="font-size:.9rem;margin-top:var(--space-3);max-width:60ch;">
-      Every migration is scoped with our team, so your firm knows exactly
-      what is involved before any work begins.
+      Every migration is scoped and reviewed with our team, so your firm
+      knows exactly what is involved before any work begins.
     </p>
     <div class="landing-hero__ctas">
       {# Primary path: book a discovery call. When no booking link is
@@ -33,16 +34,16 @@
     </div>
     <ul class="landing-hero__bullets">
       <li>
-        <strong>Hands-off</strong>
-        You upload and answer a few questions. We handle the rest.
+        <strong>Done for you</strong>
+        You share your reports. Our team scopes, prepares, and reviews the migration.
       </li>
       <li>
-        <strong>Encrypted</strong>
-        Your files and QuickBooks tokens stay private.
+        <strong>Human-checked</strong>
+        People who understand law-firm books review the details before anything moves.
       </li>
       <li>
         <strong>Reversible</strong>
-        Roll an import back in one click if anything looks off.
+        If anything looks off, an import can be rolled back in one click.
       </li>
     </ul>
   </div>
@@ -123,10 +124,11 @@
 <section class="landing-section landing-section--steps" id="how-it-works">
   <div class="landing-section__inner">
     <p class="eyebrow">How it works</p>
-    <h2 class="h-serif landing-section__title">Six steps. One screen at a time.</h2>
+    <h2 class="h-serif landing-section__title">Six steps. Handled with you, not handed to you.</h2>
     <p class="muted landing-section__lede">
-      The whole flow happens in the app &mdash; no spreadsheets emailed
-      around, no consultant on a shared screen.
+      Your part is simple &mdash; share your reports and confirm. Our team
+      scopes, prepares, and reviews the accounting-heavy work behind the
+      scenes, so nothing posts to QuickBooks unchecked.
     </p>
 
     <ol class="landing-steps">
@@ -180,14 +182,14 @@
 <section class="landing-section landing-section--compare" id="compare">
   <div class="landing-section__inner">
     <p class="eyebrow">Why {{ app_name }}</p>
-    <h2 class="h-serif landing-section__title">The work, handled for you.</h2>
+    <h2 class="h-serif landing-section__title">The work, done for you.</h2>
     <p class="muted landing-section__lede">
       A traditional consultant-led migration means weeks of meetings, file
       exchanges, and review cycles &mdash; you coordinating, them billing.
-      {{ app_name }} turns the same migration into a guided workflow your
-      firm runs without an accountant on the line: you upload your reports
-      and confirm, and we handle the accounting-heavy parts, with the
-      controls and reversibility a finance-grade tool should have.
+      {{ app_name }} is a done-for-you service: you share your PCLaw reports,
+      and our team scopes, prepares, and reviews the migration before anything
+      posts to QuickBooks &mdash; with the controls and reversibility a
+      finance-grade migration should have.
     </p>
 
     <div class="landing-compare" data-testid="landing-consultant-compare">
@@ -206,12 +208,12 @@
       <article class="landing-compare__col landing-compare__col--new">
         <p class="kicker">{{ app_name }}</p>
         <p class="landing-compare__headline" style="font-weight:600;font-size:1.05rem;">
-          Hands-off &middot; guided every step
+          Done for you &middot; reviewed by people
         </p>
         <ul>
-          <li>You upload and confirm; {{ app_name }} does the work.</li>
-          <li>The same guided workflow every time, in plain English.</li>
-          <li>No accounting expertise needed &mdash; we handle the complex parts.</li>
+          <li>You share your reports; our team prepares the migration.</li>
+          <li>People who understand law-firm books review the details.</li>
+          <li>You confirm in plain English &mdash; we handle the complex parts.</li>
           <li>One-click reversal if something looks wrong.</li>
         </ul>
         <p class="muted" style="font-size:.8rem;margin-top:var(--space-2);">
@@ -291,8 +293,8 @@
         <p>Tell us about your firm and where you&rsquo;re moving from PCLaw.</p>
       </article>
       <article class="card">
-        <h3>2. We scope the migration</h3>
-        <p>We review your reports and what your firm needs to bring across.</p>
+        <h3>2. Our team scopes &amp; reviews</h3>
+        <p>People who understand law-firm books review your reports and what your firm needs to bring across.</p>
       </article>
       <article class="card">
         <h3>3. You get a clear price</h3>
@@ -311,12 +313,12 @@
   <div class="landing-cta__inner">
     <p class="eyebrow">Ready when you are</p>
     <h2 class="display landing-cta__title">
-      Let {{ app_name }} <em>handle the migration</em>.
+      Let our team <em>handle the migration</em>.
     </h2>
     <p class="landing-cta__lede">
-      Start with a short discovery call. We&rsquo;ll scope your migration,
-      answer your questions, and give you a clear price &mdash; then we
-      handle the rest.
+      Start with a short discovery call. {{ app_name }} handles the migration,
+      and our team reviews the details before anything moves forward &mdash;
+      you&rsquo;ll get a clear price first.
     </p>
     <div class="landing-cta__buttons">
       <a class="btn btn-primary btn-lg" href="{{ discovery_call_url }}"
