@@ -111,8 +111,8 @@ from flask import Response
 
 app = Flask(
     __name__,
-    template_folder=str(Path(__file__).resolve().parent.parent / "frontend" / "templates"),
-    static_folder=str(Path(__file__).resolve().parent.parent / "frontend" / "static"),
+    template_folder=str(Path(__file__).resolve().parent / "templates"),
+    static_folder=str(Path(__file__).resolve().parent / "static"),
 )
 
 # Production-vs-local environment switch. Anything other than "local"/"dev"
