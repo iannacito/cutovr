@@ -49,7 +49,7 @@
         {% else %}
         <a class="btn btn-secondary btn-lg pricing-tier__cta"
            data-testid="pricing-cta-essential"
-           href="{{ url_for('onboarding_step1', plan='essential') }}">Get started with Essential</a>
+           href="{{ url_for('onboarding') }}">Get started with Essential</a>
         {% endif %}
       </article>
 
@@ -75,7 +75,7 @@
         {% else %}
         <a class="btn btn-primary btn-lg pricing-tier__cta"
            data-testid="pricing-cta-standard"
-           href="{{ url_for('onboarding_step1', plan='standard') }}">Get started with Standard</a>
+           href="{{ url_for('onboarding') }}">Get started with Standard</a>
         {% endif %}
       </article>
 
