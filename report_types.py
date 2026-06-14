@@ -44,6 +44,15 @@ REPORT_GENERAL_LEDGER = "general_ledger"
 REPORT_CHART_OF_ACCOUNTS = "chart_of_accounts"
 REPORT_TRIAL_BALANCE = "trial_balance"
 REPORT_TRUST_LISTING = "trust_listing"
+# Vendor and customer/client listings. These are requested directly from the
+# firm rather than squeezed out of the general ledger: a cash-basis migration
+# posts GL transactions against named customers (deposits) and vendors
+# (cheques), and the GL alone rarely carries a clean, de-duplicated party
+# list. Having the firm's own lists up front lets us match those names
+# during GL posting and cuts the manual cleanup of half-typed or duplicate
+# parties created on the fly.
+REPORT_VENDOR_LIST = "vendor_list"
+REPORT_CUSTOMER_LIST = "customer_list"
 
 # Neutral type for a failed / unrecognized upload. A file that could not be
 # parsed must NOT default to general_ledger: that fallback let broken or
@@ -57,6 +66,8 @@ REPORT_TYPES = (
     REPORT_CHART_OF_ACCOUNTS,
     REPORT_TRIAL_BALANCE,
     REPORT_TRUST_LISTING,
+    REPORT_VENDOR_LIST,
+    REPORT_CUSTOMER_LIST,
 )
 
 REPORT_LABELS = {
@@ -64,6 +75,8 @@ REPORT_LABELS = {
     REPORT_CHART_OF_ACCOUNTS: "Chart of Accounts",
     REPORT_TRIAL_BALANCE: "Trial Balance",
     REPORT_TRUST_LISTING: "Trust Listing",
+    REPORT_VENDOR_LIST: "Vendor List",
+    REPORT_CUSTOMER_LIST: "Customer List",
     REPORT_UNKNOWN: "Unrecognized report",
 }
 
@@ -71,11 +84,16 @@ REPORT_LABELS = {
 #   importable: posts records to QBO after confirmation.
 #   preview:    dry-run only; produces a side-by-side comparison.
 #   readonly:   parsed for validation/reconciliation; never written.
+# Vendor and customer lists are reference data used while posting the GL —
+# we parse and validate them but never post the list itself to QuickBooks,
+# so they are readonly here.
 REPORT_QBO_BEHAVIOR = {
     REPORT_GENERAL_LEDGER: "importable",
     REPORT_CHART_OF_ACCOUNTS: "preview",
     REPORT_TRIAL_BALANCE: "readonly",
     REPORT_TRUST_LISTING: "readonly",
+    REPORT_VENDOR_LIST: "readonly",
+    REPORT_CUSTOMER_LIST: "readonly",
     REPORT_UNKNOWN: "readonly",
 }
 
@@ -326,6 +344,53 @@ def _score_trust_listing(idx: dict[str, str]) -> int:
     return score
 
 
+def _score_vendor_list(idx: dict[str, str]) -> int:
+    score = 0
+    # A vendor-identifying column is the strong signal.
+    if any(_norm_header(h) in idx for h in (
+        "vendor_id", "vendor_no", "vendor_number", "vendor_name", "vendor", "payee",
+    )):
+        score += 3
+    if any(_norm_header(h) in idx for h in (
+        "address", "phone", "email", "tax_id", "gst_number", "account_number",
+    )):
+        score += 1
+    # Ledger / balance / transaction columns mean this is NOT a plain list.
+    if _norm_header("transaction_id") in idx:
+        score -= 5
+    if any(_norm_header(h) in idx for h in ("debit", "credit", "ap_balance")):
+        score -= 2
+    if any(_norm_header(h) in idx for h in (
+        "client_id", "customer_id", "matter_id", "trust_balance",
+    )):
+        score -= 3
+    return score
+
+
+def _score_customer_list(idx: dict[str, str]) -> int:
+    score = 0
+    if any(_norm_header(h) in idx for h in (
+        "customer_id", "customer_no", "customer_number", "customer_name",
+        "customer", "client_id", "client_no", "client_number", "client_name",
+        "client",
+    )):
+        score += 3
+    if any(_norm_header(h) in idx for h in (
+        "address", "phone", "email", "matter_name", "matter",
+    )):
+        score += 1
+    if _norm_header("transaction_id") in idx:
+        score -= 5
+    if any(_norm_header(h) in idx for h in ("debit", "credit", "ar_balance")):
+        score -= 2
+    # Trust balance / bank columns push this toward a trust listing instead.
+    if any(_norm_header(h) in idx for h in (
+        "trust_balance", "trust_bank_account", "trust_account", "vendor_id",
+    )):
+        score -= 3
+    return score
+
+
 def detect_report_type(fieldnames: Optional[Iterable[str]]) -> Optional[str]:
     """Best-effort report-type guess from CSV headers.
 
@@ -340,6 +405,8 @@ def detect_report_type(fieldnames: Optional[Iterable[str]]) -> Optional[str]:
         REPORT_CHART_OF_ACCOUNTS: _score_chart_of_accounts(idx),
         REPORT_TRIAL_BALANCE: _score_trial_balance(idx),
         REPORT_TRUST_LISTING: _score_trust_listing(idx),
+        REPORT_VENDOR_LIST: _score_vendor_list(idx),
+        REPORT_CUSTOMER_LIST: _score_customer_list(idx),
     }
     best, best_score = max(scores.items(), key=lambda kv: kv[1])
     # Require a meaningful lead so a half-formed CSV doesn't auto-pick.
@@ -660,6 +727,99 @@ def parse_trust_listing(path) -> tuple[list[dict], list[str], list[str]]:
     return normalized, fieldnames, missing
 
 
+VENDOR_REQUIRED = ("vendor_name",)
+CUSTOMER_REQUIRED = ("customer_name",)
+
+
+def parse_vendor_list(path) -> tuple[list[dict], list[str], list[str]]:
+    """Parse a PCLaw vendor list export.
+
+    Tolerant of the common column names PCLaw and exported spreadsheets use
+    for the people a firm pays. A vendor row needs at minimum a name; an id,
+    contact details, and a default expense account are kept when present so
+    GL posting can match cheque payees to the right QuickBooks vendor.
+    """
+    rows, fieldnames = _open_csv(path)
+    idx = _index_headers(fieldnames)
+    has_name = any(
+        _norm_header(h) in idx
+        for h in ("vendor_name", "vendor", "name", "payee", "company")
+    )
+    missing = [] if has_name else ["vendor_name (any vendor/payee name)"]
+
+    normalized = []
+    for row in rows:
+        vendor_id = _pick(row, idx, "vendor_id", "vendor_no", "vendor_number", "id")
+        vendor_name = _pick(
+            row, idx, "vendor_name", "vendor", "name", "payee", "company"
+        )
+        contact = _pick(row, idx, "contact", "contact_name", "attention")
+        email = _pick(row, idx, "email", "email_address")
+        phone = _pick(row, idx, "phone", "phone_number", "telephone")
+        tax_id = _pick(row, idx, "tax_id", "gst_number", "hst_number", "business_number")
+        account = _pick(row, idx, "default_account", "expense_account", "account", "account_number")
+        normalized.append(
+            {
+                "vendor_id": vendor_id,
+                "vendor_name": vendor_name,
+                "contact": contact,
+                "email": email,
+                "phone": phone,
+                "tax_id": tax_id,
+                "default_account": account,
+            }
+        )
+    return normalized, fieldnames, missing
+
+
+def parse_customer_list(path) -> tuple[list[dict], list[str], list[str]]:
+    """Parse a PCLaw customer / client list export.
+
+    A customer/client row needs at minimum a name. Client and matter
+    identifiers, contact details, and a default income account are kept
+    when present so GL posting can match deposits to the right QuickBooks
+    customer.
+    """
+    rows, fieldnames = _open_csv(path)
+    idx = _index_headers(fieldnames)
+    has_name = any(
+        _norm_header(h) in idx
+        for h in (
+            "customer_name", "customer", "client_name", "client",
+            "name", "company",
+        )
+    )
+    missing = [] if has_name else ["customer_name (any customer/client name)"]
+
+    normalized = []
+    for row in rows:
+        customer_id = _pick(
+            row, idx, "customer_id", "customer_no", "customer_number",
+            "client_id", "client_no", "client_number", "id",
+        )
+        customer_name = _pick(
+            row, idx, "customer_name", "customer", "client_name", "client",
+            "name", "company",
+        )
+        matter_id = _pick(row, idx, "matter_id", "matter_no", "matter_number")
+        matter_name = _pick(row, idx, "matter_name", "matter")
+        email = _pick(row, idx, "email", "email_address")
+        phone = _pick(row, idx, "phone", "phone_number", "telephone")
+        account = _pick(row, idx, "default_account", "income_account", "account", "account_number")
+        normalized.append(
+            {
+                "customer_id": customer_id,
+                "customer_name": customer_name,
+                "matter_id": matter_id,
+                "matter_name": matter_name,
+                "email": email,
+                "phone": phone,
+                "default_account": account,
+            }
+        )
+    return normalized, fieldnames, missing
+
+
 # --- preflights ------------------------------------------------------------
 
 
@@ -799,6 +959,66 @@ def build_trust_listing_preflight(rows: list[dict], fieldnames: list[str], missi
         and rows_missing_identifier == 0
         and len(rows) > 0
         and negative_count == 0
+    )
+    return summary
+
+
+def build_vendor_list_preflight(rows: list[dict], fieldnames: list[str], missing: list[str]) -> dict:
+    """Counts + warnings for a parsed vendor list."""
+    rows = rows or []
+    rows_missing_name = 0
+    seen_names: dict[str, int] = {}
+    for r in rows:
+        name = (r.get("vendor_name") or "").strip()
+        if not name:
+            rows_missing_name += 1
+        else:
+            key = name.lower()
+            seen_names[key] = seen_names.get(key, 0) + 1
+    duplicates = sorted(n for n, c in seen_names.items() if c > 1)
+    summary = {
+        "report_type": REPORT_VENDOR_LIST,
+        "report_label": REPORT_LABELS[REPORT_VENDOR_LIST],
+        "vendor_count": len(rows),
+        "unique_vendor_count": len(seen_names),
+        "rows_missing_name": rows_missing_name,
+        "duplicate_vendor_names": duplicates,
+        "missing_required_columns": list(missing),
+    }
+    summary["ready"] = (
+        not missing
+        and rows_missing_name == 0
+        and len(rows) > 0
+    )
+    return summary
+
+
+def build_customer_list_preflight(rows: list[dict], fieldnames: list[str], missing: list[str]) -> dict:
+    """Counts + warnings for a parsed customer / client list."""
+    rows = rows or []
+    rows_missing_name = 0
+    seen_names: dict[str, int] = {}
+    for r in rows:
+        name = (r.get("customer_name") or "").strip()
+        if not name:
+            rows_missing_name += 1
+        else:
+            key = name.lower()
+            seen_names[key] = seen_names.get(key, 0) + 1
+    duplicates = sorted(n for n, c in seen_names.items() if c > 1)
+    summary = {
+        "report_type": REPORT_CUSTOMER_LIST,
+        "report_label": REPORT_LABELS[REPORT_CUSTOMER_LIST],
+        "customer_count": len(rows),
+        "unique_customer_count": len(seen_names),
+        "rows_missing_name": rows_missing_name,
+        "duplicate_customer_names": duplicates,
+        "missing_required_columns": list(missing),
+    }
+    summary["ready"] = (
+        not missing
+        and rows_missing_name == 0
+        and len(rows) > 0
     )
     return summary
 

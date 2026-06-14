@@ -219,6 +219,37 @@
   </section>
 
   <section class="card">
+    <p class="eyebrow">Starting-balance date</p>
+    <h2>When should these balances start?</h2>
+    <p class="muted">
+      We use this as the date of the opening entry in QuickBooks. It's set
+      from your setup answers, but you can change it here — most firms use
+      the day before they switched over.
+    </p>
+    {% if posting_date_error %}
+      <div class="flash error" style="margin-top:var(--space-2);">{{ posting_date_error }}</div>
+    {% endif %}
+    <form method="post" action="{{ url_for('opening_balance_preview', job_id=job.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="update_date" value="1">
+      <label>
+        <span>Starting-balance date</span>
+        <input type="date" name="as_of_date" value="{{ posting_date }}">
+      </label>
+      <p class="muted" style="margin-top:var(--space-2);">
+        {% if posting_date %}
+          Currently using <strong>{{ posting_date }}</strong>{% if posting_date_source %} (from {{ posting_date_source }}){% endif %}.
+        {% else %}
+          No date set yet — choose one above so the opening entry lands on the right day.
+        {% endif %}
+      </p>
+      <p style="margin-top:var(--space-3);">
+        <button type="submit" class="btn">Use this date</button>
+      </p>
+    </form>
+  </section>
+
+  <section class="card">
     <p class="eyebrow">Confirm and post</p>
     {% if plan.has_blockers %}
       <p class="muted">
@@ -233,6 +264,7 @@
     {% else %}
       <form method="post" action="{{ url_for('opening_balance_preview', job_id=job.id) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="as_of_date" value="{{ posting_date }}">
         <p>
           Type <code>{{ confirmation_phrase }}</code> exactly to post the
           starting balances to your QuickBooks company

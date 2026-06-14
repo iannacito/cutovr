@@ -51,6 +51,8 @@ from report_types import (
     REPORT_LABELS,
     REPORT_TRIAL_BALANCE,
     REPORT_TRUST_LISTING,
+    REPORT_VENDOR_LIST,
+    REPORT_CUSTOMER_LIST,
     REPORT_TYPES,
     detect_report_type,
     is_valid_report_type,
@@ -78,6 +80,8 @@ REQUIRED_REPORTS = (
     REPORT_TRIAL_BALANCE,       # opening trial balance
     REPORT_GENERAL_LEDGER,
     REPORT_TRUST_LISTING,
+    REPORT_VENDOR_LIST,
+    REPORT_CUSTOMER_LIST,
 )
 
 
@@ -119,6 +123,20 @@ _FILENAME_HINTS: list[tuple[str, str]] = [
     ("journal", REPORT_GENERAL_LEDGER),
     ("_gl_", REPORT_GENERAL_LEDGER),
     ("_gl.", REPORT_GENERAL_LEDGER),
+    # Vendor list (who you pay).
+    ("vendor_list", REPORT_VENDOR_LIST),
+    ("vendor-list", REPORT_VENDOR_LIST),
+    ("vendorlist", REPORT_VENDOR_LIST),
+    ("vendors", REPORT_VENDOR_LIST),
+    ("payee_list", REPORT_VENDOR_LIST),
+    # Customer / client list (who pays you).
+    ("customer_list", REPORT_CUSTOMER_LIST),
+    ("customer-list", REPORT_CUSTOMER_LIST),
+    ("customerlist", REPORT_CUSTOMER_LIST),
+    ("customers", REPORT_CUSTOMER_LIST),
+    ("client_list", REPORT_CUSTOMER_LIST),
+    ("client-list", REPORT_CUSTOMER_LIST),
+    ("clientlist", REPORT_CUSTOMER_LIST),
     # Less-specific catch-alls run last.
     ("trust", REPORT_TRUST_LISTING),
     ("ledger", REPORT_GENERAL_LEDGER),
@@ -283,6 +301,14 @@ def _content_score(headers: List[str], sample: List[dict]) -> dict:
     if type_col and not (debit_col and credit_col):
         scores[REPORT_CHART_OF_ACCOUNTS] += 2
 
+    # Vendor / customer listings: name-bearing rows with no debit/credit and
+    # no transaction_id. These are flat entity lists, not ledgers.
+    if not (debit_col and credit_col) and not txid_col:
+        if col("vendorname", "vendor", "payee"):
+            scores[REPORT_VENDOR_LIST] += 3
+        if col("customername", "customer", "clientname") and not trust_balance_col:
+            scores[REPORT_CUSTOMER_LIST] += 3
+
     return scores
 
 
@@ -424,6 +450,17 @@ def resolve_collisions(
                     "Multiple trial-balance files uploaded — typically one is "
                     "the opening TB and the other is the ending TB. Confirm "
                     "which is which on the next screen."
+                )
+        elif rt == REPORT_GENERAL_LEDGER:
+            # A firm migrating a full year uploads one general ledger per
+            # month, so several GL files in a batch is expected — they all
+            # stand. Annotate so the operator can confirm the set is the
+            # months they meant, but never block them as duplicates.
+            for i in indices:
+                results[i].warning = (
+                    f"{len(indices)} general-ledger files uploaded — monthly "
+                    "ledgers are expected and will all be kept. Confirm these "
+                    "are the months you meant on the next screen."
                 )
         else:
             # Any other duplicate is suspicious; require human review.

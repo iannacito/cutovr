@@ -43,6 +43,52 @@ from typing import Optional
 
 OPENING_BALANCE_CONFIRMATION_PHRASE = "POST OPENING BALANCE"
 
+import re as _re
+
+_ISO_DATE_RE = _re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def is_iso_date(value) -> bool:
+    """True iff ``value`` is a plausible ISO ``YYYY-MM-DD`` date string."""
+    return bool(_ISO_DATE_RE.match((value or "").strip()))
+
+
+def resolve_opening_balance_date(cutover, tb_rows=None, override=None):
+    """Pick the opening-balance posting date, newest-intent first.
+
+    The Beginning Trial Balance card defaults its posting date from what
+    the firm told us in Step 1 (Setup), so a lawyer never has to retype a
+    date they already entered. Precedence:
+
+      1. ``override`` — an explicit date the user typed in the card's date
+         selector this request (lets them change it without editing Step 1).
+      2. ``opening_balance_date`` from Step 1 — the firm's stated opening
+         date (the day before cutover) when they filled it in.
+      3. ``cutover_date`` from Step 1 — the switchover date, used when no
+         dedicated opening date was given. The opening entry is typically
+         posted as of the day before cutover, but defaulting to the cutover
+         date is a safe, obvious starting point the user can adjust.
+      4. an ``as_of_date`` carried on the parsed trial-balance rows.
+
+    Returns an ISO date string, or "" when nothing usable is available.
+    Only well-formed ISO dates are accepted from each source so a stray
+    free-text value never silently becomes the posting date.
+    """
+    cutover = cutover or {}
+    candidates = [
+        override,
+        cutover.get("opening_balance_date"),
+        cutover.get("cutover_date"),
+    ]
+    for r in (tb_rows or []):
+        candidates.append((r or {}).get("as_of_date"))
+        break  # first row's date only, mirrors build_opening_balance_plan
+    for c in candidates:
+        c = (c or "").strip()
+        if is_iso_date(c):
+            return c
+    return ""
+
 
 def _money(value) -> Decimal:
     if value is None:

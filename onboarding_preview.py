@@ -348,14 +348,25 @@ REPORTS_CHECKLIST = (
         "add_on": False,
     },
     {
-        "key": "vendor_customer_lists",
-        "title": "Vendor list and customer / client list",
+        "key": "vendor_list",
+        "title": "Vendor List",
         "when": "",
         "note": (
-            "Who you pay and who pays you, if these come out as separate "
-            "reports."
+            "Who you pay. We use it to complete your General Ledger "
+            "postings on a cash basis and cut down on manual cleanup."
         ),
-        "required": False,
+        "required": True,
+        "add_on": False,
+    },
+    {
+        "key": "customer_list",
+        "title": "Customer / Client List",
+        "when": "",
+        "note": (
+            "Who pays you. We use it to complete your General Ledger "
+            "postings on a cash basis and cut down on manual cleanup."
+        ),
+        "required": True,
         "add_on": False,
     },
 )
@@ -470,10 +481,14 @@ def build_reports_email(
         lines.append("- Trust Ledger (only if you've added the trust-ledger add-on)")
     lines += [
         f"- General Ledgers, monthly from start date ({_d(start_date)}) to end date ({_d(end_date)})",
+        "- Vendor List (who you pay)",
+        "- Customer / Client List (who pays you)",
         "- Accounts Payable, if available",
         "- Accounts Receivable, if available",
         "",
         "Monthly General Ledgers are best — they're more reliable than a single yearly export.",
+        "The Vendor and Customer/Client lists let us complete your General Ledger postings on a "
+        "cash basis and cut down on manual cleanup.",
         "Many cash-basis firms don't have Accounts Receivable or Payable, and that's completely fine.",
     ]
     return "\n".join(lines) + "\n"
