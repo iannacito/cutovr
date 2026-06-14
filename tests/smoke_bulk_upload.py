@@ -149,7 +149,8 @@ def t3_filename_hints():
 
 
 def t4_resolve_collisions():
-    # Two GL files: should both be flagged duplicate.
+    # Two GL files: monthly ledgers are expected, so both stay categorized
+    # with a warning (NOT flagged duplicate). Firms upload one GL per month.
     a = bu.ClassificationResult(
         filename="gl_jan.csv", report_type=rt.REPORT_GENERAL_LEDGER,
         confidence=bu.CONFIDENCE_HIGH, status=bu.STATUS_CATEGORIZED,
@@ -161,8 +162,8 @@ def t4_resolve_collisions():
         report_label=rt.REPORT_LABELS[rt.REPORT_GENERAL_LEDGER],
     )
     bu.resolve_collisions([a, b])
-    assert a.status == bu.STATUS_DUPLICATE and b.status == bu.STATUS_DUPLICATE, (a, b)
-    assert "Only one should be uploaded" in a.warning
+    assert a.status == bu.STATUS_CATEGORIZED and b.status == bu.STATUS_CATEGORIZED, (a, b)
+    assert "monthly ledgers are expected" in a.warning
 
     # Two TB files: warning only, both still categorized.
     a = bu.ClassificationResult(

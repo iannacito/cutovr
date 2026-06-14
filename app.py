@@ -57,6 +57,8 @@ from report_types import (
     REPORT_CHART_OF_ACCOUNTS,
     REPORT_TRIAL_BALANCE,
     REPORT_TRUST_LISTING,
+    REPORT_VENDOR_LIST,
+    REPORT_CUSTOMER_LIST,
     REPORT_TYPES,
     REPORT_LABELS,
     REPORT_QBO_BEHAVIOR,
@@ -65,9 +67,13 @@ from report_types import (
     parse_chart_of_accounts,
     parse_trial_balance,
     parse_trust_listing,
+    parse_vendor_list,
+    parse_customer_list,
     build_coa_preflight,
     build_trial_balance_preflight,
     build_trust_listing_preflight,
+    build_vendor_list_preflight,
+    build_customer_list_preflight,
     build_coa_dry_run_preview,
 )
 from coa_apply import build_create_plan, apply_create_plan
@@ -80,6 +86,8 @@ from opening_balance import (
     build_opening_balance_plan,
     OPENING_BALANCE_CONFIRMATION_PHRASE,
     build_opening_je_payload,
+    resolve_opening_balance_date,
+    is_iso_date,
 )
 from tb_reconciliation import build_ending_tb_reconciliation
 from tb_coa_validation import (
@@ -1365,15 +1373,26 @@ def _firm_match_blocked_state(firm_id):
     and cheap: it never re-queries QBO.
 
     Returns ``(False, None)`` when no GL job has a non-empty
-    ``unmapped_accounts`` snapshot, OR when the most recent GL job has
+    ``unmapped_accounts`` snapshot, OR when ANY active GL job has
     already been imported successfully (``import_summary`` present).
+
+    The "any imported GL clears the block" rule matters once a firm
+    uploads several monthly general ledgers: importing month 1 proves
+    the QuickBooks company already has the accounts the matching step
+    cares about, so a later monthly file that still carries a stale
+    ``unmapped_accounts`` snapshot must not force the whole stepper back
+    to Step 3 and falsely hide Step 6 (Reconcile). This keeps the
+    stepper consistent with final_report._import_status, where any
+    imported GL marks the import line "completed".
     """
     gl_jobs = _firm_latest_jobs_by_type(firm_id, REPORT_GENERAL_LEDGER, limit=50)
-    for row in gl_jobs:
-        hydrated = db.hydrate_job(row["id"]) or row
-        if hydrated.get("import_summary"):
-            # Already sent to QuickBooks — no longer blocked.
-            continue
+    hydrated_jobs = [db.hydrate_job(row["id"]) or row for row in gl_jobs]
+    # If any active GL has posted to QuickBooks, matching is demonstrably
+    # done — never report blocked, regardless of stale snapshots on other
+    # monthly uploads.
+    if any(h.get("import_summary") for h in hydrated_jobs):
+        return False, None
+    for row, hydrated in zip(gl_jobs, hydrated_jobs):
         unmapped = hydrated.get("unmapped_accounts") or []
         if unmapped:
             return True, row["id"]
@@ -1855,7 +1874,7 @@ def import_job_entry():
     """
     user = current_user()
     firm_id = user["firm_id"]
-    gl_jobs = _firm_latest_jobs_by_type(firm_id, REPORT_GENERAL_LEDGER, limit=500)
+    gl_jobs = _firm_importable_gl_jobs(firm_id, limit=500)
     if not gl_jobs:
         flash(
             "Upload your transaction history (general ledger) first — "
@@ -2109,11 +2128,6 @@ def _build_reconcile_view(firm_id):
         account_mapping_count=_firm_account_mapping_count(firm_id),
     )
     match_blocked, blocked_job_id = _firm_match_blocked_state(firm_id)
-    stages = customer_workflow.build_customer_stages(
-        items, url_for=url_for, has_jobs=bool(hydrated),
-        match_blocked=match_blocked,
-        match_blocked_job_id=blocked_job_id,
-    )
     firm = db.get_firm(firm_id) or {}
     summary = final_report.build_reconciliation_summary(
         firm_name=firm.get("name") or "Your firm",
@@ -2122,10 +2136,24 @@ def _build_reconcile_view(firm_id):
         qbo_connections=qbo_conns,
         account_mapping_count=_firm_account_mapping_count(firm_id),
     )
+    # Keep the stepper consistent with the page's own reachability gate.
+    # When the import line is complete (Step 6 is genuinely reachable),
+    # anchor the stepper to the Reconcile stage so the rail can never read
+    # "Reconcile is upcoming" while the page is rendering the Step 6 cards.
+    # A stale unmapped-accounts snapshot on an unrelated monthly GL upload
+    # used to leave match_blocked True here, hiding Step 6 entirely.
+    reachable, _reason = _step6_is_reachable_summary(summary)
+    force_stage = customer_workflow.STAGE_RECONCILE if reachable else None
+    stages = customer_workflow.build_customer_stages(
+        items, url_for=url_for, has_jobs=bool(hydrated),
+        match_blocked=match_blocked and not reachable,
+        match_blocked_job_id=None if reachable else blocked_job_id,
+        force_current_stage=force_stage,
+    )
     return cutover, items, stages, summary
 
 
-def _step6_is_reachable(stages, summary):
+def _step6_is_reachable_summary(summary):
     """Step 6 is reachable once Step 5 (import) has completed.
 
     We treat the import as complete when the reconciliation summary's
@@ -2133,6 +2161,11 @@ def _step6_is_reachable(stages, summary):
     ``import_summary`` block. This is the same signal cutover_workflow
     uses to roll up STEP_PROD_IMPORT, but read from the already-built
     summary so the route stays consistent with what the page renders.
+
+    Reachability is a pure function of the reconciliation summary; the
+    stepper stage list is derived *from* this result (see
+    _build_reconcile_view) rather than the other way round, so the rail
+    and the page can never disagree about whether Step 6 is open.
     """
     import_line = next(
         (line for line in summary.lines if line.key == "import"), None,
@@ -2147,6 +2180,11 @@ def _step6_is_reachable(stages, summary):
             "first so there's something to reconcile."
         )
     return True, ""
+
+
+def _step6_is_reachable(stages, summary):
+    """Back-compat shim: reachability depends only on the summary."""
+    return _step6_is_reachable_summary(summary)
 
 
 @app.route("/reconcile-balances")
@@ -3498,6 +3536,16 @@ def _process_uploaded_csv(
     encrypt_file(upload_path, encrypted_path)
     upload_path.unlink()
 
+    # Warn (but don't block) on an exact byte-for-byte re-upload. Distinct
+    # monthly general ledgers have distinct content and pass through; the
+    # same file uploaded twice is almost always an accident, so we surface
+    # which prior upload it duplicates instead of silently doubling it.
+    try:
+        _existing_for_dup = db.list_jobs_for_firm(user["firm_id"], limit=500) or []
+    except Exception:  # noqa: BLE001
+        _existing_for_dup = []
+    duplicate_job = find_duplicate_upload(file_sha256, _existing_for_dup)
+
     jobs[job_id] = {
         "id": job_id,
         "firm_id": user["firm_id"],
@@ -3654,6 +3702,48 @@ def _process_uploaded_csv(
                 "writes are performed for Trust Listing uploads."
             )
             category = "success" if preflight["ready"] else "error"
+        elif effective_report_type == REPORT_VENDOR_LIST:
+            vendor_rows, _fn, missing = parse_vendor_list(temp_path)
+            preflight = build_vendor_list_preflight(vendor_rows, _fn, missing)
+            jobs[job_id]["status"] = (
+                "Vendor List validated"
+                if preflight["ready"]
+                else "Vendor List uploaded with warnings"
+            )
+            jobs[job_id]["summary"] = {
+                "row_count": preflight["vendor_count"],
+                "format": REPORT_LABELS[REPORT_VENDOR_LIST],
+                "report_type": REPORT_VENDOR_LIST,
+            }
+            jobs[job_id]["preflight"] = preflight
+            jobs[job_id]["parsed_vendor_list"] = vendor_rows
+            message = (
+                "Vendor List accepted. We use it to match the people you "
+                "pay to the right QuickBooks vendor when posting your "
+                "General Ledger — no QuickBooks writes happen on upload."
+            )
+            category = "success" if preflight["ready"] else "error"
+        elif effective_report_type == REPORT_CUSTOMER_LIST:
+            customer_rows, _fn, missing = parse_customer_list(temp_path)
+            preflight = build_customer_list_preflight(customer_rows, _fn, missing)
+            jobs[job_id]["status"] = (
+                "Customer List validated"
+                if preflight["ready"]
+                else "Customer List uploaded with warnings"
+            )
+            jobs[job_id]["summary"] = {
+                "row_count": preflight["customer_count"],
+                "format": REPORT_LABELS[REPORT_CUSTOMER_LIST],
+                "report_type": REPORT_CUSTOMER_LIST,
+            }
+            jobs[job_id]["preflight"] = preflight
+            jobs[job_id]["parsed_customer_list"] = customer_rows
+            message = (
+                "Client List accepted. We use it to match deposits to the "
+                "right QuickBooks customer when posting your General "
+                "Ledger — no QuickBooks writes happen on upload."
+            )
+            category = "success" if preflight["ready"] else "error"
         else:
             rows = parse_pclaw_csv(temp_path)
             out_path = OUTPUT_DIR / f"{fs_prefix}_qbo_import.csv"
@@ -3737,6 +3827,19 @@ def _process_uploaded_csv(
         except Exception:  # noqa: BLE001
             pass
 
+    # If the parse succeeded but the bytes match an existing active upload,
+    # downgrade to a warning so the user knows this looks like a repeat of a
+    # file they already sent (e.g. the same month uploaded twice).
+    if duplicate_job is not None and category != "error":
+        prior_name = duplicate_job.get("source_file") or duplicate_job.get("id") or "an earlier upload"
+        category = "warning"
+        message = (
+            "This file looks identical to one you already uploaded "
+            f"({prior_name}). We kept it, but if you meant to add a "
+            "different month, re-export that month from PCLaw and upload "
+            "it instead."
+        )
+
     return {
         "ok": category != "error",
         "job_id": job_id,
@@ -3745,6 +3848,7 @@ def _process_uploaded_csv(
         "filename": safe_name,
         "message": message,
         "category": category,
+        "duplicate_of": duplicate_job.get("id") if duplicate_job else None,
     }
 
 
@@ -4890,6 +4994,47 @@ def _firm_latest_jobs_by_type(firm_id: int, report_type: str, limit: int = 20) -
     return [j for j in all_jobs if (j.get("report_type") or "general_ledger") == report_type]
 
 
+def _firm_importable_gl_jobs(firm_id: int, limit: int = 500) -> list[dict]:
+    """Return the firm's GL jobs that Step 5 may actually import, newest
+    first.
+
+    A firm that uploads several monthly general ledgers ends up with
+    several active GL jobs that must all stand (see the bulk path, which
+    never supersedes its own batch). Step 5 must pick a *valid* one to
+    send to QuickBooks: a parse/validation failure must never become the
+    import target, otherwise a broken or wrong-shape file that fell back
+    into the GL pool could be posted. ``_firm_latest_jobs_by_type``
+    already drops archived/superseded rows; here we additionally drop
+    failed uploads so the candidate list is exactly the monthly GLs a
+    firm could import.
+    """
+    return [
+        j for j in _firm_latest_jobs_by_type(firm_id, REPORT_GENERAL_LEDGER, limit=limit)
+        if not demo_mode.is_failed_job(j)
+    ]
+
+
+def find_duplicate_upload(file_sha256, existing_jobs, exclude_job_id=None):
+    """Return the first active job whose bytes match ``file_sha256``.
+
+    A firm uploading several monthly general ledgers should be able to add
+    each distinct month, but re-uploading the *exact same file* is almost
+    always an accident. We detect that by content hash (not filename, since
+    a firm may rename the same export) and let the caller warn rather than
+    silently create a redundant job. Archived/superseded jobs are ignored
+    so a deliberate re-upload after a reset isn't flagged. Returns ``None``
+    when there's no byte-for-byte match.
+    """
+    if not file_sha256:
+        return None
+    for job in demo_mode.filter_active_jobs(existing_jobs or []):
+        if exclude_job_id is not None and job.get("id") == exclude_job_id:
+            continue
+        if job.get("file_sha256") == file_sha256:
+            return job
+    return None
+
+
 def _latest_other_job_report(firm_id: int, report_type: str, exclude_job_id: str) -> list[dict]:
     """Find the most recent successful job of a given report_type for this
     firm, *excluding* the current job, and return its parsed rows (from
@@ -5164,10 +5309,34 @@ def opening_balance_preview(job_id):
         ) if qbo_conn else []
 
     cutover = db.get_cutover_settings(user["firm_id"]) or {}
+
+    # Beginning Trial Balance posting date. The card defaults it from
+    # Step 1 (Setup) so the lawyer never retypes a date they already gave
+    # us, and exposes a date selector to change it. A previously chosen
+    # override is remembered on the job; a fresh override posted this
+    # request wins. We accept the override on either the date-selector
+    # form (action below) or alongside the confirmation form.
+    posting_date_error: Optional[str] = None
+    submitted_date = (request.form.get("as_of_date") or "").strip() if request.method == "POST" else ""
+    if submitted_date and not is_iso_date(submitted_date):
+        posting_date_error = (
+            "Enter the starting-balance date as YYYY-MM-DD (for example "
+            "2026-03-31). We kept your previous date."
+        )
+        submitted_date = ""
+    if submitted_date:
+        job["opening_balance_date_override"] = submitted_date
+        _save_job(job_id)
+    effective_as_of = resolve_opening_balance_date(
+        cutover,
+        tb_rows,
+        override=submitted_date or job.get("opening_balance_date_override"),
+    )
+
     plan = build_opening_balance_plan(
         tb_rows,
         qbo_accounts,
-        as_of_date=cutover.get("opening_balance_date"),
+        as_of_date=effective_as_of or cutover.get("opening_balance_date"),
         account_mappings=account_mappings,
     )
 
@@ -5188,7 +5357,20 @@ def opening_balance_preview(job_id):
     )
 
     confirmation_error: Optional[str] = None
-    if request.method == "POST":
+    # A POST from the date-selector form (no confirmation phrase) only
+    # updates the posting date and re-renders the plan — it must not be
+    # treated as a failed confirmation attempt.
+    is_confirm_submit = request.method == "POST" and "confirm_post" in request.form
+    if request.method == "POST" and not is_confirm_submit:
+        if posting_date_error:
+            flash(posting_date_error, "error")
+        elif submitted_date:
+            flash(
+                f"Starting-balance date set to {submitted_date}. Review the "
+                "plan below, then confirm to post.",
+                "success",
+            )
+    elif is_confirm_submit:
         phrase = (request.form.get("confirm_post") or "").strip().upper()
         if phrase != OPENING_BALANCE_CONFIRMATION_PHRASE:
             confirmation_error = (
@@ -5247,6 +5429,13 @@ def opening_balance_preview(job_id):
         confirmation_phrase=OPENING_BALANCE_CONFIRMATION_PHRASE,
         confirmation_error=confirmation_error,
         report_label=REPORT_LABELS[REPORT_TRIAL_BALANCE],
+        posting_date=effective_as_of,
+        posting_date_source=(
+            "your setup answers"
+            if effective_as_of and not job.get("opening_balance_date_override")
+            else ("the date you chose" if job.get("opening_balance_date_override") else "")
+        ),
+        posting_date_error=posting_date_error,
         qbo_env_status=(
             "production" if (QBO_ENVIRONMENT or "").lower() == "production"
             else "sandbox"
