@@ -681,6 +681,19 @@ def inject_user():
     firm = db.get_firm(user["firm_id"]) if user else None
     ctx = {"user": user, "firm": firm, "now_year": datetime.utcnow().year}
     ctx.update(branding.context())
+    # Resolve the primary "Book a discovery call" CTA target. When
+    # DISCOVERY_CALL_URL (a Calendly link) is configured we send visitors
+    # straight to it; otherwise we keep the CTA safe by routing to the
+    # in-app request form so the button never dead-ends. Templates read
+    # `discovery_call_href` for the link and `discovery_call_is_external`
+    # to decide whether to open in a new tab.
+    discovery_url = (branding.DISCOVERY_CALL_URL or "").strip()
+    if discovery_url:
+        ctx["discovery_call_href"] = discovery_url
+        ctx["discovery_call_is_external"] = True
+    else:
+        ctx["discovery_call_href"] = url_for("quote_request")
+        ctx["discovery_call_is_external"] = False
     # True when SUPPORT_EMAIL has been set to a real monitored address.
     # Templates use this to suppress mailto: links pointing at the
     # deploy-default placeholder so customers/beta testers never see
@@ -2765,9 +2778,11 @@ def quote_request():
 def pricing():
     """Public pricing page.
 
-    Pricing tiers are keyed off how much historical PCLaw data a firm
-    wants to bring over, not firm size. Kept simple and lawyer-friendly:
-    no accounting jargon in the package names or descriptions.
+    No dollar amounts are shown publicly. The page explains that pricing is
+    scoped and quoted on the discovery call, and routes the visitor to book
+    that call (Calendly) or send their migration details. Stripe plan context
+    is still passed for any future private payment-link use, but the template
+    never surfaces a price.
     """
     return render_template(
         "pricing.html",

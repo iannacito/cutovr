@@ -91,25 +91,31 @@ def t4_assistant_api_pricing_query():
     payload = r.get_json()
     assert payload["matched"] is True
     assert payload["topic"] == "pricing"
-    # Essential repriced to $999; pricing answer must stay in sync with the
-    # pricing page.
-    assert "$999" in payload["answer"], payload["answer"]
-    assert "$799" not in payload["answer"], (
-        "assistant still quotes the retired $799 Essential price"
-    )
-    print("T4 OK: pricing query returns the $999 Essential price")
+    # Pricing is no longer a public dollar amount — the assistant points to
+    # the discovery call / quote, never a price.
+    answer = payload["answer"]
+    assert "$" not in answer, f"assistant must not quote a dollar amount: {answer!r}"
+    assert "discovery call" in answer.lower(), answer
+    print("T4 OK: pricing query points to the discovery-call quote, no dollar amount")
 
 
 def t4b_assistant_pricing_in_sync_with_pricing_page():
-    """Guard against the assistant and the /pricing page drifting apart on
-    the Essential price."""
+    """Guard against the assistant and the /pricing page drifting apart: both
+    must say pricing is quoted on the discovery call and show no dollar
+    amount."""
     pricing_body = appmod.app.test_client().get("/pricing").get_data(as_text=True)
-    assert "$999" in pricing_body, "/pricing should show the $999 Essential price"
+    assert "$999" not in pricing_body and "$1,499" not in pricing_body, (
+        "/pricing must not show public dollar amounts"
+    )
+    assert "discovery call" in pricing_body.lower(), (
+        "/pricing should explain pricing is given on the discovery call"
+    )
     result = support_assistant.answer("what does the essentials plan cost")
     assert result["matched"] is True
     assert result["topic"] == "pricing"
-    assert "$999" in result["answer"]
-    print("T4b OK: assistant pricing answer matches the $999 on /pricing")
+    assert "$" not in result["answer"], result["answer"]
+    assert "discovery call" in result["answer"].lower()
+    print("T4b OK: assistant pricing answer and /pricing both point to the discovery call, no dollar amount")
 
 
 def t4c_assistant_covers_expected_intents():

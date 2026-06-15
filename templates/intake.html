@@ -1,48 +1,40 @@
 {% extends "_base.html" %}
-{% block title %}Get started &mdash; {{ app_name }}{% endblock %}
-{% block meta_description %}Tell us a little about your firm and upload your PCLaw reports. We'll take it from there.{% endblock %}
+{% block title %}Send migration details &mdash; {{ app_name }}{% endblock %}
+{% block meta_description %}Tell us a little about your firm and upload your PCLaw reports. Our team reviews them before your discovery call.{% endblock %}
 {% block content %}
+
+{% macro discovery_attrs() -%}
+href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_blank" rel="noopener"{% endif %}
+{%- endmacro %}
+
 <section class="page">
   <div class="stack">
 
     <header class="stack-sm" style="max-width:42rem;">
-      <p class="eyebrow">Welcome aboard</p>
-      <h1 class="display">Tell us what we need to handle your migration.</h1>
+      <p class="eyebrow">Get started</p>
+      <h1 class="display">Send us what we need for your migration.</h1>
       <p class="lede">
         A couple of simple details and your PCLaw reports &mdash; that's all
-        we need from you. {{ app_name }} takes it from there.
+        we need to get started. Our team reviews everything before your
+        discovery call, where we scope the migration and give you a quote.
       </p>
     </header>
 
-    {% if plan_detail %}
-    {# Selected plan summary: name, price/quote, and what's included, in
-       plain language. Shown when the customer arrived from a plan card. #}
-    <article class="card card--inset" data-testid="intake-plan-summary">
-      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:1rem;flex-wrap:wrap;">
-        <div>
-          <p class="eyebrow" style="margin:0;">Your plan</p>
-          <h2 style="margin:.2rem 0 0;font-size:1.25rem;">
-            {{ plan_detail.name }} <span class="muted" style="font-weight:400;">&middot; {{ plan_detail.tagline }}</span>
-          </h2>
-        </div>
-        <p style="margin:0;font-size:1.4rem;font-weight:700;" data-testid="intake-plan-price">
-          {{ plan_detail.price_display }}
-        </p>
-      </div>
-      <p style="margin:.75rem 0 .25rem;font-weight:600;">What's included</p>
-      <ul style="margin:0;padding-left:1.2rem;font-size:.92rem;line-height:1.6;">
-        {% for item in plan_detail.includes %}
-        <li>{{ item }}</li>
-        {% endfor %}
-      </ul>
-      {% if plan_detail.is_quote %}
-      <p class="note" style="margin-top:.75rem;">
-        Complete is quote-based. We'll confirm your price by email before any
-        payment &mdash; nothing is charged today.
+    {# Pre-call guidance: the discovery call is the main path, and Calendly
+       collects the key details before we meet. This page is the
+       send-details / request-review fallback. No pricing, no checkout. #}
+    <article class="card card--inset" data-testid="intake-precall-note">
+      <p style="margin-top:0;font-weight:600;">The fastest path is a discovery call.</p>
+      <p style="margin-bottom:.5rem;">
+        <a class="btn btn-primary" {{ discovery_attrs() }}
+           data-testid="intake-book-discovery">Book a discovery call</a>
       </p>
-      {% endif %}
+      <p class="note" style="margin-bottom:0;">
+        The Calendly booking form collects the details we need before we
+        meet, and our team reviews your information ahead of the call. You can
+        also send your details below and we&rsquo;ll follow up.
+      </p>
     </article>
-    {% endif %}
 
     <article class="card">
       <form method="post" action="{{ url_for('intake_submit') }}"
@@ -93,20 +85,6 @@
                    value="{{ form.position or '' }}"
                    placeholder="Office manager, partner, paralegal…">
           </label>
-
-          {% if not plan_slug %}
-          <label>
-            <span>Which plan did you purchase?</span>
-            <select name="plan">
-              <option value="">I'm not sure / decide later</option>
-              {% for p in selectable_plans %}
-              <option value="{{ p.slug }}">{{ p.label }}</option>
-              {% endfor %}
-            </select>
-          </label>
-          {% else %}
-          <input type="hidden" name="plan" value="{{ plan_slug }}">
-          {% endif %}
         </section>
 
         <hr style="border:none;border-top:1px solid var(--line);margin:0;">
@@ -148,24 +126,24 @@
 
         <hr style="border:none;border-top:1px solid var(--line);margin:0;">
 
-        {# Section 4 — Payment (Stripe-ready, no card fields collected here) #}
-        <section class="stack-sm" data-testid="intake-section-payment">
-          <h2 style="font-size:1.1rem;margin:0;">Payment</h2>
-          <div class="card card--inset" data-testid="intake-payment-panel">
+        {# Section 4 — What happens next (no payment collected here) #}
+        <section class="stack-sm" data-testid="intake-section-next-steps">
+          <h2 style="font-size:1.1rem;margin:0;">What happens next</h2>
+          <div class="card card--inset" data-testid="intake-next-steps-panel">
             <p style="margin-top:0;">
-              Payment will be completed securely by card.
+              Our team reviews your details and your PCLaw reports before your
+              discovery call.
             </p>
             <p class="note" style="margin-bottom:0;">
-              We don't collect your card details on this page. When you submit,
-              your request is saved and secure card payment will be connected
-              shortly &mdash; you won't be charged yet.
+              On the call, we scope the migration and give you a quote. We
+              don&rsquo;t collect any payment or card details on this page.
             </p>
           </div>
         </section>
 
         <button class="btn btn-primary btn-lg full-width" type="submit"
                 data-testid="intake-submit-cta"
-                style="margin-top:.5rem;">Continue to secure payment</button>
+                style="margin-top:.5rem;">Send migration details</button>
         <p class="note" style="margin-top:.5rem;">
           Your files are encrypted as soon as they reach us. We never share your data.
         </p>

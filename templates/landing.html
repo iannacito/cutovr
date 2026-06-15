@@ -2,72 +2,103 @@
 {% block title %}{{ app_name }} &mdash; PCLaw to QuickBooks migration, handled for you{% endblock %}
 {% block content %}
 
+{# Reusable discovery-call CTA. discovery_call_href resolves to the
+   configured Calendly link, or falls back to the in-app request form
+   when DISCOVERY_CALL_URL is unset, so the button never dead-ends. #}
+{% macro discovery_attrs() -%}
+href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_blank" rel="noopener"{% endif %}
+{%- endmacro %}
+
 <!-- Hero ------------------------------------------------------------- -->
 <section class="landing-hero">
   <div class="landing-hero__inner">
     <p class="eyebrow">PCLaw &rarr; QuickBooks</p>
     <h1 class="display landing-hero__title">
-      PCLaw to QuickBooks migration, <em>handled for you</em>.
+      A done-for-you PCLaw to QuickBooks migration, <em>scoped with our team</em>.
     </h1>
     <p class="landing-hero__lede">
-      Upload your PCLaw reports, answer a few questions, and we do the
-      accounting-heavy parts.
-    </p>
-    <p class="landing-hero__price-anchor"
-       data-testid="landing-price-anchor"
-       style="font-size:1rem;font-weight:600;margin-top:var(--space-3);">
-      From $999 &mdash; no subscription.
+      We move a law firm&rsquo;s accounting history out of PCLaw and into
+      QuickBooks &mdash; reviewed and refined by people, not left to a
+      self-serve import. It starts with a short discovery call.
     </p>
     <p class="landing-hero__qualifier muted"
-       data-testid="landing-hour-qualifier"
-       style="font-size:.85rem;margin-top:var(--space-2);max-width:60ch;">
-      For supported PCLaw CSV exports.
+       data-testid="landing-discovery-intro"
+       style="font-size:.92rem;margin-top:var(--space-3);max-width:62ch;">
+      When a firm is moving to Clio and needs their accounting data handled,
+      a Clio representative can book a {{ app_name }} discovery call while the
+      firm is still on the call.
     </p>
     <div class="landing-hero__ctas">
-      {# Get Started leads into the page-by-page onboarding flow: choose how
-         much history to move, enter firm details, pay, then upload reports. #}
-      <a class="btn btn-primary btn-lg" href="{{ url_for('onboarding') }}"
-         data-testid="landing-get-started">Get started</a>
+      <a class="btn btn-primary btn-lg" {{ discovery_attrs() }}
+         data-testid="landing-book-discovery">Book a discovery call</a>
+      <a class="btn btn-secondary btn-lg" href="{{ url_for('quote_request') }}"
+         data-testid="landing-send-details">Send migration details</a>
       <a class="landing-hero__signin" href="{{ url_for('login') }}">Sign in</a>
     </div>
+    <p class="landing-hero__qualifier muted"
+       data-testid="landing-precall-note"
+       style="font-size:.85rem;margin-top:var(--space-3);max-width:62ch;">
+      The booking form on Calendly collects the details we need before we
+      meet, so the call is spent scoping your migration &mdash; not gathering
+      basics.
+    </p>
     <ul class="landing-hero__bullets">
       <li>
-        <strong>Hands-off</strong>
-        You upload and answer a few questions. We handle the rest.
+        <strong>Done for you</strong>
+        We handle the accounting-heavy parts of the move, end to end.
       </li>
       <li>
-        <strong>Encrypted</strong>
-        Your files and QuickBooks tokens stay private.
+        <strong>Reviewed by people</strong>
+        Every migration is checked and refined by our team before it lands.
       </li>
       <li>
         <strong>Reversible</strong>
-        Roll an import back in one click if anything looks off.
+        Imports post into QuickBooks as auditable, reversible entries.
       </li>
     </ul>
   </div>
 </section>
 
-<!-- Platform preview ------------------------------------------------- -->
-<section class="landing-section landing-section--preview" id="see-how-it-works"
-         data-testid="landing-preview">
+<!-- How the engagement works ----------------------------------------- -->
+<section class="landing-section landing-section--steps" id="how-it-works">
   <div class="landing-section__inner">
-    <h2 class="h-serif landing-section__title">See how {{ app_name }} works.</h2>
+    <p class="eyebrow">How it works</p>
+    <h2 class="h-serif landing-section__title">From the Clio call to a clean cutover.</h2>
     <p class="muted landing-section__lede">
-      A short look at the guided migration &mdash; you upload and confirm,
-      {{ app_name }} prepares and posts to QuickBooks, one calm screen at a time.
+      The firm doesn&rsquo;t run the migration themselves. A short discovery
+      call gets us what we need; from there, our team does the work.
     </p>
-    <figure class="landing-preview__media" data-testid="landing-preview-media"
-            style="margin:var(--space-5) auto 0;max-width:54rem;aspect-ratio:16/9;
-                   display:flex;align-items:center;justify-content:center;
-                   border:1px solid var(--color-line);border-radius:var(--radius-lg, 16px);
-                   background:var(--color-surface-muted, #f5f5f7);">
-      <figcaption class="muted" style="text-align:center;padding:var(--space-4);">
-        A walkthrough video is on the way.<br>
-        <span style="font-size:.85rem;">In the meantime, the
-          <a href="{{ url_for('onboarding') }}">onboarding guide</a>
-          shows every step.</span>
-      </figcaption>
-    </figure>
+
+    <ol class="landing-steps">
+      <li class="landing-step">
+        <span class="landing-step__num">01</span>
+        <div>
+          <h3>A Clio rep books the call</h3>
+          <p>While a firm is moving to Clio and realizes their PCLaw accounting data needs handling, a Clio representative books a {{ app_name }} discovery call &mdash; often right there on the same Zoom call.</p>
+        </div>
+      </li>
+      <li class="landing-step">
+        <span class="landing-step__num">02</span>
+        <div>
+          <h3>Calendly collects the details</h3>
+          <p>Before the call is confirmed, the Calendly booking form captures the key details we need about the firm and its PCLaw reports, so we arrive prepared.</p>
+        </div>
+      </li>
+      <li class="landing-step">
+        <span class="landing-step__num">03</span>
+        <div>
+          <h3>We scope it on the discovery call</h3>
+          <p>On the call, our team reviews the migration scope with the firm and gives a quote right then and there &mdash; no back-and-forth, no surprise invoice later.</p>
+        </div>
+      </li>
+      <li class="landing-step">
+        <span class="landing-step__num">04</span>
+        <div>
+          <h3>We do the migration for you</h3>
+          <p>We prepare the PCLaw history, match it to QuickBooks, and post it as reviewed, reversible entries &mdash; with a final reconciliation so every dollar is accounted for.</p>
+        </div>
+      </li>
+    </ol>
   </div>
 </section>
 
@@ -84,7 +115,7 @@
     <div class="landing-coverage">
       <article class="landing-coverage__item">
         <h3>Transaction history</h3>
-        <p>Your General Ledger posts as journal entries after you review and confirm. <small class="muted">(General Ledger)</small></p>
+        <p>Your General Ledger posts as journal entries after we review and confirm. <small class="muted">(General Ledger)</small></p>
       </article>
       <article class="landing-coverage__item">
         <h3>Account list</h3>
@@ -118,63 +149,6 @@
   </div>
 </section>
 
-<!-- How it works ----------------------------------------------------- -->
-<section class="landing-section landing-section--steps" id="how-it-works">
-  <div class="landing-section__inner">
-    <p class="eyebrow">How it works</p>
-    <h2 class="h-serif landing-section__title">Six steps. One screen at a time.</h2>
-    <p class="muted landing-section__lede">
-      The whole flow happens in the app &mdash; no spreadsheets emailed
-      around, no consultant on a shared screen.
-    </p>
-
-    <ol class="landing-steps">
-      <li class="landing-step">
-        <span class="landing-step__num">01</span>
-        <div>
-          <h3>Export from PCLaw</h3>
-          <p>Run the standard PCLaw reports and save as CSV. A sample template is included if you want to dry-run first.</p>
-        </div>
-      </li>
-      <li class="landing-step">
-        <span class="landing-step__num">02</span>
-        <div>
-          <h3>Upload to {{ app_name }}</h3>
-          <p>Sign in, name the migration, and drop the files in. Everything is encrypted before processing.</p>
-        </div>
-      </li>
-      <li class="landing-step">
-        <span class="landing-step__num">03</span>
-        <div>
-          <h3>Validate &amp; match</h3>
-          <p>We check the files for missing columns and balance, and ask you to pair each PCLaw account with the right QuickBooks account.</p>
-        </div>
-      </li>
-      <li class="landing-step">
-        <span class="landing-step__num">04</span>
-        <div>
-          <h3>Connect QuickBooks</h3>
-          <p>Sign in with Intuit. We never see your QuickBooks password, and you can disconnect at any time.</p>
-        </div>
-      </li>
-      <li class="landing-step">
-        <span class="landing-step__num">05</span>
-        <div>
-          <h3>Review &amp; send</h3>
-          <p>Confirm the QuickBooks company, type <code>IMPORT</code> to send, and watch the records land.</p>
-        </div>
-      </li>
-      <li class="landing-step">
-        <span class="landing-step__num">06</span>
-        <div>
-          <h3>Verify &mdash; or reverse</h3>
-          <p>Run a one-click verification. If anything looks wrong, a one-click reversal posts offsetting entries.</p>
-        </div>
-      </li>
-    </ol>
-  </div>
-</section>
-
 <!-- Comparison ------------------------------------------------------- -->
 <section class="landing-section landing-section--compare" id="compare">
   <div class="landing-section__inner">
@@ -183,10 +157,10 @@
     <p class="muted landing-section__lede">
       A traditional consultant-led migration means weeks of meetings, file
       exchanges, and review cycles &mdash; you coordinating, them billing.
-      {{ app_name }} turns the same migration into a guided workflow your
-      firm runs without an accountant on the line: you upload your reports
-      and confirm, and we handle the accounting-heavy parts, with the
-      controls and reversibility a finance-grade tool should have.
+      {{ app_name }} is a done-for-you service: after a short discovery call,
+      our team prepares your reports, posts them to QuickBooks, and reconciles
+      the result, with the controls and reversibility a finance-grade
+      migration should have.
     </p>
 
     <div class="landing-compare" data-testid="landing-consultant-compare">
@@ -205,19 +179,14 @@
       <article class="landing-compare__col landing-compare__col--new">
         <p class="kicker">{{ app_name }}</p>
         <p class="landing-compare__headline" style="font-weight:600;font-size:1.05rem;">
-          Hands-off &middot; guided every step
+          Done for you &middot; scoped on one call
         </p>
         <ul>
-          <li>You upload and confirm; {{ app_name }} does the work.</li>
-          <li>The same guided workflow every time, in plain English.</li>
-          <li>No accounting expertise needed &mdash; we handle the complex parts.</li>
+          <li>One discovery call scopes the whole migration.</li>
+          <li>Our team does the work &mdash; the firm doesn&rsquo;t run an import.</li>
+          <li>Every step reviewed and refined by people before it posts.</li>
           <li>One-click reversal if something looks wrong.</li>
         </ul>
-        <p class="muted" style="font-size:.8rem;margin-top:var(--space-2);">
-          A flat fee, no subscription &mdash; typically a fraction of the cost
-          of a consultant, which runs into the thousands. Costs are typical
-          industry estimates and vary by firm.
-        </p>
       </article>
     </div>
   </div>
@@ -274,41 +243,18 @@
 <section class="landing-section landing-section--pricing" id="pricing">
   <div class="landing-section__inner">
     <p class="eyebrow">Pricing</p>
-    <h2 class="h-serif landing-section__title">Choose how much history we handle.</h2>
-    <p class="muted landing-section__lede">
-      One firm. One migration. Pick how far back you want us to take it
-      &mdash; we handle the rest.
+    <h2 class="h-serif landing-section__title">Your quote comes from the discovery call.</h2>
+    <p class="muted landing-section__lede" data-testid="landing-pricing-quote-note">
+      Every firm&rsquo;s migration is a little different &mdash; the reports,
+      how much history, and how the trust accounting is kept all vary. So we
+      scope your migration on the discovery call and give you a quote right
+      then, with no surprises afterward.
     </p>
-
-    <div class="landing-pricing">
-      <a class="landing-pricing__card" data-testid="landing-plan-essential"
-         href="{{ url_for('intake_form', plan='essential') }}">
-        <p class="landing-pricing__eyebrow">Essential</p>
-        <h3 class="landing-pricing__name">Current Year</h3>
-        <p class="landing-pricing__amount">$999</p>
-        <p class="landing-pricing__sub">Just this year.</p>
-      </a>
-      <a class="landing-pricing__card landing-pricing__card--featured"
-         data-testid="landing-plan-standard"
-         href="{{ url_for('intake_form', plan='standard') }}">
-        <p class="landing-pricing__badge">Most common</p>
-        <p class="landing-pricing__eyebrow">Standard</p>
-        <h3 class="landing-pricing__name">Up to 3 Years</h3>
-        <p class="landing-pricing__amount">$1,499</p>
-        <p class="landing-pricing__sub">The default for most firms.</p>
-      </a>
-      <a class="landing-pricing__card" data-testid="landing-plan-complete"
-         href="{{ url_for('intake_form', plan='complete') }}">
-        <p class="landing-pricing__eyebrow">Complete</p>
-        <h3 class="landing-pricing__name">3+ years of history</h3>
-        <p class="landing-pricing__amount">Quote</p>
-        <p class="landing-pricing__sub">A deeper historical record.</p>
-      </a>
+    <div class="landing-cta__buttons" style="margin-top:var(--space-5);">
+      <a class="btn btn-primary btn-lg" {{ discovery_attrs() }}
+         data-testid="landing-pricing-book-discovery">Book a discovery call</a>
+      <a class="btn btn-link btn-lg" href="{{ url_for('pricing') }}">How pricing works &rarr;</a>
     </div>
-
-    <p class="landing-pricing__footnote">
-      <a href="{{ url_for('pricing') }}">See full pricing &amp; FAQ &rarr;</a>
-    </p>
   </div>
 </section>
 
@@ -320,16 +266,18 @@
       Let {{ app_name }} <em>handle the migration</em>.
     </h2>
     <p class="landing-cta__lede">
-      Create a workspace, upload your PCLaw exports, and answer a few
-      simple questions. You review and confirm; we handle the rest.
+      Book a short discovery call &mdash; the Calendly form gathers the
+      details we need first &mdash; and our team scopes the move and gives you
+      a quote on the call.
     </p>
     <div class="landing-cta__buttons">
-      <a class="btn btn-primary btn-lg" href="{{ url_for('signup') }}">Sign up &amp; start migration</a>
-      <a class="btn btn-secondary btn-lg" href="{{ url_for('onboarding') }}">Read the onboarding guide</a>
+      <a class="btn btn-primary btn-lg" {{ discovery_attrs() }}
+         data-testid="landing-cta-book-discovery">Book a discovery call</a>
+      <a class="btn btn-secondary btn-lg" href="{{ url_for('quote_request') }}">Send migration details</a>
       <a class="btn btn-link btn-lg" href="{{ url_for('login') }}">Sign in</a>
     </div>
     <p class="note landing-cta__footnote">
-      Questions before you sign up? <a href="{{ url_for('support') }}">Contact support</a>.
+      Questions before you book? <a href="{{ url_for('support') }}">Contact support</a>.
     </p>
   </div>
 </section>

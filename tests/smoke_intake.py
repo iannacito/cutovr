@@ -73,32 +73,36 @@ def t1_form_renders():
         "Trust Listing",
         "Upload whatever you have",
         # Guided one-page section headers.
-        "Your firm", "Migration date", "Upload your PCLaw reports", "Payment",
-        # Stripe-ready payment panel copy (no raw card fields).
-        "Payment will be completed securely by card",
-        "Continue to secure payment",
+        "Your firm", "Migration date", "Upload your PCLaw reports",
+        "What happens next",
+        # Discovery-call / pre-call form messaging (no payment, no price).
+        "Book a discovery call",
+        "Calendly booking form",
+        "Send migration details",
     ):
         assert needle in body, f"missing {needle!r} in /intake"
-    # No raw card-collection inputs should ever render here.
+    # No raw card-collection inputs and no payment/checkout language here.
     assert 'name="card_number"' not in body and "cardnumber" not in body.lower(), \
         "intake must not collect raw card details"
-    print("T1 OK: /intake renders with all fields + report guidance + payment panel")
+    assert "Continue to secure payment" not in body, \
+        "intake must not show a checkout/payment CTA"
+    # No public dollar amounts.
+    for amount in ("$999", "$1,499", "$1499"):
+        assert amount not in body, f"intake must not show {amount!r}"
+    print("T1 OK: /intake renders fields + report guidance + discovery-call messaging, no price/payment")
 
 
-def t1b_plan_preselection_shows_details():
+def t1b_plan_preselection_shows_no_price():
     c = appmod.app.test_client()
-    # Essential: price + included summary.
-    body = c.get("/intake?plan=essential").get_data(as_text=True)
-    assert "$999" in body, "Essential price not shown"
-    assert "What's included" in body, "included summary missing"
-    assert 'name="plan" value="essential"' in body, "plan not preselected"
-    # Standard: $1,499.
-    body = c.get("/intake?plan=standard").get_data(as_text=True)
-    assert "$1,499" in body, "Standard price not shown"
-    # Complete: quote-based wording, no charge today.
-    body = c.get("/intake?plan=complete").get_data(as_text=True)
-    assert "Quote" in body and "quote-based" in body, "Complete quote wording missing"
-    print("T1b OK: plan preselection shows price + what's included")
+    # A plan slug may still arrive from a private link, but the public intake
+    # form must never surface a dollar amount or a checkout CTA.
+    for slug in ("essential", "standard", "complete"):
+        body = c.get(f"/intake?plan={slug}").get_data(as_text=True)
+        for amount in ("$999", "$1,499", "$1499"):
+            assert amount not in body, f"intake (plan={slug}) must not show {amount!r}"
+        assert "Continue to secure payment" not in body
+        assert "Book a discovery call" in body
+    print("T1b OK: intake shows no price/checkout regardless of plan slug")
 
 
 def t2_missing_required_fields_rejected():
@@ -256,7 +260,7 @@ def t9_paid_path_emits_receipt_wording():
 
 if __name__ == "__main__":
     t1_form_renders()
-    t1b_plan_preselection_shows_details()
+    t1b_plan_preselection_shows_no_price()
     t2_missing_required_fields_rejected()
     t3_complete_submission_succeeds()
     t4_email_fallback_when_smtp_unconfigured()

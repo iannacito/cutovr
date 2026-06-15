@@ -1,158 +1,88 @@
 {% extends "_base.html" %}
 {% block title %}{{ app_name }} &mdash; Pricing{% endblock %}
-{% block meta_description %}Simple, fixed-price PCLaw to QuickBooks Online migration, handled for you. Choose how much history you want us to move over.{% endblock %}
+{% block meta_description %}A done-for-you PCLaw to QuickBooks migration, scoped on a short discovery call. Your quote comes from that call, after we review your migration.{% endblock %}
 {% block content %}
 
-{# Compact hero: one line of context above the cards. Apple/Japanese
-   restraint — the cards are the page, not the headline. #}
+{% macro discovery_attrs() -%}
+href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_blank" rel="noopener"{% endif %}
+{%- endmacro %}
+
+{# Compact hero: one line of context above the explanation. The page no
+   longer lists prices — pricing is given on the discovery call once we've
+   scoped the migration. #}
 <section class="pricing-hero pricing-hero--compact">
   <div class="pricing-hero__inner">
     <p class="eyebrow">Pricing</p>
-    <h1 class="display pricing-hero__title">Choose how much history we handle.</h1>
-    <p class="pricing-hero__lede">
-      One firm. One migration. Pick how far back you want us to take it &mdash; we handle the rest.
+    <h1 class="display pricing-hero__title">Your quote comes from the discovery call.</h1>
+    <p class="pricing-hero__lede" data-testid="pricing-quote-on-call">
+      {{ app_name }} is a done-for-you migration, so we price each one after
+      we&rsquo;ve scoped it with you on a short discovery call &mdash; not from
+      a fixed menu. You leave the call knowing exactly what your migration
+      costs.
     </p>
   </div>
 </section>
 
-{# Pricing tiers + add-ons live in the same section so they share a
-   single vertical rhythm — add-ons sit right under the cards with a
-   thin divider, no extra hero in between. #}
-<section class="landing-section pricing-tiers-section" id="pricing-tiers">
+<!-- Why pricing is scoped, not listed -------------------------------- -->
+<section class="landing-section" id="why-quote">
   <div class="landing-section__inner">
-    <div class="pricing-tiers">
-      <article class="pricing-tier">
-        <header class="pricing-tier__head">
-          <p class="pricing-tier__eyebrow">Essential</p>
-          <h2 class="pricing-tier__name">Current Year</h2>
-          <p class="pricing-tier__price"><span class="pricing-tier__amount">$999</span></p>
-          <p class="pricing-tier__sub">Best for firms that only need this year moved over.</p>
-          <p class="pricing-tier__note muted"
-             data-testid="pricing-current-year-note"
-             style="font-size:.8rem;margin-top:var(--space-2);">
-            &ldquo;Current Year&rdquo; covers the calendar or fiscal year your
-            PCLaw export includes &mdash; i.e. the period covered by the file
-            you upload. Need older history too? See Standard or Complete.
-          </p>
-        </header>
-        <ul class="pricing-tier__list">
-          <li>Guided upload</li>
-          <li>QuickBooks connection</li>
-          <li>Account matching</li>
-          <li>Final migration report</li>
-        </ul>
-        {% if stripe_plans.essential.is_configured %}
-        <form method="post" action="{{ url_for('pricing_checkout', plan='essential') }}" class="pricing-tier__form">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" class="btn btn-secondary btn-lg pricing-tier__cta">Buy Essential</button>
-        </form>
-        {% else %}
-        <a class="btn btn-secondary btn-lg pricing-tier__cta"
-           data-testid="pricing-cta-essential"
-           href="{{ url_for('onboarding') }}">Get started with Essential</a>
-        {% endif %}
-      </article>
-
-      <article class="pricing-tier pricing-tier--featured">
-        <p class="pricing-tier__badge">Most common</p>
-        <header class="pricing-tier__head">
-          <p class="pricing-tier__eyebrow">Standard</p>
-          <h2 class="pricing-tier__name">Up to 3 Years</h2>
-          <p class="pricing-tier__price"><span class="pricing-tier__amount">$1,499</span></p>
-          <p class="pricing-tier__sub">The default for most firms making the switch.</p>
-        </header>
-        <ul class="pricing-tier__list">
-          <li>Everything in Essential</li>
-          <li>Up to 3 years of history</li>
-          <li>Trust balance support</li>
-          <li>Final migration report</li>
-        </ul>
-        {% if stripe_plans.standard.is_configured %}
-        <form method="post" action="{{ url_for('pricing_checkout', plan='standard') }}" class="pricing-tier__form">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" class="btn btn-primary btn-lg pricing-tier__cta">Buy Standard</button>
-        </form>
-        {% else %}
-        <a class="btn btn-primary btn-lg pricing-tier__cta"
-           data-testid="pricing-cta-standard"
-           href="{{ url_for('onboarding') }}">Get started with Standard</a>
-        {% endif %}
-      </article>
-
-      <article class="pricing-tier pricing-tier--quote">
-        <header class="pricing-tier__head">
-          <p class="pricing-tier__eyebrow">Complete</p>
-          <h2 class="pricing-tier__name">3+ years of history</h2>
-          <p class="pricing-tier__price"><span class="pricing-tier__amount pricing-tier__amount--quote">Quote</span></p>
-          <p class="pricing-tier__sub">For firms that want a deeper historical record.</p>
-        </header>
-        <ul class="pricing-tier__list">
-          <li>Everything in Standard</li>
-          <li>3+ years of history</li>
-          <li>Larger file volume</li>
-          <li>Final reconciliation report</li>
-        </ul>
-        <a class="btn btn-secondary btn-lg pricing-tier__cta"
-           data-testid="pricing-cta-complete"
-           href="{{ url_for('quote_request') }}">Request a quote</a>
-      </article>
-    </div>
-
-    <!-- Consultant comparison: tasteful, credible price anchor ------- -->
-    <div class="pricing-compare-strip" data-testid="pricing-consultant-compare"
-         style="margin-top:var(--space-6);padding:var(--space-5);border-top:1px solid var(--color-line);">
-      <p class="eyebrow">Compared to a traditional consultant</p>
-      <div class="grid-two" style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-5);margin-top:var(--space-3);">
-        <div>
-          <p class="kicker muted">Traditional consultant-led migration</p>
-          <p style="font-weight:600;font-size:1.1rem;">Hands-on for you, week after week</p>
-          <p class="muted" style="font-size:.85rem;">Hourly billing, calendar coordination, file exchanges, and one-off spreadsheets &mdash; often running into the thousands.</p>
-        </div>
-        <div>
-          <p class="kicker">{{ app_name }}</p>
-          <p style="font-weight:600;font-size:1.1rem;">Handled for you &middot; from $999</p>
-          <p class="muted" style="font-size:.85rem;">A guided workflow that does the work for you. Flat fee, no subscription &mdash; typically a fraction of a consultant&rsquo;s cost.</p>
-        </div>
-      </div>
-    </div>
-
-    {# Add-ons strip: a single compact band of three items, sitting
-       right under the cards so the customer sees them without
-       another hero or section break. #}
-    <div class="pricing-addons-strip">
-      <p class="pricing-addons-strip__eyebrow">Optional add-ons</p>
-      <ul class="pricing-addons pricing-addons--compact">
-        <li class="pricing-addons__item">
-          <div>
-            <h3>Extra historical year</h3>
-            <p>Stretch the window beyond your package, one year at a time.</p>
-          </div>
-          <p class="pricing-addons__price">$250 / year</p>
-        </li>
-        <li class="pricing-addons__item">
-          <div>
-            <h3>Priority handling</h3>
-            <p>We move your migration to the front of the line when you're up against a deadline.</p>
-          </div>
-          <p class="pricing-addons__price">$299</p>
-        </li>
-        <li class="pricing-addons__item">
-          <div>
-            <h3>Assisted review call</h3>
-            <p>A guided walk-through of your migration before you send.</p>
-          </div>
-          <p class="pricing-addons__price">$199</p>
-        </li>
-      </ul>
-    </div>
-
-    <p class="pricing-fineprint muted">
-      Each package covers a single migration for one firm. No subscription.
-      You only pay once the migration is ready to send to QuickBooks.
-      {% if not stripe_enabled %}
-      <br><span class="pricing-fineprint__note">Online checkout is being set up &mdash; contact support to purchase today.</span>
-      {% endif %}
+    <p class="eyebrow">Why we quote on the call</p>
+    <h2 class="h-serif landing-section__title">No two firms migrate the same way.</h2>
+    <p class="muted landing-section__lede">
+      A few things change the shape &mdash; and the cost &mdash; of a
+      migration. We&rsquo;d rather look at them with you than guess at a
+      number up front.
     </p>
+    <div class="grid-three landing-trust" style="margin-top:var(--space-5);">
+      <article class="card">
+        <h3>Report quality</h3>
+        <p>How clean and complete your PCLaw exports are decides how much review and refinement a migration needs.</p>
+      </article>
+      <article class="card">
+        <h3>Migration history</h3>
+        <p>How many years of history you want carried into QuickBooks changes the volume of work.</p>
+      </article>
+      <article class="card">
+        <h3>Trust accounting</h3>
+        <p>Firms that hold client trust funds need careful reconciliation &mdash; the most sensitive part of any law-firm move.</p>
+      </article>
+    </div>
+    <p class="muted" style="font-size:.9rem;margin-top:var(--space-5);max-width:62ch;">
+      Because data complexity varies firm to firm, we scope your migration on
+      the discovery call and give you a quote right then &mdash; reviewed and
+      refined by our team, with no surprise invoice afterward.
+    </p>
+  </div>
+</section>
+
+<!-- How a quote happens ---------------------------------------------- -->
+<section class="landing-section" id="how-pricing-works">
+  <div class="landing-section__inner">
+    <p class="eyebrow">How it works</p>
+    <h2 class="h-serif landing-section__title">From booking to a quote.</h2>
+    <ol class="landing-steps">
+      <li class="landing-step">
+        <span class="landing-step__num">01</span>
+        <div>
+          <h3>Book a discovery call</h3>
+          <p>Pick a time through Calendly. If a firm is moving to Clio, a Clio representative can book the call for them on the spot.</p>
+        </div>
+      </li>
+      <li class="landing-step">
+        <span class="landing-step__num">02</span>
+        <div>
+          <h3>Calendly collects the details first</h3>
+          <p>Before the call is confirmed, the booking form captures the details we need about the firm and its PCLaw reports, so we arrive prepared.</p>
+        </div>
+      </li>
+      <li class="landing-step">
+        <span class="landing-step__num">03</span>
+        <div>
+          <h3>We scope it and quote on the call</h3>
+          <p>Our team reviews the migration scope with you and gives a quote right then and there.</p>
+        </div>
+      </li>
+    </ol>
   </div>
 </section>
 
@@ -163,40 +93,38 @@
     <h2 class="h-serif landing-section__title">Plain English answers.</h2>
     <div class="pricing-faq">
       <details class="pricing-faq__item">
-        <summary>What if I am not sure how far back to go?</summary>
+        <summary>How much does a migration cost?</summary>
         <p>
-          Most firms pick 3-Year History because it gives you enough
-          context to feel confident in QuickBooks without dragging in
-          ancient records. If you change your mind later, you can add
-          extra years as an add-on.
+          It depends on your reports, how much history you want moved, and
+          how your trust accounting is kept. We scope your migration on the
+          discovery call and give you a quote on that call &mdash; so you
+          know the cost before any work begins.
         </p>
       </details>
       <details class="pricing-faq__item">
-        <summary>Do I need to know which reports to upload?</summary>
+        <summary>What happens on the discovery call?</summary>
         <p>
-          No. The app tells you which files it wants and walks you
-          through each one. If something is missing or looks off, we
-          flag it before anything is sent to QuickBooks.
+          We review what you&rsquo;re moving out of PCLaw, talk through any
+          trust or reconciliation needs, and confirm scope. Then we give you
+          a quote for the migration, right on the call.
         </p>
       </details>
       <details class="pricing-faq__item">
         <summary>Does this include QuickBooks setup?</summary>
         <p>
           You'll need an active QuickBooks Online subscription. Once you
-          do, we handle connecting it to Cutovr, matching your
+          do, we handle connecting it to {{ app_name }}, matching your
           accounts, and posting your history. We don't sell QuickBooks
           itself.
         </p>
       </details>
       <details class="pricing-faq__item">
-        <summary>What happens after I pay?</summary>
+        <summary>Do I need to know which reports to upload?</summary>
         <p>
-          You upload your PCLaw reports and answer a few simple
-          questions &mdash; that's your part. From there the guided
-          workflow handles the accounting-heavy steps: we prepare your
-          data, match it to QuickBooks, and walk you through a review
-          before anything posts. If anything looks wrong, the migration
-          can be reversed in one click.
+          No. The Calendly booking form and the discovery call walk you
+          through exactly which PCLaw reports help us most. If something is
+          missing or looks off, we flag it before anything is sent to
+          QuickBooks.
         </p>
       </details>
     </div>
@@ -211,11 +139,14 @@
       Let {{ app_name }} <em>handle the migration</em>.
     </h2>
     <p class="landing-cta__lede">
-      Create a workspace, upload your PCLaw exports, and answer a few
-      simple questions. You review and confirm; we handle the rest.
+      Book a short discovery call &mdash; the Calendly form gathers the
+      details we need first &mdash; and our team scopes the move and gives you
+      a quote on the call.
     </p>
     <div class="landing-cta__buttons">
-      <a class="btn btn-primary btn-lg" href="{{ url_for('signup') }}">Start your migration</a>
+      <a class="btn btn-primary btn-lg" {{ discovery_attrs() }}
+         data-testid="pricing-cta-book-discovery">Book a discovery call</a>
+      <a class="btn btn-secondary btn-lg" href="{{ url_for('quote_request') }}">Send migration details</a>
       <a class="btn btn-link btn-lg" href="{{ url_for('support') }}">Talk to us first</a>
     </div>
   </div>
