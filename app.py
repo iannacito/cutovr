@@ -2067,11 +2067,12 @@ def send_to_qbo_entry():
                 "error",
             )
             return redirect(url_for("preview_import", job_id=primary["id"]))
-        if primary_preflight.get("line_count") and not primary_preflight.get("balanced", True):
+        _job_for_balance = db.hydrate_job(primary["id"]) or {}
+        _already_imported = bool(_job_for_balance.get("import_summary"))
+        if not _already_imported and primary_preflight.get("line_count") and not primary_preflight.get("balanced", True):
             # Fallback: preview may have resolved balance after subtotal-row fix.
             # Trust preview["balanced"] if it's been explicitly set to True.
-            _job_data = db.hydrate_job(primary["id"]) or {}
-            _preview = _job_data.get("preview") or {}
+            _preview = _job_for_balance.get("preview") or {}
             if not _preview.get("balanced", False):
                 flash(
                     "Your general-ledger file is not balanced (debits don't "

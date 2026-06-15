@@ -100,7 +100,7 @@ def build_preflight_summary(rows, fieldnames=None):
         "blank_rows_skipped": quality.blank_rows,
         "total_debits": f"{debits:.2f}",
         "total_credits": f"{credits:.2f}",
-        "balanced": (debits == credits) and len(significant_rows) > 0,
+        "balanced": round(debits, 2) == round(credits, 2) and len(significant_rows) > 0,
         "unique_accounts": sorted(accounts),
         "unique_account_count": len(accounts),
         "missing_required_columns": missing_columns,
