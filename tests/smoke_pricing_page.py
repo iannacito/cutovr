@@ -4,24 +4,18 @@ Run from project root:
 
     python3 tests/smoke_pricing_page.py
 
-Covers:
-  T1 GET /pricing renders publicly (no auth) and includes the three
-     packages, dollar amounts (or Quote for the Complete tier), and the
-     FAQ headings.
+The site no longer shows public dollar amounts. Pricing is scoped and quoted
+on a discovery call, so these tests assert:
+  T1 GET /pricing renders publicly (no auth) with the "quote on the discovery
+     call" framing and the why-we-quote reasons, and NO dollar amounts.
   T2 The pricing page does NOT use firm-size / number-of-people wording.
-  T3 The landing page (/) includes a short pricing teaser with the three
-     headline tiers and a link to /pricing.
-  T4 /pricing is reachable for authenticated users too (it stays public,
-     and authenticated users should not be redirected away from it).
-  T5 The pricing page avoids accountant-jargon abbreviations (COA, GL,
-     QBO) in customer-facing copy.
-  T6 The pricing page no longer surfaces a "Custom" card or older
-     fixed-price amounts on the Complete tier.
-  T7 The pricing page renders exactly three pricing tier cards (so the
-     grid is balanced and not left-heavy with a phantom fourth slot).
-  T8 The site stylesheet centers the pricing grid and lays it out as
-     three columns on desktop, collapsing to a single centered column
-     on narrow viewports — no leftover 4-column rule.
+  T3 The landing page (/) explains pricing comes from the discovery call and
+     links to /pricing — with no dollar amounts.
+  T4 /pricing is reachable for authenticated users too (it stays public).
+  T5 The pricing page avoids accountant-jargon abbreviations (COA, GL, QBO).
+  T6 The pricing page shows no public dollar amounts at all.
+  T7 The pricing page surfaces a discovery-call CTA and Calendly pre-call
+     form messaging.
 """
 
 import os
@@ -42,55 +36,44 @@ os.environ.setdefault("SECRET_KEY", "smoke-secret-pricing")
 
 import app as appmod  # noqa: E402
 
+# Dollar amounts that must never appear on public pages.
+FORBIDDEN_AMOUNTS = ("$999", "$1,499", "$1499", "$250", "$299", "$199", "$499", "$1,999")
+
 
 def _get(path, client=None):
     c = client or appmod.app.test_client()
     return c.get(path)
 
 
-def t1_pricing_renders_with_packages_and_faq():
+def t1_pricing_renders_with_quote_on_call_framing():
     r = _get("/pricing")
     assert r.status_code == 200, f"GET /pricing -> {r.status_code}"
     body = r.get_data(as_text=True)
 
     must_contain = [
-        # Package names (three tiers — no Custom column)
-        "Essential",
-        "Standard",
-        "Complete",
-        # History framing
-        "Current Year",
-        "Up to 3 Years",
-        "3+ years of history",
-        # Prices (Essential repriced $799 -> $999)
-        "$999",
-        "$1,499",
-        # Quote-based tier signal for the Complete tier
-        "Quote",
-        # "Most common" badge for default tier
-        "Most common",
-        # Add-ons
-        "Extra historical year",
-        "Priority handling",
-        "Assisted review call",
-        "$250",
-        "$299",
-        "$199",
-        # FAQ questions (exact phrasings from the requirements)
-        "What if I am not sure how far back to go?",
-        "Do I need to know which reports to upload?",
+        # The page explains pricing is given on the discovery call.
+        "discovery call",
+        "pricing-quote-on-call",
+        # Why we scope/quote rather than list prices.
+        "Report quality",
+        "Migration history",
+        "Trust accounting",
+        "data complexity",
+        # FAQ
+        "How much does a migration cost?",
+        "What happens on the discovery call?",
         "Does this include QuickBooks setup?",
-        "What happens after I pay?",
     ]
     for needle in must_contain:
         assert needle in body, f"/pricing missing expected copy: {needle!r}"
-    print("T1 OK: /pricing renders packages, prices, add-ons, and FAQ")
+    for amount in FORBIDDEN_AMOUNTS:
+        assert amount not in body, f"/pricing must not show {amount!r}"
+    print("T1 OK: /pricing renders the quote-on-discovery-call framing, no dollar amounts")
 
 
 def t2_pricing_avoids_firm_size_language():
     r = _get("/pricing")
     body = r.get_data(as_text=True).lower()
-    # Pricing is explicitly NOT based on firm size. Guard against drift.
     forbidden_substrings = [
         "number of lawyers",
         "per lawyer",
@@ -112,30 +95,22 @@ def t2_pricing_avoids_firm_size_language():
     print("T2 OK: /pricing has no firm-size / per-person wording")
 
 
-def t3_landing_has_pricing_section_linking_to_pricing_page():
+def t3_landing_explains_quote_from_call_and_links_to_pricing():
     r = _get("/")
     assert r.status_code == 200, f"GET / -> {r.status_code}"
     body = r.get_data(as_text=True)
 
     must_contain = [
-        # Section eyebrow + headline cues
         "Pricing",
-        "history",
-        # Three teaser cards (names + prices)
-        "Essential",
-        "Standard",
-        "Complete",
-        "$999",
-        "$1,499",
-        "Quote",
-        # Recommended badge on the teaser too
-        "Most common",
-        # Link to full pricing page
+        "discovery call",
+        "landing-pricing-quote-note",
         'href="/pricing"',
     ]
     for needle in must_contain:
-        assert needle in body, f"landing page missing expected pricing teaser: {needle!r}"
-    print("T3 OK: / has pricing teaser with three tiers and link to /pricing")
+        assert needle in body, f"landing page missing expected pricing copy: {needle!r}"
+    for amount in FORBIDDEN_AMOUNTS:
+        assert amount not in body, f"landing page must not show {amount!r}"
+    print("T3 OK: / explains the quote comes from the discovery call and links to /pricing")
 
 
 def t4_pricing_reachable_for_authenticated_users():
@@ -154,23 +129,15 @@ def t4_pricing_reachable_for_authenticated_users():
         f"/pricing should stay public for authenticated users, got {r.status_code}"
     )
     body = r.get_data(as_text=True)
-    assert "$1,499" in body, "/pricing for authed user missing tier content"
+    assert "discovery call" in body, "/pricing for authed user missing quote-on-call content"
     print("T4 OK: /pricing is reachable while signed in")
 
 
 def t5_pricing_avoids_jargon_abbreviations():
-    """Audience is lawyers, not accountants — the pricing page should not
-    rely on COA / GL / QBO abbreviations."""
     r = _get("/pricing")
     body = r.get_data(as_text=True)
-
-    # Bound the check to visible text (drop HTML tags) so we don't trip on
-    # things like CSS class names or aria attributes.
     visible = re.sub(r"<[^>]+>", " ", body)
     visible = re.sub(r"&[a-z]+;", " ", visible)
-
-    # Match abbreviations only as whole words so we don't false-positive on
-    # words that happen to contain those letters.
     forbidden_abbrevs = ["COA", "GL", "QBO"]
     for abbrev in forbidden_abbrevs:
         pattern = r"\b" + re.escape(abbrev) + r"\b"
@@ -180,93 +147,39 @@ def t5_pricing_avoids_jargon_abbreviations():
     print("T5 OK: /pricing avoids COA/GL/QBO abbreviations in visible copy")
 
 
-def t6_pricing_drops_custom_and_old_amounts():
-    """User revised pricing: Custom column removed; old fixed-price
-    amounts retired. The Complete tier is now quote-based."""
+def t6_pricing_shows_no_public_dollar_amounts():
     r = _get("/pricing")
     body = r.get_data(as_text=True)
-    visible = re.sub(r"<[^>]+>", " ", body)
-
-    # No "Custom" card / column on the pricing page.
-    assert not re.search(r"\bCustom\b", visible), (
-        "/pricing still surfaces a 'Custom' tier/column — it should be removed"
+    # No bare dollar figure should appear anywhere in the page body.
+    assert not re.search(r"\$\s?\d", body), (
+        "/pricing must not surface any public dollar amount"
     )
-    # The retired "5-Year History" label should be gone — replaced by
-    # the cleaner "Complete" tier wording.
-    assert "5-Year History" not in visible, (
-        "/pricing still shows the retired '5-Year History' label"
-    )
-    assert "Up to 5 Years" not in visible, (
-        "/pricing still shows the retired 'Up to 5 Years' framing"
-    )
-    # The old base amounts must not appear (Complete is quote-based now,
-    # so $1,999 in particular must not resurface). Note: $999 is now the
-    # live Essential price, so it is intentionally NOT in this stale list.
-    for stale_amount in ("$499", "$1,999"):
-        assert stale_amount not in body, (
-            f"/pricing still references retired amount {stale_amount}"
-        )
-    print("T6 OK: /pricing has no Custom column and no retired amounts/labels")
+    print("T6 OK: /pricing shows no public dollar amounts")
 
 
-def t7_pricing_renders_exactly_three_tier_cards():
+def t7_pricing_has_discovery_cta_and_precall_form_copy():
     r = _get("/pricing")
     body = r.get_data(as_text=True)
-    tier_cards = re.findall(r'class="pricing-tier(?:\s|")', body)
-    assert len(tier_cards) == 3, (
-        f"/pricing should render exactly 3 .pricing-tier cards, found {len(tier_cards)}"
-    )
-    print("T7 OK: /pricing renders exactly three pricing-tier cards")
-
-
-def t8_stylesheet_centers_three_column_grid():
-    css_path = ROOT / "static" / "style.css"
-    css = css_path.read_text()
-
-    # Locate the .pricing-tiers rule and inspect its declarations.
-    m = re.search(r"\.pricing-tiers\s*\{([^}]*)\}", css)
-    assert m, "could not find .pricing-tiers rule in style.css"
-    rule = m.group(1)
-    assert "repeat(3," in rule, (
-        ".pricing-tiers must use a 3-column grid on desktop "
-        "(found no repeat(3,...) in the rule)"
-    )
-    assert "margin: 0 auto" in rule or "margin:0 auto" in rule, (
-        ".pricing-tiers must be centered horizontally (margin: 0 auto)"
-    )
-
-    # Guard against the legacy 4-column rule resurfacing.
-    assert "repeat(4," not in rule, (
-        ".pricing-tiers must not declare a 4-column grid"
-    )
-
-    # A narrow-viewport rule must collapse pricing-tiers to a single column
-    # so three cards never end up as 2+1 with an orphan on the second row.
-    narrow_block = re.search(
-        r"@media\s*\(max-width:\s*1020px\)\s*\{([^@}]*\}[^@]*)*?\}",
-        css,
-        re.DOTALL,
-    )
-    assert narrow_block, "expected a max-width: 1020px responsive block"
-    # Search the whole post-1020px area for pricing-tiers collapsing to 1fr.
-    after_1020 = css[narrow_block.start():]
-    assert re.search(
-        r"\.pricing-tiers\s*\{[^}]*grid-template-columns:\s*1fr",
-        after_1020,
-    ), ".pricing-tiers should collapse to a single column at <=1020px"
-    print("T8 OK: stylesheet centers pricing grid and collapses cleanly on narrow viewports")
+    assert "pricing-cta-book-discovery" in body, \
+        "/pricing should have a 'Book a discovery call' CTA"
+    assert "Book a discovery call" in body
+    assert "Calendly" in body, "/pricing should mention the Calendly booking form"
+    # The CTA falls back to the in-app request form when DISCOVERY_CALL_URL
+    # is unset (test env), so the form route is present.
+    assert "/pricing/quote-request" in body, \
+        "/pricing discovery CTA should fall back to the request form when unset"
+    print("T7 OK: /pricing has a discovery-call CTA and Calendly pre-call messaging")
 
 
 if __name__ == "__main__":
     try:
-        t1_pricing_renders_with_packages_and_faq()
+        t1_pricing_renders_with_quote_on_call_framing()
         t2_pricing_avoids_firm_size_language()
-        t3_landing_has_pricing_section_linking_to_pricing_page()
+        t3_landing_explains_quote_from_call_and_links_to_pricing()
         t4_pricing_reachable_for_authenticated_users()
         t5_pricing_avoids_jargon_abbreviations()
-        t6_pricing_drops_custom_and_old_amounts()
-        t7_pricing_renders_exactly_three_tier_cards()
-        t8_stylesheet_centers_three_column_grid()
+        t6_pricing_shows_no_public_dollar_amounts()
+        t7_pricing_has_discovery_cta_and_precall_form_copy()
         print("\nALL PRICING-PAGE SMOKE TESTS PASSED")
     finally:
         for path in (APP_DB, HIST_DB):

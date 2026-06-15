@@ -42,22 +42,24 @@ SELECTABLE_PLANS = ("essential", "standard", "complete")
 
 
 # ---------------------------------------------------------------------------
-# Plan pricing + what's included
+# Plan context + what's included
 #
-# Single source of truth for the customer-facing price/quote and the plain
-# list of what each base plan covers, shown on the purchase/intake page. The
-# numbers mirror the /pricing cards and stripe_checkout's plan registry:
-#   Essential  $999    Current year
-#   Standard   $1,499  Up to 3 years (most common)
-#   Complete   Quote   3+ years of history (quote-based, not Stripe)
+# Plans are an INTERNAL scoping label only — they describe how much history a
+# firm wants moved, so the team and operator panel can categorize an intake.
+# We do NOT show a public price for any plan: pricing is given on the
+# discovery call after we scope the migration. `price_display` is intentionally
+# "Quote on discovery call" for every plan so nothing in customer-facing copy
+# or emails surfaces a dollar amount.
 # ---------------------------------------------------------------------------
+
+QUOTE_ON_CALL = "Quote on discovery call"
 
 PLAN_DETAILS = {
     "essential": {
         "name": "Essential",
         "tagline": "Current year",
-        "price_display": "$999",
-        "is_quote": False,
+        "price_display": QUOTE_ON_CALL,
+        "is_quote": True,
         "includes": (
             "Guided upload of your PCLaw reports",
             "QuickBooks connection",
@@ -68,8 +70,8 @@ PLAN_DETAILS = {
     "standard": {
         "name": "Standard",
         "tagline": "Up to 3 years",
-        "price_display": "$1,499",
-        "is_quote": False,
+        "price_display": QUOTE_ON_CALL,
+        "is_quote": True,
         "includes": (
             "Everything in Essential",
             "Up to 3 years of history",
@@ -80,7 +82,7 @@ PLAN_DETAILS = {
     "complete": {
         "name": "Complete",
         "tagline": "3+ years of history",
-        "price_display": "Quote",
+        "price_display": QUOTE_ON_CALL,
         "is_quote": True,
         "includes": (
             "Everything in Standard",
@@ -264,24 +266,24 @@ def _upload_summary_lines(uploads: list[dict]) -> list[str]:
 
 
 def _payment_block_customer(payment_status: Optional[str]) -> str:
-    """Customer-facing payment/receipt paragraph.
+    """Customer-facing pricing/next-step paragraph.
 
-    Receipt/confirmation wording appears ONLY when payment is genuinely
-    paid. Otherwise we plainly say payment is still being set up — we never
-    imply a charge happened when it didn't.
+    We never show a dollar amount or imply a charge. Pricing is given on the
+    discovery call after we scope the migration. The `payment_status` argument
+    is retained for the internal record but does not change customer copy
+    unless payment is genuinely confirmed paid (post-call, private link).
     """
     if is_paid(payment_status):
         return (
             "Payment\n"
             "  Your payment has been received — thank you. This email is your\n"
-            "  confirmation of payment. A full receipt will follow from our\n"
-            "  payment processor.\n"
+            "  confirmation of payment.\n"
         )
     return (
-        "Payment\n"
-        "  Your request is saved. Secure card payment will be connected\n"
-        "  shortly — we'll email you a secure link to complete it. You have\n"
-        "  not been charged yet, so this is not a receipt.\n"
+        "Pricing\n"
+        "  Your details are saved. We give you a quote on the discovery call\n"
+        "  once we've scoped your migration. You have not been charged yet,\n"
+        "  and this is not a receipt.\n"
     )
 
 
@@ -328,8 +330,10 @@ any files you uploaded.
 
 {plan_line}{clio_line}{upload_line}{payment_block}What happens next
   1. Our team reviews your information and your PCLaw reports.
-  2. We prepare your move into QuickBooks.
-  3. We start your migration on your Clio migration date.
+  2. We meet you on a short discovery call, scope the migration, and
+     give you a quote.
+  3. We prepare your move into QuickBooks and start on your Clio
+     migration date.
   4. We'll email you the next step.
 
 You don't need to do anything else right now.

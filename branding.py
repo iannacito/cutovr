@@ -35,6 +35,13 @@ PRIVACY_CONTACT_EMAIL = _env("PRIVACY_CONTACT_EMAIL", SUPPORT_EMAIL)
 # the deploy's PUBLIC_APP_URL; fall back to the marketing domain.
 PUBLIC_APP_URL = _env("PUBLIC_APP_URL", "https://www.cutovr.com").rstrip("/")
 
+# Calendly (or equivalent) booking link for the Cutovr discovery call. This is
+# the primary public CTA: a Clio rep (or the firm) books a call here, and the
+# booking form collects the pre-call details our team needs before meeting.
+# Empty by default so dev/staging never points at a real calendar — templates
+# fall back to the in-app request form when this is unset.
+DISCOVERY_CALL_URL = _env("DISCOVERY_CALL_URL", "")
+
 
 def is_placeholder_email(addr: str) -> bool:
     """Return True if the address is a deploy-default placeholder.
@@ -54,4 +61,5 @@ def context() -> dict:
         "security_email": SECURITY_EMAIL,
         "privacy_contact_email": PRIVACY_CONTACT_EMAIL,
         "public_app_url": PUBLIC_APP_URL,
+        "discovery_call_url": DISCOVERY_CALL_URL,
     }

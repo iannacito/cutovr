@@ -436,10 +436,12 @@ _FAQ: List[Tuple[str, List[Group], str]] = [
             (1, ["how much"]),
         ],
         (
-            "Pricing is a flat fee per migration with no subscription, based "
-            "on how much history you bring over: Essential (current year) is "
-            "$999, Standard (up to 3 years) is $1,499, and Complete (3+ years) "
-            "is quoted per firm. See the Pricing page for the full breakdown."
+            "Pricing is scoped per migration, because report quality, how much "
+            "history you bring over, and trust-accounting needs vary by firm. "
+            "We give you a quote on a short discovery call once we've scoped "
+            "the migration — book through the Calendly link on our site, where "
+            "the booking form collects the details we need first. See the "
+            "Pricing page for how it works."
         ),
     ),
     (
