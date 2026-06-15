@@ -1,22 +1,28 @@
 {% extends "_base.html" %}
-{% block title %}Request a quote &mdash; {{ app_name }}{% endblock %}
-{% block meta_description %}Request a Complete-tier migration quote: more than three years of history, larger file volumes, or complex multi-entity firms.{% endblock %}
+{% block title %}Send migration details &mdash; {{ app_name }}{% endblock %}
+{% block meta_description %}Send us the details of your PCLaw to QuickBooks migration. Our team reviews it and follows up to book a discovery call, where we scope the migration and give you a quote.{% endblock %}
 {% block content %}
+
+{% macro discovery_attrs() -%}
+href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_blank" rel="noopener"{% endif %}
+{%- endmacro %}
+
 <section class="page page--prose" data-testid="quote-request-page">
-  <p class="eyebrow">Pricing</p>
-  <h1 class="display">Request a <em>Complete-tier</em> quote.</h1>
+  <p class="eyebrow">Get started</p>
+  <h1 class="display">Send us your <em>migration details</em>.</h1>
   <p class="muted">
-    Complete is for firms bringing more than three years of history,
-    larger transaction volumes, or anything that doesn't fit our flat
-    Essential or Standard tiers. Tell us a bit about the migration and
-    we'll come back with a price.
+    The fastest path is to <a {{ discovery_attrs() }} data-testid="quote-book-discovery">book a discovery call</a> &mdash;
+    the Calendly form collects what we need before we meet, and we scope the
+    migration and give you a quote on the call. Prefer to send the details
+    first? Tell us a little about the migration below and our team will review
+    it and follow up.
   </p>
 
   {% if submitted %}
     <div class="card" data-testid="quote-request-success" style="margin-top:var(--space-5);border-color:var(--color-success,#1f7a4d);">
       <h2>Thanks &mdash; we've got it.</h2>
       <p>
-        We received your quote request{% if reference %} (reference <code>{{ reference }}</code>){% endif %}.
+        We received your migration details{% if reference %} (reference <code>{{ reference }}</code>){% endif %}.
         {% if email_sent %}
           A confirmation has been forwarded to our team.
         {% else %}
@@ -25,9 +31,9 @@
         {% endif %}
       </p>
       <p>
-        While you wait, you can browse the <a href="{{ url_for('onboarding') }}">onboarding guide</a> or
-        <a href="{{ url_for('signup') }}">create a workspace</a> to get a head start &mdash; you only pay
-        when the migration is ready to send to QuickBooks.
+        To move faster, <a {{ discovery_attrs() }}>book a discovery call</a> &mdash;
+        our team will review your information beforehand and scope the
+        migration with you on the call.
       </p>
     </div>
   {% else %}
@@ -53,9 +59,10 @@
         <select name="years_history" data-testid="quote-years-history">
           <option value="">Select&hellip;</option>
           {% set sel = form.years_history or '' %}
+          <option value="0-1"   {% if sel == '0-1'   %}selected{% endif %}>Current year</option>
+          <option value="1-3"   {% if sel == '1-3'   %}selected{% endif %}>1&ndash;3 years</option>
           <option value="3-5"   {% if sel == '3-5'   %}selected{% endif %}>3&ndash;5 years</option>
-          <option value="5-10"  {% if sel == '5-10'  %}selected{% endif %}>5&ndash;10 years</option>
-          <option value="10+"   {% if sel == '10+'   %}selected{% endif %}>10+ years</option>
+          <option value="5+"    {% if sel == '5+'    %}selected{% endif %}>5+ years</option>
           <option value="other" {% if sel == 'other' %}selected{% endif %}>Other / not sure</option>
         </select>
       </label>
@@ -80,10 +87,10 @@
       {% endif %}
 
       <button type="submit" class="btn btn-primary btn-lg" data-testid="quote-submit">
-        Send quote request
+        Send migration details
       </button>
       <p class="muted" style="font-size:.85rem;">
-        We use this only to send you a quote. See the
+        We use this only to follow up about your migration. See the
         <a href="{{ url_for('privacy') }}">Privacy Policy</a> for how we
         handle your contact info.
       </p>

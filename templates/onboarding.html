@@ -237,14 +237,17 @@
         <a class="btn btn-link" href="{{ url_for('quickbooks_manage') }}">QuickBooks connections</a>
       </div>
     {% else %}
-      {# Logged-out prospects see a single clear next step. The
-         in-app links above only work for signed-in firm admins, so
-         we hide them rather than redirecting visitors to the login
-         wall when they click 'QuickBooks connections'. #}
+      {# Logged-out prospects see the discovery-call path first — this is a
+         done-for-you service, so the next step is booking a call, not
+         self-serve signup. The in-app links above only work for signed-in
+         firm admins, so we hide them from visitors. #}
       <div class="actions-row">
-        <a class="btn btn-primary btn-lg" href="{{ url_for('signup') }}">
-          Create your firm workspace &rarr;
+        <a class="btn btn-primary btn-lg"
+           href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_blank" rel="noopener"{% endif %}
+           data-testid="onboarding-book-discovery">
+          Book a discovery call &rarr;
         </a>
+        <a class="btn btn-secondary" href="{{ url_for('quote_request') }}">Send migration details</a>
         <a class="btn btn-link" href="{{ url_for('login') }}">Sign in</a>
       </div>
     {% endif %}

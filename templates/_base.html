@@ -59,7 +59,7 @@
           <a href="{{ url_for('security_page') }}">Security</a>
           <a href="{{ url_for('support') }}">Support</a>
           <a href="{{ url_for('login') }}">Sign in</a>
-          <a href="{{ url_for('onboarding') }}" class="btn btn-primary" style="padding:.55rem 1rem;" data-testid="nav-get-started">Get started</a>
+          <a href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_blank" rel="noopener"{% endif %} class="btn btn-primary" style="padding:.55rem 1rem;" data-testid="nav-get-started">Book a discovery call</a>
         {% endif %}
       </nav>
     </div>

@@ -33,23 +33,25 @@ PREVIEW_SUBCOPY = (
 # ---------------------------------------------------------------------------
 # Plan cards (Step 1)
 #
-# Pricing is history-based, not firm-size-based, matching stripe_checkout.py.
-# There are exactly three plans, chosen by how much history is migrated:
-#   Essentials  $999    Current year
-#   Standard    $1,499  Up to three years  (most common)
-#   Complete    Quote   Three or more years
+# Plans are history-based, chosen by how much history is migrated. They are
+# an internal scoping label only — we do NOT show a public dollar amount.
+# Pricing is given on the discovery call after we scope the migration:
+#   Essentials  Current year
+#   Standard    Up to three years  (most common)
+#   Complete    Three or more years
 #
-# `slug` maps to stripe_checkout.BASE_PLANS for the configured base plans so
-# the "Continue to secure payment" CTA can route to the existing Stripe flow.
-# Complete is quote-based and has no Stripe slug — it routes to a quote.
+# `slug` maps to stripe_checkout.BASE_PLANS for any future private payment
+# link. No public CTA exposes a price — the customer books a discovery call.
 # ---------------------------------------------------------------------------
+
+QUOTE_ON_CALL = "Quote on discovery call"
 
 PLAN_CARDS = (
     {
         "key": "essential",
         "slug": "essential",
         "name": "Essentials",
-        "price": "$999",
+        "price": QUOTE_ON_CALL,
         "period": "Current year",
         "summary": "Best for firms that only need this year moved over.",
         "covers": (
@@ -65,7 +67,7 @@ PLAN_CARDS = (
         "key": "standard",
         "slug": "standard",
         "name": "Standard",
-        "price": "$1,499",
+        "price": QUOTE_ON_CALL,
         "period": "Up to three years",
         "summary": "The default for most firms making the switch.",
         "covers": (
@@ -81,7 +83,7 @@ PLAN_CARDS = (
         "key": "complete",
         "slug": None,
         "name": "Complete",
-        "price": "Quote",
+        "price": QUOTE_ON_CALL,
         "period": "Three or more years",
         "summary": "For firms with a deeper historical record to bring across.",
         "covers": (

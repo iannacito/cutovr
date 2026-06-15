@@ -44,12 +44,15 @@ def t1_landing_renders_with_marketing_content():
     body = r.get_data(as_text=True)
 
     must_contain = [
-        # Hero / value prop — leads with hands-off, handled-for-you
-        # convenience (not speed/cost).
+        # Hero / value prop — done-for-you, scoped on a discovery call.
         "PCLaw",
         "QuickBooks",
-        "handled for you",
-        "answer a few questions",
+        "done-for-you",
+        "scoped with our team",
+        # Clio-led flow + Calendly pre-call form
+        "Clio",
+        "discovery call",
+        "Calendly",
         # Coverage section makes clear it's not GL-only
         "More than just the General Ledger",
         "Chart of Accounts",
@@ -57,34 +60,39 @@ def t1_landing_renders_with_marketing_content():
         "Trust",
         "A/R",
         "A/P",
-        # Process steps
+        # Process steps for the engagement
         "How it works",
-        "Export from PCLaw",
-        "Upload to",
-        "Validate",
-        "Connect QuickBooks",
-        "Review",
-        "Verify",
+        "Clio rep books the call",
+        "Calendly collects the details",
+        "scope it on the discovery call",
         # Comparison framing (defensible language)
         "consultant",
         "weeks",
-        "thousands",
-        "fraction of the cost",
         # CTAs
-        "Get started",
-        "Sign up",
+        "Book a discovery call",
+        "Send migration details",
     ]
     for needle in must_contain:
         assert needle in body, f"landing page missing expected copy: {needle!r}"
-    print("T1 OK: / renders landing page with hero, coverage, steps, compare, CTAs")
+    # No public dollar amounts anywhere on the landing page.
+    for amount in ("$999", "$1,499", "$1499"):
+        assert amount not in body, f"landing page must not show {amount!r}"
+    print("T1 OK: / renders landing page with discovery-call flow, coverage, steps, CTAs")
 
 
 def t2_landing_links_to_public_routes():
     r = _get("/")
     body = r.get_data(as_text=True)
-    for path in ("/signup", "/login", "/onboarding", "/support"):
+    # Landing now leads with the discovery-call flow: primary CTA books a
+    # call (Calendly, or the in-app request form when DISCOVERY_CALL_URL is
+    # unset), with login/support reachable. Pricing + support are linked too.
+    for path in ("/login", "/support", "/pricing"):
         assert f'href="{path}"' in body, f"landing page missing link to {path}"
-    print("T2 OK: landing links to /signup, /login, /onboarding, /support")
+    # The discovery CTA falls back to the in-app request form when no
+    # Calendly URL is configured (test env), so the form route is present.
+    assert "/pricing/quote-request" in body, \
+        "landing discovery CTA should fall back to the request form when unset"
+    print("T2 OK: landing links to /login, /support, /pricing, and the request-form fallback")
 
 
 def t3_public_routes_render_unauthenticated():

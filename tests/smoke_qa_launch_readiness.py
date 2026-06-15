@@ -52,37 +52,41 @@ def t1_landing_consultant_compare():
     body = r.get_data(as_text=True)
     assert "landing-consultant-compare" in body, \
         "landing should expose consultant compare block via data-testid"
-    # Positioning leads with hands-off convenience: the consultant
+    # Positioning leads with done-for-you convenience: the consultant
     # comparison is framed around the manual back-and-forth a firm avoids,
-    # not a speed/cost headline. Cost stays present only as a secondary,
-    # plain-English note ("a fraction of the cost", "thousands").
+    # scoped on a single discovery call. No public dollar amount.
     assert "handled for you" in body, \
-        "landing compare should lead with hands-off, handled-for-you framing"
-    assert "fraction of the cost" in body, \
-        "landing should keep cost as a secondary note, not the headline"
-    assert "From $999" in body, "landing should anchor Cutovr from-price"
-    print("T1 OK: landing consultant comparison leads with hands-off framing")
+        "landing compare should lead with done-for-you framing"
+    assert "discovery call" in body.lower(), \
+        "landing should frame the engagement around a discovery call"
+    assert "$999" not in body and "$1,499" not in body, \
+        "landing must not show public dollar amounts"
+    print("T1 OK: landing consultant comparison leads with done-for-you framing, no price")
 
 
-def t2_landing_price_anchor():
+def t2_landing_no_public_price():
     r = _get("/")
     body = r.get_data(as_text=True)
-    assert "landing-price-anchor" in body
-    assert "From $999" in body
-    assert "no subscription" in body
-    print("T2 OK: landing has hero price anchor")
+    # Pricing is no longer anchored on the landing page; the quote comes from
+    # the discovery call. Guard against any public dollar amount returning.
+    for amount in ("$999", "$1,499", "$1499", "From $999"):
+        assert amount not in body, f"landing must not show {amount!r}"
+    assert "landing-pricing-quote-note" in body, \
+        "landing pricing section should explain the quote comes from the call"
+    print("T2 OK: landing shows no public price; quote comes from the discovery call")
 
 
-def t3_landing_scope_qualifier():
+def t3_landing_precall_form_messaging():
     r = _get("/")
     body = r.get_data(as_text=True)
-    # The hero qualifier scopes the offer to supported PCLaw CSV exports
-    # and reinforces the hands-off promise ("we do the work") rather than
-    # leading with a turnaround-time claim.
-    assert "landing-hour-qualifier" in body
-    assert "supported PCLaw CSV exports" in body
-    assert "accounting-heavy parts" in body
-    print("T3 OK: landing scope qualifier reinforces hands-off framing")
+    # The hero explains the Clio-led flow and that Calendly collects the
+    # pre-call details before the discovery call.
+    assert "landing-precall-note" in body
+    assert "calendly" in body.lower(), \
+        "landing should reference the Calendly booking form"
+    assert "before we" in body.lower(), \
+        "landing should say Calendly collects details before we meet"
+    print("T3 OK: landing explains the Calendly pre-call form")
 
 
 def t4_landing_no_public_sandbox_claim():
@@ -254,8 +258,8 @@ def t13_signup_post_signup_expectations():
 if __name__ == "__main__":
     try:
         t1_landing_consultant_compare()
-        t2_landing_price_anchor()
-        t3_landing_scope_qualifier()
+        t2_landing_no_public_price()
+        t3_landing_precall_form_messaging()
         t4_landing_no_public_sandbox_claim()
         t5_security_page_renders()
         t6_about_page_renders()
