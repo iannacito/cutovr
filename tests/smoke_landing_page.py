@@ -13,6 +13,8 @@ Covers:
   T4 An authenticated visitor on / is redirected to /dashboard
      (so we don't break the protected flow).
   T5 The landing page does NOT contain the legacy product name "Cutover".
+  T6 The landing page shows the three-step journey (Book a discovery call,
+     Get a quote, Have your data migrated) with no public pricing amounts.
 """
 
 import os
@@ -151,6 +153,44 @@ def t5_landing_has_no_legacy_cutover_branding():
     print("T5 OK: landing page does not show legacy Cutover product name")
 
 
+def t6_landing_shows_three_step_journey_without_pricing():
+    r = _get("/")
+    assert r.status_code == 200, f"GET / -> {r.status_code}"
+    body = r.get_data(as_text=True)
+
+    # The three-step journey is visible to any visitor (no sign-in / buy-in).
+    assert 'data-testid="landing-three-steps"' in body, \
+        "landing page missing the three-step journey section"
+    for testid in ("journey-step-1", "journey-step-2", "journey-step-3"):
+        assert f'data-testid="{testid}"' in body, \
+            f"three-step journey missing node {testid!r}"
+
+    # Explicit, labelled steps in the right order.
+    must_contain = [
+        "Step 1",
+        "Book a discovery call",
+        "Share a few details so our team can prepare.",
+        "Step 2",
+        "Get a quote",
+        "We scope the migration and provide a clear quote on the call.",
+        "Step 3",
+        "Have your data migrated",
+    ]
+    for needle in must_contain:
+        assert needle in body, f"three-step journey missing copy: {needle!r}"
+
+    s1 = body.index("Step 1")
+    s2 = body.index("Step 2")
+    s3 = body.index("Step 3")
+    assert s1 < s2 < s3, "three-step journey steps must appear in order 1, 2, 3"
+
+    # No public dollar amounts introduced anywhere on the page.
+    import re
+    assert not re.search(r"\$\s*\d", body), \
+        "three-step journey must not introduce public pricing amounts"
+    print("T6 OK: three-step journey renders with labelled steps and no public pricing amounts")
+
+
 if __name__ == "__main__":
     try:
         t1_landing_renders_with_marketing_content()
@@ -158,6 +198,7 @@ if __name__ == "__main__":
         t3_public_routes_render_unauthenticated()
         t4_authenticated_user_redirected_to_dashboard()
         t5_landing_has_no_legacy_cutover_branding()
+        t6_landing_shows_three_step_journey_without_pricing()
         print("\nALL LANDING-PAGE SMOKE TESTS PASSED")
     finally:
         for path in (APP_DB, HIST_DB):

@@ -706,6 +706,100 @@ details.quiet > *:not(summary) { margin-top: var(--space-3); }
   line-height: 1.6;
 }
 
+/* Three-step journey — node cards with a subtle connecting line ------- */
+.landing-journey {
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-2);
+}
+.landing-journey__inner {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: var(--space-16) var(--space-6);
+  text-align: center;
+}
+.landing-journey__title {
+  font-size: clamp(1.7rem, 3vw, 2.4rem);
+  line-height: 1.2;
+  margin: 0 0 var(--space-12);
+}
+.landing-journey__steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-8);
+  position: relative;
+}
+/* Connecting line runs behind the nodes, aligned to their centers. */
+.landing-journey__steps::before {
+  content: "";
+  position: absolute;
+  top: 32px;            /* half of the 64px node */
+  left: calc(16.66% + 16px);
+  right: calc(16.66% + 16px);
+  height: 1px;
+  background: var(--line-strong);
+  z-index: 0;
+}
+.journey-step {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 0 var(--space-3);
+}
+.journey-step__node {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: var(--space-5);
+  box-shadow: 0 1px 2px rgba(21, 23, 26, 0.04);
+}
+.journey-step__icon {
+  width: 26px;
+  height: 26px;
+}
+.journey-step__num {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-family: var(--font-serif);
+  font-size: .95rem;
+  font-weight: 600;
+  font-style: italic;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.journey-step__label {
+  font-size: 1.1rem;
+  margin: 0 0 var(--space-2);
+  max-width: 22ch;
+}
+.journey-step__copy {
+  margin: 0;
+  font-size: .95rem;
+  color: var(--ink-muted);
+  line-height: 1.6;
+  max-width: 30ch;
+}
+
 /* Comparison — two simple panels -------------------------------------- */
 .landing-compare {
   display: grid;
@@ -1209,6 +1303,10 @@ a.landing-pricing__card:focus-visible {
   .landing-hero__bullets { grid-template-columns: 1fr; gap: var(--space-5); }
   .landing-section__inner { padding: var(--space-16) var(--space-6); }
   .landing-steps { grid-template-columns: 1fr; }
+  .landing-journey__inner { padding: var(--space-12) var(--space-6); }
+  .landing-journey__steps { grid-template-columns: 1fr; gap: var(--space-8); }
+  /* Stack vertically; drop the horizontal connector. */
+  .landing-journey__steps::before { display: none; }
   .landing-compare { grid-template-columns: 1fr; }
   .landing-cta__inner { padding: var(--space-16) var(--space-6); }
   .landing-pricing { grid-template-columns: 1fr; }
@@ -1221,6 +1319,7 @@ a.landing-pricing__card:focus-visible {
   .landing-hero__ctas .btn-lg { width: 100%; text-align: center; justify-content: center; }
   .landing-hero__signin { width: 100%; text-align: center; }
   .landing-section__inner { padding: var(--space-12) var(--space-4); }
+  .landing-journey__inner { padding: var(--space-12) var(--space-4); }
   .landing-coverage { grid-template-columns: 1fr; gap: var(--space-5); }
   .landing-step { flex-direction: row; gap: var(--space-3); }
   .landing-compare__col { padding: var(--space-6); }
