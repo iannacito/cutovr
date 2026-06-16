@@ -6870,10 +6870,6 @@ def _import_to_qbo_impl(job_id):
             job["unmapped_accounts"] = None
             job["unmapped_account_guidance"] = None
             job["last_error"] = None
-            _record_checkpoint(job, job_id, job_checkpoints.COMPLETED)
-            _save_job(job_id)
-            _audit("import_success", target_type="job", target_id=job_id,
-                   details=f"{len(created)} JEs, debit=${source_debit}, credit=${source_credit}")
             job["qbo_results"] = created
             job["import_summary"] = {
                 "source_transaction_count": len(txn_ids),
@@ -6882,6 +6878,14 @@ def _import_to_qbo_impl(job_id):
                 "source_credit_total": str(source_credit),
                 "balanced": source_debit == source_credit,
             }
+            _record_checkpoint(job, job_id, job_checkpoints.COMPLETED)
+            # Persist status + qbo_results + import_summary before any
+            # further network calls. If Gunicorn times out during the
+            # best-effort verify below, this first save guarantees Step 6
+            # can see the completed import on the next page load.
+            _save_job(job_id)
+            _audit("import_success", target_type="job", target_id=job_id,
+                   details=f"{len(created)} JEs, debit=${source_debit}, credit=${source_credit}")
             flash(
                 "Your migration is in QuickBooks. "
                 "Open the final balance check when you're ready.",
@@ -6897,8 +6901,8 @@ def _import_to_qbo_impl(job_id):
                     "status": "error",
                     "error": str(ve),
                 }
-            # Persist the full success snapshot (status + qbo_results +
-            # import_summary + verification) so the job survives a restart.
+            # Persist verification result (if any) — import_summary is
+            # already safely in SQLite from the first save above.
             _save_job(job_id)
         else:
             # Fallback for the simple flat sample CSV (no transaction_id):
