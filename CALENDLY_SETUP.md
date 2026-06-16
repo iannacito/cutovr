@@ -15,7 +15,8 @@ into its own database and an operator **Leads** view.
 
 The prospect still receives Calendly's own confirmation email. Cutovr can
 optionally send an additional branded "we received your details" email
-(off by default — see `CALENDLY_CONFIRMATION_EMAIL`).
+(off by default — see `CALENDLY_CONFIRMATION_EMAIL`). Customer-facing emails
+point prospects at **support@cutovr.com** for any follow-up.
 
 ## One-time setup (Dan)
 
@@ -69,6 +70,7 @@ in `CALENDLY_WEBHOOK_SIGNING_KEY` (below) so Cutovr can verify each delivery.
 | `CALENDLY_API_TOKEN` | Optional | Personal Access Token used to *enrich* a booking by fetching the full invitee record (incl. all question answers) from the Calendly API. If unset, Cutovr stores whatever the webhook payload provides and marks enrichment `skipped`. |
 | `CALENDLY_CONFIRMATION_EMAIL` | Optional | Set to `1` to also send a Cutovr-branded "we received your details" email to the prospect (in addition to Calendly's own confirmation). Off by default. Never sent for cancellations or when SMTP is unconfigured. |
 | `INTERNAL_INTAKE_EMAILS` | Recommended | Comma-separated internal recipients for the "new discovery call" notification. Falls back to `SUPPORT_EMAIL` if unset. |
+| `SUPPORT_EMAIL` | Recommended | Customer-facing contact mailbox. Set to `support@cutovr.com` in production. It's echoed in the optional prospect confirmation email and the team notification; when left at the deploy placeholder, the lead emails fall back to `support@cutovr.com`. |
 | `OPERATOR_EMAILS` | Required for Leads view | Allowlist of operator emails that can see `/operator/leads`. |
 | SMTP / `MAIL_*` vars | Recommended | Standard email config (see `email_sender.py`). Without it, leads are still captured; only the emails are skipped. |
 

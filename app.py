@@ -10035,7 +10035,7 @@ def _calendly_send_lead_emails(lead: dict) -> None:
         recipients = intake.internal_recipients(support)
         if recipients:
             subject, body = calendly_webhook.internal_email_bodies(
-                app_name=app_name, lead=lead
+                app_name=app_name, lead=lead, support_email=support
             )
             for addr in recipients:
                 email_sender.send_email(to=addr, subject=subject, body_text=body)
@@ -10049,9 +10049,11 @@ def _calendly_send_lead_emails(lead: dict) -> None:
         and lead.get("email")
     ):
         try:
+            # customer_email_bodies resolves a real contact mailbox (the
+            # Cutovr support address) when SUPPORT_EMAIL is still the deploy
+            # placeholder, so the prospect always has a way to reach us.
             subject, body = calendly_webhook.customer_email_bodies(
-                app_name=app_name, lead=lead,
-                support_email=(support if not branding.is_placeholder_email(support) else None),
+                app_name=app_name, lead=lead, support_email=support,
             )
             email_sender.send_email(to=lead["email"], subject=subject, body_text=body)
         except Exception:  # noqa: BLE001

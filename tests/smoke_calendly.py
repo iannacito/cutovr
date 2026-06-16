@@ -205,7 +205,37 @@ def t6_internal_email_includes_details():
     # Every question/answer present.
     assert "Law firm name: Prospect & Co LLP" in body
     assert "What do you want to migrate?: Full GL" in body
-    print("T6 OK: internal email includes meeting + all Q/A")
+    # Contact inbox falls back to the Cutovr support address when no real
+    # SUPPORT_EMAIL is supplied.
+    assert "support@cutovr.com" in body
+    print("T6 OK: internal email includes meeting + all Q/A + contact")
+
+
+def t6b_support_email_in_customer_and_contact_resolution():
+    # contact_email prefers a real configured address...
+    assert calendly_webhook.contact_email("hello@firm.test") == "hello@firm.test"
+    # ...and falls back to support@cutovr.com for placeholder/empty input.
+    assert calendly_webhook.contact_email("") == "support@cutovr.com"
+    assert calendly_webhook.contact_email(None) == "support@cutovr.com"
+    assert calendly_webhook.contact_email(
+        "support@your-domain.example"
+    ) == "support@cutovr.com"
+
+    # Customer confirmation email shows the Cutovr support address when the
+    # deploy still has the placeholder SUPPORT_EMAIL.
+    lead = calendly_webhook.extract_lead_fields(_created_payload())
+    _, body = calendly_webhook.customer_email_bodies(
+        app_name="Cutovr", lead=lead,
+        support_email="support@your-domain.example",
+    )
+    assert "support@cutovr.com" in body, body
+    # A real configured address is used verbatim (central config wins).
+    _, body2 = calendly_webhook.customer_email_bodies(
+        app_name="Cutovr", lead=lead, support_email="real@cutovr.com",
+    )
+    assert "real@cutovr.com" in body2
+    assert "support@cutovr.com" not in body2
+    print("T6b OK: support@cutovr.com used in customer copy + contact fallback")
 
 
 def _signup_operator(client):
@@ -228,6 +258,8 @@ def t7_operator_route_lists_and_blocks():
     body = r.get_data(as_text=True)
     assert "Dana Prospect" in body
     assert "Prospect &amp; Co LLP" in body or "Prospect & Co LLP" in body
+    # Admin help copy points operators at the Cutovr support inbox.
+    assert "support@cutovr.com" in body
 
     lead = appmod.db.get_calendly_lead_by_invitee(INVITEE_URI)
     rd = c.get(f"/operator/leads/{lead['id']}")
@@ -308,6 +340,7 @@ if __name__ == "__main__":
     t4_no_token_does_not_fail()
     t5_enrichment_path_mocked()
     t6_internal_email_includes_details()
+    t6b_support_email_in_customer_and_contact_resolution()
     t7_operator_route_lists_and_blocks()
     t8_no_secret_leaks()
     t9_signature_verification()

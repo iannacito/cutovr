@@ -66,6 +66,26 @@ log = logging.getLogger("calendly_webhook")
 CALENDLY_API_BASE = "https://api.calendly.com"
 _API_TIMEOUT_SECONDS = 6
 
+# Customer-facing contact address shown in the optional prospect
+# confirmation email when no real SUPPORT_EMAIL is configured (the deploy
+# default is a placeholder). Central support config still wins when set via
+# the SUPPORT_EMAIL env var / branding.SUPPORT_EMAIL.
+DEFAULT_SUPPORT_EMAIL = "support@cutovr.com"
+
+
+def contact_email(support_email: Optional[str]) -> str:
+    """Resolve the customer-facing contact address.
+
+    Prefers a real configured ``support_email``; falls back to the Cutovr
+    support mailbox when the caller passes nothing or a deploy-default
+    placeholder. Never returns an empty string so confirmation copy always
+    gives the prospect a way to reach us.
+    """
+    s = (support_email or "").strip()
+    if s and not s.endswith("@your-domain.example"):
+        return s
+    return DEFAULT_SUPPORT_EMAIL
+
 
 # ---------------------------------------------------------------------------
 # Config helpers (read at call time so tests can monkeypatch env)
@@ -375,12 +395,14 @@ def _format_qa_block(questions_json: Optional[str]) -> list[str]:
     return lines
 
 
-def internal_email_bodies(*, app_name: str, lead: dict) -> tuple[str, str]:
+def internal_email_bodies(*, app_name: str, lead: dict,
+                          support_email: Optional[str] = None) -> tuple[str, str]:
     """Build (subject, body_text) for the internal new-discovery-call alert.
 
     Includes the prospect name/email, firm, Clio rep, meeting time, and the
     full question/answer set so the team has the form details *before* the
-    call. Never includes any secret.
+    call. Never includes any secret. ``support_email`` is the inbox prospects
+    were told to use; it's echoed in the footer for the team's reference.
     """
     name = lead.get("name") or "(name not provided)"
     email = lead.get("email") or "(email not provided)"
@@ -419,6 +441,8 @@ def internal_email_bodies(*, app_name: str, lead: dict) -> tuple[str, str]:
     if lead.get("event_uri"):
         lines.append("")
         lines.append(f"Calendly event: {lead['event_uri']}")
+    lines.append("")
+    lines.append(f"Prospect contact inbox: {contact_email(support_email)}")
     return subject, "\n".join(lines)
 
 
@@ -429,8 +453,13 @@ def customer_email_bodies(*, app_name: str, lead: dict,
     Deliberately does NOT duplicate Calendly's own confirmation: it simply
     tells the prospect we received their details and will review them before
     the call. Safe to skip entirely when SMTP is unavailable.
+
+    The contact address is resolved via ``contact_email`` so the prospect
+    always gets a real mailbox (the Cutovr support address) even on a deploy
+    that hasn't overridden the placeholder SUPPORT_EMAIL.
     """
     first = (lead.get("name") or "there").split(" ")[0] or "there"
+    contact = contact_email(support_email)
     subject = f"We received your {app_name} discovery-call details"
     lines = [
         f"Hi {first},",
@@ -448,10 +477,9 @@ def customer_email_bodies(*, app_name: str, lead: dict,
         if lead.get("timezone"):
             when += f" ({lead['timezone']})"
         lines += ["", f"Your call is scheduled for: {when}"]
-    if support_email:
-        lines += [
-            "",
-            f"If anything changes, reply to this email or reach us at {support_email}.",
-        ]
+    lines += [
+        "",
+        f"If anything changes, reply to this email or reach us at {contact}.",
+    ]
     lines += ["", f"— The {app_name} team"]
     return subject, "\n".join(lines)
