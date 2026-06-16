@@ -79,14 +79,15 @@ def t2_landing_no_public_price():
 def t3_landing_precall_form_messaging():
     r = _get("/")
     body = r.get_data(as_text=True)
-    # The hero explains the Clio-led flow and that Calendly collects the
-    # pre-call details before the discovery call.
+    # The hero explains, simply, that the booking form asks for a few
+    # details before the call so the team can prepare — without making the
+    # Calendly/form mechanics the main story.
     assert "landing-precall-note" in body
     assert "calendly" in body.lower(), \
-        "landing should reference the Calendly booking form"
-    assert "before we" in body.lower(), \
-        "landing should say Calendly collects details before we meet"
-    print("T3 OK: landing explains the Calendly pre-call form")
+        "landing should reference the booking form"
+    assert "before the call" in body.lower(), \
+        "landing should say the booking form asks for details before the call"
+    print("T3 OK: landing explains the pre-call form simply")
 
 
 def t4_landing_no_public_sandbox_claim():

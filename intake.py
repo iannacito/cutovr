@@ -281,9 +281,8 @@ def _payment_block_customer(payment_status: Optional[str]) -> str:
         )
     return (
         "Pricing\n"
-        "  Your details are saved. We give you a quote on the discovery call\n"
-        "  once we've scoped your migration. You have not been charged yet,\n"
-        "  and this is not a receipt.\n"
+        "  Your details are saved. We'll provide a clear quote on the\n"
+        "  discovery call. You have not been charged yet, and this is not a receipt.\n"
     )
 
 
@@ -330,8 +329,8 @@ any files you uploaded.
 
 {plan_line}{clio_line}{upload_line}{payment_block}What happens next
   1. Our team reviews your information and your PCLaw reports.
-  2. We meet you on a short discovery call, scope the migration, and
-     give you a quote.
+  2. On a short discovery call, we review your migration and provide a
+     clear quote.
   3. We prepare your move into QuickBooks and start on your Clio
      migration date.
   4. We'll email you the next step.

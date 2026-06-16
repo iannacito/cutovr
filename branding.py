@@ -36,8 +36,8 @@ PRIVACY_CONTACT_EMAIL = _env("PRIVACY_CONTACT_EMAIL", SUPPORT_EMAIL)
 PUBLIC_APP_URL = _env("PUBLIC_APP_URL", "https://www.cutovr.com").rstrip("/")
 
 # Calendly (or equivalent) booking link for the Cutovr discovery call. This is
-# the primary public CTA: a Clio rep (or the firm) books a call here, and the
-# booking form collects the pre-call details our team needs before meeting.
+# the primary public CTA: the firm books a call here, and the booking form
+# collects a few pre-call details our team uses to prepare.
 # Empty by default so dev/staging never points at a real calendar — templates
 # fall back to the in-app request form when this is unset.
 DISCOVERY_CALL_URL = _env("DISCOVERY_CALL_URL", "")
