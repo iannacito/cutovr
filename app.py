@@ -2001,11 +2001,22 @@ def send_to_qbo_entry():
         )
         return redirect(url_for("dashboard"))
 
+    # Bug 26 fix: prefer the GL job that has already been imported.
+    # If the user uploads a new GL after a successful import, gl_jobs[0]
+    # would be the new (preflight-failed) job. Priority:
+    #   imported job  >  job with QBO connection  >  most recently uploaded
     primary = gl_jobs[0]
-    for job in gl_jobs:
-        if _get_qbo_connection(job["id"]):
-            primary = job
+    _pref_imported: "dict | None" = None
+    _pref_qbo: "dict | None" = None
+    for _row in gl_jobs[:20]:
+        _h = db.hydrate_job(_row["id"]) or _row
+        if _h.get("import_summary") and _pref_imported is None:
+            _pref_imported = _h
+        if _get_qbo_connection(_row["id"]) and _pref_qbo is None:
+            _pref_qbo = _row
+        if _pref_imported is not None and _pref_qbo is not None:
             break
+    primary = _pref_imported or _pref_qbo or gl_jobs[0]
 
     qbo_conn = _get_qbo_connection(primary["id"]) or {}
     if not qbo_conn:
@@ -2098,9 +2109,17 @@ def send_to_qbo_entry():
             # resolve the balance; preflight data is stale. Proceed.
 
     cutover, items, _next = _build_firm_checklist(firm_id)
+    # Bug 26 fix: when import is already complete, force the stepper to
+    # STAGE_RECONCILE — mirrors what _build_reconcile_view() already does.
+    _step5_already_imported = bool(
+        (db.hydrate_job(primary["id"]) or {}).get("import_summary")
+    )
     stages = customer_workflow.build_customer_stages(
         items, url_for=url_for, has_jobs=True,
         match_blocked=False,
+        force_current_stage=(
+            customer_workflow.STAGE_RECONCILE if _step5_already_imported else None
+        ),
     )
     current = customer_workflow.current_stage(stages)
     job = db.hydrate_job(primary["id"]) or primary
