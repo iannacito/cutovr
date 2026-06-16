@@ -333,8 +333,11 @@
           <thead>
             <tr>
               <th>PCLaw account</th>
-              <th>QuickBooks account</th>
-              <th>Match</th>
+              <th style="min-width:220px;">QuickBooks account</th>
+              <th>Match <button type="button" id="toggle-all-btn"
+                  onclick="toggleAllOverrides()"
+                  style="background:none;border:none;cursor:pointer;font-size:.85rem;color:var(--muted);padding:0 0 0 .3rem;line-height:1;"
+                  title="Expand / collapse all">&#8853;</button></th>
             </tr>
           </thead>
           <tbody>
@@ -415,20 +418,17 @@
                        interact with the row like an unmatched account. #}
                     {% if r.idx is defined and not r.is_system_calculated %}
                       <button class="btn btn-sm"
-                              type="submit"
-                              form="undo-form-{{ r.idx }}"
+                              type="button"
                               data-testid="row-undo-button-{{ r.idx }}"
-                              style="margin-left:.35rem;">
+                              style="margin-left:.35rem;"
+                              onclick="toggleMappingOverride({{ r.idx }})">
                         Change mapping
                       </button>
                     {% endif %}
-                    {# For suggestion rows, always show a category picker so users
-                       can override the auto-match and create a new account with
-                       a specific category. The inferred_type is never computed for
-                       suggestions (create-plan only runs on unmatched accounts),
-                       so we can't rely on creatable/needs_category — show the
-                       category picker unconditionally. #}
-                    <div style="margin:.35rem 0 0;">
+                    {# Override panel — hidden by default. Clicking "Change mapping"
+                       calls toggleMappingOverride() to reveal it. #}
+                    <div id="mapping-override-{{ r.idx }}"
+                         style="display:none;margin:.35rem 0 0;">
                       <label for="row-category-{{ r.idx }}"
                              style="display:block;margin:0 0 .25rem;font-size:.8rem;">
                         What kind of account is this? (to override the auto-match)
@@ -561,5 +561,22 @@
     {% endif %}
   </div>
   {% endif %}
+  <script>
+  (function () {
+    var expanded = false;
+    window.toggleMappingOverride = function (idx) {
+      var panel = document.getElementById('mapping-override-' + idx);
+      if (!panel) return;
+      panel.style.display = panel.style.display === 'none' ? '' : 'none';
+    };
+    window.toggleAllOverrides = function () {
+      expanded = !expanded;
+      var panels = document.querySelectorAll('[id^="mapping-override-"]');
+      panels.forEach(function (p) { p.style.display = expanded ? '' : 'none'; });
+      var btn = document.getElementById('toggle-all-btn');
+      if (btn) btn.innerHTML = expanded ? '&#8854;' : '&#8853;';
+    };
+  }());
+  </script>
 </section>
 {% endblock %}
