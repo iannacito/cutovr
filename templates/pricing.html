@@ -1,6 +1,6 @@
 {% extends "_base.html" %}
 {% block title %}{{ app_name }} &mdash; Pricing{% endblock %}
-{% block meta_description %}A done-for-you PCLaw to QuickBooks migration, scoped on a short discovery call. Your quote comes from that call, after we review your migration.{% endblock %}
+{% block meta_description %}A done-for-you PCLaw to QuickBooks migration, scoped and reviewed by our team. Book a discovery call and we'll provide a clear quote on the call.{% endblock %}
 {% block content %}
 
 {% macro discovery_attrs() -%}
@@ -15,10 +15,9 @@ href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_bla
     <p class="eyebrow">Pricing</p>
     <h1 class="display pricing-hero__title">Your quote comes from the discovery call.</h1>
     <p class="pricing-hero__lede" data-testid="pricing-quote-on-call">
-      {{ app_name }} is a done-for-you migration, so we price each one after
-      we&rsquo;ve scoped it with you on a short discovery call &mdash; not from
-      a fixed menu. You leave the call knowing exactly what your migration
-      costs.
+      {{ app_name }} is a done-for-you migration. After we understand your
+      migration on a short discovery call, we&rsquo;ll provide a clear quote
+      &mdash; so you leave the call knowing what it costs.
     </p>
   </div>
 </section>
@@ -30,7 +29,7 @@ href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_bla
     <h2 class="h-serif landing-section__title">No two firms migrate the same way.</h2>
     <p class="muted landing-section__lede">
       A few things change the shape &mdash; and the cost &mdash; of a
-      migration. We&rsquo;d rather look at them with you than guess at a
+      migration. We&rsquo;d rather review them with you than guess at a
       number up front.
     </p>
     <div class="grid-three landing-trust" style="margin-top:var(--space-5);">
@@ -49,8 +48,8 @@ href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_bla
     </div>
     <p class="muted" style="font-size:.9rem;margin-top:var(--space-5);max-width:62ch;">
       Because data complexity varies firm to firm, we scope your migration on
-      the discovery call and give you a quote right then &mdash; reviewed and
-      refined by our team, with no surprise invoice afterward.
+      the discovery call and provide a clear quote on the call &mdash;
+      reviewed by our team.
     </p>
   </div>
 </section>
@@ -65,21 +64,21 @@ href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_bla
         <span class="landing-step__num">01</span>
         <div>
           <h3>Book a discovery call</h3>
-          <p>Pick a time through Calendly. If a firm is moving to Clio, a Clio representative can book the call for them on the spot.</p>
+          <p>Pick a time that works for you. The booking form asks for a few details so our team can prepare.</p>
         </div>
       </li>
       <li class="landing-step">
         <span class="landing-step__num">02</span>
         <div>
-          <h3>Calendly collects the details first</h3>
-          <p>Before the call is confirmed, the booking form captures the details we need about the firm and its PCLaw reports, so we arrive prepared.</p>
+          <h3>We review your migration</h3>
+          <p>Our team reviews your reports and trust accounting, and scopes the work with you on the call.</p>
         </div>
       </li>
       <li class="landing-step">
         <span class="landing-step__num">03</span>
         <div>
-          <h3>We scope it and quote on the call</h3>
-          <p>Our team reviews the migration scope with you and gives a quote right then and there.</p>
+          <h3>You get a clear quote</h3>
+          <p>We provide a clear quote on the call, so you know the cost before any work begins.</p>
         </div>
       </li>
     </ol>
@@ -121,10 +120,9 @@ href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_bla
       <details class="pricing-faq__item">
         <summary>Do I need to know which reports to upload?</summary>
         <p>
-          No. The Calendly booking form and the discovery call walk you
-          through exactly which PCLaw reports help us most. If something is
-          missing or looks off, we flag it before anything is sent to
-          QuickBooks.
+          No. We walk you through which PCLaw reports help us most. If
+          something is missing or looks off, we flag it before anything is
+          sent to QuickBooks.
         </p>
       </details>
     </div>
@@ -139,9 +137,8 @@ href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_bla
       Let {{ app_name }} <em>handle the migration</em>.
     </h2>
     <p class="landing-cta__lede">
-      Book a short discovery call &mdash; the Calendly form gathers the
-      details we need first &mdash; and our team scopes the move and gives you
-      a quote on the call.
+      Book a discovery call. We&rsquo;ll review your migration needs and
+      provide a clear quote on the call.
     </p>
     <div class="landing-cta__buttons">
       <a class="btn btn-primary btn-lg" {{ discovery_attrs() }}

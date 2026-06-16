@@ -438,10 +438,9 @@ _FAQ: List[Tuple[str, List[Group], str]] = [
         (
             "Pricing is scoped per migration, because report quality, how much "
             "history you bring over, and trust-accounting needs vary by firm. "
-            "We give you a quote on a short discovery call once we've scoped "
-            "the migration — book through the Calendly link on our site, where "
-            "the booking form collects the details we need first. See the "
-            "Pricing page for how it works."
+            "Book a discovery call and we'll review your migration needs and "
+            "provide a clear quote on the call. See the Pricing page for how "
+            "it works."
         ),
     ),
     (

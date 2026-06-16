@@ -68,6 +68,12 @@ def t1_pricing_renders_with_quote_on_call_framing():
         assert needle in body, f"/pricing missing expected copy: {needle!r}"
     for amount in FORBIDDEN_AMOUNTS:
         assert amount not in body, f"/pricing must not show {amount!r}"
+    # Guard against the old "we don't price from a menu" style negation and
+    # other internal phrasing returning to public copy.
+    for phrase in ("priced menu", "fixed menu", "priced-menu", "commonly",
+                   "on the spot"):
+        assert phrase not in body, \
+            f"/pricing should not expose internal/awkward phrase: {phrase!r}"
     print("T1 OK: /pricing renders the quote-on-discovery-call framing, no dollar amounts")
 
 
@@ -157,18 +163,19 @@ def t6_pricing_shows_no_public_dollar_amounts():
     print("T6 OK: /pricing shows no public dollar amounts")
 
 
-def t7_pricing_has_discovery_cta_and_precall_form_copy():
+def t7_pricing_has_discovery_cta():
     r = _get("/pricing")
     body = r.get_data(as_text=True)
     assert "pricing-cta-book-discovery" in body, \
         "/pricing should have a 'Book a discovery call' CTA"
     assert "Book a discovery call" in body
-    assert "Calendly" in body, "/pricing should mention the Calendly booking form"
+    assert "provide a clear quote on the call" in body, \
+        "/pricing should keep the 'quote on the call' framing"
     # The CTA falls back to the in-app request form when DISCOVERY_CALL_URL
     # is unset (test env), so the form route is present.
     assert "/pricing/quote-request" in body, \
         "/pricing discovery CTA should fall back to the request form when unset"
-    print("T7 OK: /pricing has a discovery-call CTA and Calendly pre-call messaging")
+    print("T7 OK: /pricing has a discovery-call CTA and clear quote-on-call framing")
 
 
 if __name__ == "__main__":
@@ -179,7 +186,7 @@ if __name__ == "__main__":
         t4_pricing_reachable_for_authenticated_users()
         t5_pricing_avoids_jargon_abbreviations()
         t6_pricing_shows_no_public_dollar_amounts()
-        t7_pricing_has_discovery_cta_and_precall_form_copy()
+        t7_pricing_has_discovery_cta()
         print("\nALL PRICING-PAGE SMOKE TESTS PASSED")
     finally:
         for path in (APP_DB, HIST_DB):

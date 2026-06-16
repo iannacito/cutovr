@@ -77,10 +77,14 @@ def t1_form_renders():
         "What happens next",
         # Discovery-call / pre-call form messaging (no payment, no price).
         "Book a discovery call",
-        "Calendly booking form",
+        "Share a few details before the call",
         "Send migration details",
     ):
         assert needle in body, f"missing {needle!r} in /intake"
+    # Guard: keep internal/awkward process detail out of public intake copy.
+    for phrase in ("priced menu", "fixed menu", "commonly", "on the spot"):
+        assert phrase not in body, \
+            f"/intake should not expose internal/awkward phrase: {phrase!r}"
     # No raw card-collection inputs and no payment/checkout language here.
     assert 'name="card_number"' not in body and "cardnumber" not in body.lower(), \
         "intake must not collect raw card details"

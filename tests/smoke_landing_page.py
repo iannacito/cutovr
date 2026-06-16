@@ -44,15 +44,14 @@ def t1_landing_renders_with_marketing_content():
     body = r.get_data(as_text=True)
 
     must_contain = [
-        # Hero / value prop — done-for-you, scoped on a discovery call.
+        # Hero / value prop — done-for-you, scoped and reviewed by our team.
         "PCLaw",
         "QuickBooks",
         "done-for-you",
-        "scoped with our team",
-        # Clio-led flow + Calendly pre-call form
-        "Clio",
+        "scoped and reviewed by our team",
+        # Discovery-call flow (customer-facing, no internal process detail)
         "discovery call",
-        "Calendly",
+        "provide a clear quote on the call",
         # Coverage section makes clear it's not GL-only
         "More than just the General Ledger",
         "Chart of Accounts",
@@ -62,9 +61,9 @@ def t1_landing_renders_with_marketing_content():
         "A/P",
         # Process steps for the engagement
         "How it works",
-        "Clio rep books the call",
-        "Calendly collects the details",
-        "scope it on the discovery call",
+        "Book a discovery call",
+        "We review your migration",
+        "You get a clear quote",
         # Comparison framing (defensible language)
         "consultant",
         "weeks",
@@ -77,6 +76,13 @@ def t1_landing_renders_with_marketing_content():
     # No public dollar amounts anywhere on the landing page.
     for amount in ("$999", "$1,499", "$1499"):
         assert amount not in body, f"landing page must not show {amount!r}"
+    # Guard against internal/awkward process language returning to public copy.
+    for phrase in (
+        "priced menu", "fixed menu", "priced-menu", "commonly",
+        "on the spot", "same Zoom", "no back-and-forth", "surprise invoice",
+    ):
+        assert phrase not in body, \
+            f"landing page should not expose internal/awkward phrase: {phrase!r}"
     print("T1 OK: / renders landing page with discovery-call flow, coverage, steps, CTAs")
 
 
