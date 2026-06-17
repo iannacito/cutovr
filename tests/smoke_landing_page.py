@@ -48,7 +48,7 @@ def t1_landing_renders_with_marketing_content():
         # done-for-you positioning preserved in the value bullets.
         "PCLaw",
         "QuickBooks",
-        "Your PCLaw books, moved into QuickBooks",
+        "Your PC Law Data, moved into QuickBooks",
         "Done for you",
         "scoped and reviewed by our team",
         # Discovery-call flow (customer-facing, no internal process detail)
