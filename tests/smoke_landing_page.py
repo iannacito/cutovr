@@ -44,14 +44,16 @@ def t1_landing_renders_with_marketing_content():
     body = r.get_data(as_text=True)
 
     must_contain = [
-        # Hero / value prop — done-for-you, scoped and reviewed by our team.
+        # Hero / value prop — scoped and reviewed by our team, with the
+        # done-for-you positioning preserved in the value bullets.
         "PCLaw",
         "QuickBooks",
-        "done-for-you",
+        "Your PCLaw books, moved into QuickBooks",
+        "Done for you",
         "scoped and reviewed by our team",
         # Discovery-call flow (customer-facing, no internal process detail)
         "discovery call",
-        "provide a clear quote on the call",
+        "quote it on the call",
         # Coverage section makes clear it's not GL-only
         "More than just the General Ledger",
         "Chart of Accounts",
@@ -98,7 +100,18 @@ def t2_landing_links_to_public_routes():
     # Calendly URL is configured (test env), so the form route is present.
     assert "/pricing/quote-request" in body, \
         "landing discovery CTA should fall back to the request form when unset"
-    print("T2 OK: landing links to /login, /support, /pricing, and the request-form fallback")
+    # Hero CTAs must not compete: "Book a discovery call" is the single
+    # primary button; "Send migration details" is restyled as a quiet
+    # secondary link (btn-link), not a second primary/secondary button.
+    hero = body.split('class="landing-hero__ctas"', 1)[1].split("</section>", 1)[0]
+    assert 'data-testid="landing-book-discovery"' in hero
+    assert hero.count("btn-primary") == 1, \
+        "hero should have exactly one primary button"
+    send_anchor = hero.split('data-testid="landing-send-details"', 1)[0]
+    send_open = send_anchor.rsplit("<a", 1)[1]
+    assert "btn-link" in send_open and "btn-secondary" not in send_open, \
+        "hero 'Send migration details' should be a quiet link, not a competing button"
+    print("T2 OK: landing links to public routes; hero has one primary CTA + quiet secondary link")
 
 
 def t3_public_routes_render_unauthenticated():

@@ -14,25 +14,23 @@ href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_bla
   <div class="landing-hero__inner">
     <p class="eyebrow">PCLaw &rarr; QuickBooks</p>
     <h1 class="display landing-hero__title">
-      A done-for-you PCLaw to QuickBooks migration, <em>scoped and reviewed by our team</em>.
+      Your PCLaw books, moved into QuickBooks &mdash; <em>scoped and reviewed by our team</em>.
     </h1>
     <p class="landing-hero__lede">
-      We move your firm&rsquo;s accounting history out of PCLaw and into
-      QuickBooks. Book a discovery call &mdash; we&rsquo;ll review your
-      migration needs and provide a clear quote on the call.
+      Book a discovery call. We&rsquo;ll review what you&rsquo;re moving and
+      quote it on the call.
     </p>
     <div class="landing-hero__ctas">
       <a class="btn btn-primary btn-lg" {{ discovery_attrs() }}
          data-testid="landing-book-discovery">Book a discovery call</a>
-      <a class="btn btn-secondary btn-lg" href="{{ url_for('quote_request') }}"
+      <a class="btn btn-link btn-lg" href="{{ url_for('quote_request') }}"
          data-testid="landing-send-details">Send migration details</a>
       <a class="landing-hero__signin" href="{{ url_for('login') }}">Sign in</a>
     </div>
     <p class="landing-hero__qualifier muted"
        data-testid="landing-precall-note"
        style="font-size:.85rem;margin-top:var(--space-3);max-width:62ch;">
-      The Calendly booking form asks for a few details before the call, so
-      we can come prepared.
+      The booking form asks for a few details so we come prepared.
     </p>
     <ul class="landing-hero__bullets">
       <li>
@@ -41,7 +39,7 @@ href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_bla
       </li>
       <li>
         <strong>Reviewed by people</strong>
-        Every migration is checked and refined by our team before it lands.
+        Every migration is reviewed before it lands.
       </li>
       <li>
         <strong>Reversible</strong>
@@ -57,8 +55,8 @@ href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_bla
     <p class="eyebrow">How it works</p>
     <h2 class="h-serif landing-section__title">From a discovery call to a clean cutover.</h2>
     <p class="muted landing-section__lede">
-      You don&rsquo;t run the migration yourself. A short discovery call gives
-      us what we need; from there, our team does the work.
+      You don&rsquo;t run the migration. A short call gives us what we need,
+      and we take it from there.
     </p>
 
     <ol class="landing-steps">
@@ -80,7 +78,7 @@ href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_bla
         <span class="landing-step__num">03</span>
         <div>
           <h3>You get a clear quote</h3>
-          <p>We provide a clear quote on the call, so you know the cost before any work begins.</p>
+          <p>You&rsquo;ll know the cost before any work begins.</p>
         </div>
       </li>
       <li class="landing-step">
@@ -147,11 +145,10 @@ href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_bla
     <p class="eyebrow">Why {{ app_name }}</p>
     <h2 class="h-serif landing-section__title">The work, handled for you.</h2>
     <p class="muted landing-section__lede">
-      A traditional consultant-led migration means weeks of meetings, file
-      exchanges, and review cycles. {{ app_name }} is a done-for-you service:
-      after a short discovery call, our team prepares your reports, posts them
-      to QuickBooks, and reconciles the result &mdash; with the controls and
-      reversibility a finance-grade migration should have.
+      A consultant-led migration means weeks of meetings and file exchanges.
+      {{ app_name }} does it for you: after one call, we prepare your reports,
+      post them to QuickBooks, and reconcile the result &mdash; with the
+      controls and reversibility a finance-grade move needs.
     </p>
 
     <div class="landing-compare" data-testid="landing-consultant-compare">
@@ -255,8 +252,7 @@ href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_bla
       Let {{ app_name }} <em>handle the migration</em>.
     </h2>
     <p class="landing-cta__lede">
-      Book a discovery call. We&rsquo;ll review your migration needs and
-      provide a clear quote on the call.
+      Book a call &mdash; we&rsquo;ll scope it and quote it while you&rsquo;re on it.
     </p>
     <div class="landing-cta__buttons">
       <a class="btn btn-primary btn-lg" {{ discovery_attrs() }}
