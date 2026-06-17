@@ -2,9 +2,9 @@
 {% block title %}{{ app_name }} &mdash; PCLaw to QuickBooks migration, handled for you{% endblock %}
 {% block content %}
 
-{# Reusable discovery-call CTA. discovery_call_href resolves to the
-   configured Calendly link, or falls back to the in-app request form
-   when DISCOVERY_CALL_URL is unset, so the button never dead-ends. #}
+{# Reusable discovery-call CTA. discovery_call_href resolves to the in-app
+   booking page (/book-discovery-call), which embeds the Calendly widget, so
+   the button keeps visitors on the branded site. #}
 {% macro discovery_attrs() -%}
 href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_blank" rel="noopener"{% endif %}
 {%- endmacro %}

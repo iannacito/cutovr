@@ -150,10 +150,9 @@ def t7_quote_request_get():
     assert "Rough volume" in body
     assert "Approximate transaction or report volume" not in body, \
         "old volume label should be replaced"
-    # The "book a discovery call" link in the intro must NOT point back to
-    # this same page. With DISCOVERY_CALL_URL unset (test env) the central
-    # helper would otherwise fall back to /pricing/quote-request, so the
-    # page scrolls to its own form (#quote-form) instead of dead-ending.
+    # The "book a discovery call" link in the intro routes to the in-app
+    # booking page (the Calendly embed). It must NOT point back to this same
+    # request-form page.
     import re
     m = re.search(
         r'<a\s+href="([^"]+)"[^>]*data-testid="quote-book-discovery"', body
@@ -162,10 +161,10 @@ def t7_quote_request_get():
     href = m.group(1)
     assert href != "/pricing/quote-request", \
         "intro discovery link must not self-point to the current page"
-    assert href == "#quote-form", \
-        f"intro discovery link should scroll to the form when no Calendly URL set, got {href!r}"
+    assert href == "/book-discovery-call", \
+        f"intro discovery link should route to the in-app booking page, got {href!r}"
     assert 'id="quote-form"' in body, "form should expose the #quote-form anchor"
-    print("T7 OK: /pricing/quote-request GET renders form, new copy, no self-pointing link")
+    print("T7 OK: /pricing/quote-request GET renders form, new copy, links to the in-app booking page")
 
 
 def t8_quote_request_post_validation_and_success():
