@@ -68,9 +68,13 @@ def t1_onboarding_page_renders():
         "Download sample CSV template",
         # Production-ready guidance heading replaces the old beta disclaimer.
         "Before your first real run",
-        "Map accounts",
+        # Standardized on "Match accounts" (matches the in-app screen label).
+        "Match accounts",
     ):
         assert needle in body, f"missing {needle!r} in /onboarding"
+    # The page should no longer use the inconsistent "Map accounts" verb.
+    assert "Map accounts" not in body, \
+        "/onboarding should use 'Match accounts', not 'Map accounts'"
     assert "/onboarding/template.csv" in body
     assert "/onboarding/sample.csv" in body
     # The 'private beta guidance' parenthetical was removed for production

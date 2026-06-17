@@ -80,13 +80,13 @@ def t3_landing_precall_form_messaging():
     r = _get("/")
     body = r.get_data(as_text=True)
     # The hero explains, simply, that the booking form asks for a few
-    # details before the call so the team can prepare — without making the
-    # Calendly/form mechanics the main story.
+    # details so the team can come prepared — without making the booking
+    # mechanics (or the Calendly brand name) the main story.
     assert "landing-precall-note" in body
-    assert "calendly" in body.lower(), \
+    assert "booking form asks for a few details" in body, \
         "landing should reference the booking form"
-    assert "before the call" in body.lower(), \
-        "landing should say the booking form asks for details before the call"
+    assert "come prepared" in body.lower(), \
+        "landing should say the booking form helps the team come prepared"
     print("T3 OK: landing explains the pre-call form simply")
 
 
@@ -145,7 +145,27 @@ def t7_quote_request_get():
     assert "quote-email" in body
     assert "quote-years-history" in body
     assert "quote-submit" in body
-    print("T7 OK: /pricing/quote-request GET renders form")
+    # Trimmed intro + reworded volume label.
+    assert "Fastest path:" in body
+    assert "Rough volume" in body
+    assert "Approximate transaction or report volume" not in body, \
+        "old volume label should be replaced"
+    # The "book a discovery call" link in the intro must NOT point back to
+    # this same page. With DISCOVERY_CALL_URL unset (test env) the central
+    # helper would otherwise fall back to /pricing/quote-request, so the
+    # page scrolls to its own form (#quote-form) instead of dead-ending.
+    import re
+    m = re.search(
+        r'<a\s+href="([^"]+)"[^>]*data-testid="quote-book-discovery"', body
+    )
+    assert m, "intro discovery link should be present"
+    href = m.group(1)
+    assert href != "/pricing/quote-request", \
+        "intro discovery link must not self-point to the current page"
+    assert href == "#quote-form", \
+        f"intro discovery link should scroll to the form when no Calendly URL set, got {href!r}"
+    assert 'id="quote-form"' in body, "form should expose the #quote-form anchor"
+    print("T7 OK: /pricing/quote-request GET renders form, new copy, no self-pointing link")
 
 
 def t8_quote_request_post_validation_and_success():
