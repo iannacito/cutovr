@@ -1,0 +1,41 @@
+{% extends "_base.html" %}
+{% block title %}Book a discovery call &mdash; {{ app_name }}{% endblock %}
+{% block meta_description %}Book a discovery call with the {{ company_name }} team. Choose a time and we'll review your PCLaw to QuickBooks migration and scope it for you.{% endblock %}
+{% block content %}
+
+<section class="page page--prose" data-testid="book-discovery-call-page">
+  <p class="eyebrow">Get started</p>
+  <h1 class="display">Book a discovery call</h1>
+  <p class="muted">
+    Choose a time below. The booking form asks for a few details so our team
+    can prepare.
+  </p>
+
+  {% if calendly_url %}
+    {# Calendly inline widget. The widget script is allowed here via a
+       per-page CSP override set in the book_discovery_call route; it is not
+       loaded anywhere else in the app. #}
+    <div class="calendly-inline-widget"
+         data-testid="calendly-inline-widget"
+         data-url="{{ calendly_url }}"
+         style="min-width:320px;height:700px;margin-top:var(--space-5);"></div>
+    <script type="text/javascript"
+            src="https://assets.calendly.com/assets/external/widget.js" async></script>
+  {% else %}
+    {# No Calendly URL configured (e.g. dev/staging). Fall back to the in-app
+       request form so the page never dead-ends. #}
+    <div class="card" data-testid="book-discovery-call-fallback"
+         style="margin-top:var(--space-5);">
+      <p>
+        Online booking isn&rsquo;t available right now. Send us your migration
+        details and our team will follow up to set up a discovery call.
+      </p>
+      <p>
+        <a href="{{ url_for('quote_request') }}" class="btn btn-primary"
+           data-testid="book-discovery-call-fallback-cta">Send migration details</a>
+      </p>
+    </div>
+  {% endif %}
+</section>
+
+{% endblock %}

@@ -5,16 +5,18 @@ Run from project root:
     python3 tests/smoke_discovery_cta.py
 
 The public site no longer sells self-serve plans or shows dollar amounts.
-The primary CTA across the public pages books a discovery call. When
-DISCOVERY_CALL_URL is configured it points at that (external Calendly) link
-and opens in a new tab; when it is unset it falls back to the in-app
-"Send migration details" request form so the CTA is never dead.
+The primary CTA across the public pages books a discovery call. Every CTA
+now routes to the in-app booking page (/book-discovery-call), which embeds
+the Calendly inline widget. The CTA stays in-app (no new tab / external
+link), keeping visitors on the branded Cutovr site.
 
 Covers:
-  T1 With DISCOVERY_CALL_URL set, the public CTAs link to that URL and open
-     in a new tab (target/rel), on landing + pricing + intake.
-  T2 With DISCOVERY_CALL_URL unset, the same CTAs fall back to the in-app
-     request form (/pricing/quote-request) and do NOT open a new tab.
+  T1 The public CTAs link to the in-app booking route (/book-discovery-call)
+     on landing + pricing + intake, and do NOT open an external new tab.
+  T2 The booking page embeds the Calendly inline widget with the exact
+     data-url + widget.js script, and applies a CSP that allows Calendly.
+     When DISCOVERY_CALL_URL is unset the page falls back to the in-app
+     request form so it never dead-ends.
   T3 No public/customer-facing page surfaces a dollar amount or a
      checkout/payment CTA (landing, pricing, intake, quote-request,
      onboarding, intake success).
@@ -39,11 +41,13 @@ os.environ.setdefault("SECRET_KEY", "smoke-discovery-cta")
 FORBIDDEN_AMOUNTS = ("$999", "$1,499", "$1499", "$250", "$299", "$199", "$499")
 CHECKOUT_PHRASES = ("Continue to secure payment", "Add to cart", "Proceed to checkout")
 
-DISCOVERY_URL = "https://calendly.com/cutovr/discovery"
+DISCOVERY_URL = "https://calendly.com/cutovr-discovery-call/cutovr-discovery-call"
+BOOKING_ROUTE = "/book-discovery-call"
+WIDGET_SCRIPT = "https://assets.calendly.com/assets/external/widget.js"
 
 # Public, no-auth pages that must never show a price or a checkout CTA.
 PUBLIC_PAGES = ("/", "/pricing", "/intake", "/pricing/quote-request",
-                "/onboarding", "/pricing/checkout/success")
+                "/onboarding", "/pricing/checkout/success", BOOKING_ROUTE)
 
 
 def _reload_app():
@@ -58,30 +62,57 @@ def _reload_app():
     return appmod
 
 
-def t1_cta_uses_discovery_url_when_configured():
+def t1_ctas_route_to_in_app_booking_page():
     os.environ["DISCOVERY_CALL_URL"] = DISCOVERY_URL
     appmod = _reload_app()
     c = appmod.app.test_client()
     for path in ("/", "/pricing", "/intake"):
         body = c.get(path).get_data(as_text=True)
-        assert DISCOVERY_URL in body, f"{path} CTA should link to DISCOVERY_CALL_URL"
-        # The external link opens in a new tab safely.
-        assert 'target="_blank"' in body and 'rel="noopener"' in body, \
-            f"{path} external discovery CTA should open in a new tab with rel=noopener"
-    print("T1 OK: configured DISCOVERY_CALL_URL drives the CTA (new tab) on landing/pricing/intake")
+        assert BOOKING_ROUTE in body, \
+            f"{path} CTA should link to the in-app booking route {BOOKING_ROUTE}"
+        # The booking CTA stays in-app: it must NOT point straight at the
+        # external Calendly URL, and must not open a new tab.
+        assert DISCOVERY_URL not in body, \
+            f"{path} CTA should not link directly to the external Calendly URL"
+    print("T1 OK: public CTAs route to the in-app booking page (no external new tab)")
 
 
-def t2_cta_falls_back_to_request_form_when_unset():
-    os.environ.pop("DISCOVERY_CALL_URL", None)
+def t2_booking_page_embeds_calendly_widget():
+    os.environ["DISCOVERY_CALL_URL"] = DISCOVERY_URL
     appmod = _reload_app()
     c = appmod.app.test_client()
-    for path in ("/", "/pricing", "/intake"):
-        body = c.get(path).get_data(as_text=True)
-        assert "/pricing/quote-request" in body, \
-            f"{path} CTA should fall back to the in-app request form when unset"
-        assert DISCOVERY_URL not in body, \
-            f"{path} should not contain a stale external URL when unset"
-    print("T2 OK: unset DISCOVERY_CALL_URL falls back to the in-app request form")
+    r = c.get(BOOKING_ROUTE)
+    assert r.status_code == 200, f"{BOOKING_ROUTE} -> {r.status_code}"
+    body = r.get_data(as_text=True)
+    assert 'class="calendly-inline-widget"' in body, \
+        "booking page should render the Calendly inline widget div"
+    assert f'data-url="{DISCOVERY_URL}"' in body, \
+        "widget div should carry the exact DISCOVERY_CALL_URL as data-url"
+    assert WIDGET_SCRIPT in body, \
+        "booking page should include the Calendly widget.js script"
+    # CSP for this page must allow the Calendly script + frame.
+    csp = r.headers.get("Content-Security-Policy", "")
+    assert "assets.calendly.com" in csp, \
+        "booking-page CSP should allow the Calendly assets origin"
+    assert "calendly.com" in csp and "frame-src" in csp, \
+        "booking-page CSP should allow the Calendly iframe via frame-src"
+    print("T2a OK: booking page embeds the Calendly widget with the exact data-url + script and a permissive CSP")
+
+    # Fallback: if a deploy blanks the Calendly URL the page must not
+    # dead-end. The branding default is the real Calendly URL, so to exercise
+    # the empty case we blank it on the loaded module directly.
+    os.environ.pop("DISCOVERY_CALL_URL", None)
+    appmod = _reload_app()
+    appmod.branding.DISCOVERY_CALL_URL = ""
+    c = appmod.app.test_client()
+    r = c.get(BOOKING_ROUTE)
+    assert r.status_code == 200, f"{BOOKING_ROUTE} (blank) -> {r.status_code}"
+    body = r.get_data(as_text=True)
+    assert "calendly-inline-widget" not in body, \
+        "with no URL configured the page must not render an empty Calendly widget"
+    assert "/pricing/quote-request" in body, \
+        "with no URL configured the booking page should fall back to the request form"
+    print("T2b OK: with DISCOVERY_CALL_URL blank the booking page falls back to the request form")
 
 
 def t3_no_public_prices_or_checkout():
@@ -103,8 +134,8 @@ def t3_no_public_prices_or_checkout():
 
 if __name__ == "__main__":
     try:
-        t1_cta_uses_discovery_url_when_configured()
-        t2_cta_falls_back_to_request_form_when_unset()
+        t1_ctas_route_to_in_app_booking_page()
+        t2_booking_page_embeds_calendly_widget()
         t3_no_public_prices_or_checkout()
         print("\nALL DISCOVERY-CTA SMOKE TESTS PASSED")
     finally:

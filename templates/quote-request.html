@@ -3,12 +3,11 @@
 {% block meta_description %}Send us the details of your PCLaw to QuickBooks migration. Our team reviews it and follows up to book a discovery call, where we scope the migration and give you a quote.{% endblock %}
 {% block content %}
 
-{# On this page the "book a discovery call" link must not point back to the
-   page itself. When a real Calendly URL is configured we link to it; when it
-   is not (the helper would otherwise fall back to this same form), we scroll
-   to the form below instead of dead-ending on the current page. #}
+{# On this page the "book a discovery call" link routes to the in-app booking
+   page (the Calendly embed), which is a distinct page from this request form
+   so the link never points back at itself. #}
 {% macro discovery_attrs() -%}
-{% if discovery_call_is_external %}href="{{ discovery_call_href }}" target="_blank" rel="noopener"{% else %}href="#quote-form"{% endif %}
+href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_blank" rel="noopener"{% endif %}
 {%- endmacro %}
 
 <section class="page page--prose" data-testid="quote-request-page">
@@ -32,17 +31,10 @@
           so our team will reach out directly using the email you provided.
         {% endif %}
       </p>
-      {% if discovery_call_is_external %}
-        <p>
-          To move faster, <a {{ discovery_attrs() }}>book a discovery call</a> &mdash;
-          we&rsquo;ll review your details and quote it on the call.
-        </p>
-      {% else %}
-        <p>
-          We&rsquo;ll follow up to set up a discovery call, where we&rsquo;ll
-          review your details and quote it on the call.
-        </p>
-      {% endif %}
+      <p>
+        To move faster, <a {{ discovery_attrs() }}>book a discovery call</a> &mdash;
+        we&rsquo;ll review your details and quote it on the call.
+      </p>
     </div>
   {% else %}
     <form id="quote-form" method="post" action="{{ url_for('quote_request') }}" class="stack-md" style="margin-top:var(--space-5);">

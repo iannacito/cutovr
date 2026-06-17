@@ -35,12 +35,16 @@ PRIVACY_CONTACT_EMAIL = _env("PRIVACY_CONTACT_EMAIL", SUPPORT_EMAIL)
 # the deploy's PUBLIC_APP_URL; fall back to the marketing domain.
 PUBLIC_APP_URL = _env("PUBLIC_APP_URL", "https://www.cutovr.com").rstrip("/")
 
-# Calendly (or equivalent) booking link for the Cutovr discovery call. This is
-# the primary public CTA: the firm books a call here, and the booking form
-# collects a few pre-call details our team uses to prepare.
-# Empty by default so dev/staging never points at a real calendar — templates
-# fall back to the in-app request form when this is unset.
-DISCOVERY_CALL_URL = _env("DISCOVERY_CALL_URL", "")
+# Calendly booking link for the Cutovr discovery call. This is the URL the
+# in-app booking page (/book-discovery-call) embeds as a Calendly inline
+# widget. The primary public CTA across the app routes to that in-app page,
+# not directly to this external URL.
+# Defaults to the real Cutovr Calendly link so the booking page works without
+# extra deploy config; a deploy MAY override it via the DISCOVERY_CALL_URL env.
+DISCOVERY_CALL_URL = _env(
+    "DISCOVERY_CALL_URL",
+    "https://calendly.com/cutovr-discovery-call/cutovr-discovery-call",
+)
 
 
 def is_placeholder_email(addr: str) -> bool:
