@@ -10205,6 +10205,101 @@ def operator_lead_detail(lead_id):
     return render_template("operator-lead.html", lead=_calendly_lead_view(row))
 
 
+# Hints used to pull a Clio migration date out of the free-form Calendly
+# question answers, since it is not a first-class lead column.
+_MIGRATION_DATE_HINTS = ("migration date", "migrate date", "go live", "go-live",
+                         "target date", "cutover date", "clio date")
+
+
+def _calendly_lead_csv_row(row: dict) -> dict:
+    """Flatten one calendly_leads DB row into the export's column values.
+
+    Sources ``Clio Migration Date`` from the question answers (it is not a
+    stored column) and renders the questions/answers as a readable,
+    single-cell ``Q: A | Q: A`` string. Deliberately excludes the raw webhook
+    payload and any signing/secret material so the export carries only the
+    booking + form data.
+    """
+    try:
+        qa = json.loads(row.get("questions_json") or "[]")
+    except (ValueError, TypeError):
+        qa = []
+    if not isinstance(qa, list):
+        qa = []
+
+    migration_date = ""
+    qa_parts = []
+    for item in qa:
+        if not isinstance(item, dict):
+            continue
+        q = (item.get("question") or "").strip()
+        a = (item.get("answer") or "").strip()
+        qa_parts.append(f"{q}: {a}")
+        if not migration_date and any(h in q.lower() for h in _MIGRATION_DATE_HINTS):
+            migration_date = a
+
+    return {
+        "Lead ID": row.get("id"),
+        "Status": row.get("status") or "scheduled",
+        "Meeting Start": row.get("meeting_start") or "",
+        "Meeting End": row.get("meeting_end") or "",
+        "Timezone": row.get("timezone") or "",
+        "Name": row.get("name") or "",
+        "Email": row.get("email") or "",
+        "Phone": row.get("phone") or "",
+        "Law Firm / Company": row.get("firm_name") or "",
+        "Clio Rep Name": row.get("clio_rep_name") or "",
+        "Clio Rep Email": row.get("clio_rep_email") or "",
+        "Clio Migration Date": migration_date,
+        "Created At": row.get("created_at") or "",
+        "Updated At": row.get("updated_at") or "",
+        "Calendly Event URI": row.get("event_uri") or "",
+        "Invitee URI": row.get("invitee_uri") or "",
+        "Questions/Answers": " | ".join(qa_parts),
+    }
+
+
+_CALENDLY_CSV_COLUMNS = [
+    "Lead ID", "Status", "Meeting Start", "Meeting End", "Timezone",
+    "Name", "Email", "Phone", "Law Firm / Company",
+    "Clio Rep Name", "Clio Rep Email", "Clio Migration Date",
+    "Created At", "Updated At", "Calendly Event URI", "Invitee URI",
+    "Questions/Answers",
+]
+
+
+@app.route("/operator/leads.csv")
+@operator_required
+def operator_leads_csv():
+    """Export every captured Calendly lead as a spreadsheet (CSV).
+
+    One row per lead, all leads (no pagination), so it opens cleanly in
+    Excel / Google Sheets. Never includes the raw webhook payload or any
+    secret material — only booking metadata and the prospect's form answers.
+    """
+    rows = db.list_calendly_leads(limit=100_000)
+    buf = StringIO()
+    writer = _csv.DictWriter(buf, fieldnames=_CALENDLY_CSV_COLUMNS)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(_calendly_lead_csv_row(row))
+    _audit(
+        "calendly_leads_exported",
+        target_type="calendly_lead",
+        target_id="all",
+        details=f"rows={len(rows)}",
+    )
+    return Response(
+        buf.getvalue(),
+        mimetype="text/csv",
+        headers={
+            "Content-Disposition": (
+                'attachment; filename="cutovr-calendly-leads.csv"'
+            ),
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # Demo mode
 #

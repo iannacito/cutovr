@@ -6,6 +6,9 @@
     <p class="eyebrow">Internal &middot; Operator view</p>
     <h1>Discovery-call <em>leads</em>.</h1>
     <p>Everyone who filled out the Calendly form and scheduled a discovery call. Captured automatically from Calendly. Upcoming / most recent first.</p>
+    {% if leads %}
+    <p><a class="btn btn-secondary" data-testid="operator-leads-export" href="{{ url_for('operator_leads_csv') }}">Export to spreadsheet (CSV)</a></p>
+    {% endif %}
   </div>
 
   <section class="card">

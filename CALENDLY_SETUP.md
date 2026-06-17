@@ -94,9 +94,20 @@ in the UI.
    booking appears with the firm, Clio rep, meeting time, and form answers.
 4. Cancel the test booking in Calendly and confirm the lead flips to
    **Canceled**.
+5. From the Leads page, click **Export to spreadsheet (CSV)** and confirm a
+   `cutovr-calendly-leads.csv` file downloads with the test booking row.
+
+> **The embed alone does not store leads.** The `/book-discovery-call` Calendly
+> inline embed lets prospects book a meeting, but a lead is only captured in
+> Cutovr once the Calendly **webhook** above is pointed at
+> `/integrations/calendly/webhook`. Configure the webhook (Render +
+> Calendly) to make capture automatic. For help, contact **support@cutovr.com**.
 
 ## Endpoint reference
 
 - `POST /integrations/calendly/webhook` — Calendly webhook receiver.
 - `GET  /operator/leads` — operator Leads list (auth-gated; 404 for others).
 - `GET  /operator/leads/<id>` — per-lead detail with all form answers.
+- `GET  /operator/leads.csv` — spreadsheet export of every captured lead
+  (auth-gated; downloads `cutovr-calendly-leads.csv`). No secrets or raw
+  webhook payload are ever included.

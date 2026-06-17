@@ -20,6 +20,10 @@ Covers:
       Leads UI or the audit details.
   T9  Signature verification: with a signing key set, a bad signature is
       rejected (401) and a correct HMAC is accepted (2xx).
+  T10 CSV export returns text/csv with the attachment filename, the full
+      column header, the seeded lead's data, and its question answers; a
+      non-operator is blocked.
+  T11 CSV export does not leak any secret material.
 
 No live Calendly network call is required.
 """
@@ -239,10 +243,20 @@ def t6b_support_email_in_customer_and_contact_resolution():
 
 
 def _signup_operator(client):
+    """Establish an operator session on ``client``.
+
+    Signs up the operator account on first use; on later calls (the account
+    already exists) signup is a no-op that does not create a session, so we
+    fall back to logging in. This keeps each test order-independent.
+    """
     client.post("/signup", data={
         "firm_name": "Op Firm", "email": "op@cutovr.test",
         "password": "passw0rd!1234", "confirm_password": "passw0rd!1234",
     })
+    if client.get("/operator/leads").status_code != 200:
+        client.post("/login", data={
+            "email": "op@cutovr.test", "password": "passw0rd!1234",
+        })
 
 
 def t7_operator_route_lists_and_blocks():
@@ -333,6 +347,86 @@ def t9_signature_verification():
     print("T9 OK: bad signature rejected, valid signature accepted")
 
 
+def t10_csv_export():
+    import csv as _csv
+    from io import StringIO
+
+    # Seed a lead with full data + a migration-date question answer.
+    c0 = appmod.app.test_client()
+    payload = _created_payload(uri=INVITEE_URI + "-csv")
+    payload["payload"]["questions_and_answers"].append(
+        {"question": "Target migration date", "answer": "2026-08-15", "position": 4},
+    )
+    _post(c0, payload)
+
+    # Operator can download the export.
+    c = appmod.app.test_client()
+    _signup_operator(c)
+    r = c.get("/operator/leads.csv")
+    assert r.status_code == 200, r.status_code
+    assert r.mimetype == "text/csv", r.mimetype
+    cd = r.headers.get("Content-Disposition", "")
+    assert "attachment" in cd and "cutovr-calendly-leads.csv" in cd, cd
+
+    text = r.get_data(as_text=True)
+    reader = _csv.DictReader(StringIO(text))
+    header = reader.fieldnames
+    expected_cols = [
+        "Lead ID", "Status", "Meeting Start", "Meeting End", "Timezone",
+        "Name", "Email", "Phone", "Law Firm / Company",
+        "Clio Rep Name", "Clio Rep Email", "Clio Migration Date",
+        "Created At", "Updated At", "Calendly Event URI", "Invitee URI",
+        "Questions/Answers",
+    ]
+    assert header == expected_cols, header
+
+    rows = list(reader)
+    match = [x for x in rows if x["Invitee URI"] == INVITEE_URI + "-csv"]
+    assert len(match) == 1, f"expected 1 exported row, got {len(match)}"
+    row = match[0]
+    assert row["Name"] == "Dana Prospect"
+    assert row["Email"] == "dana@lawfirm.test"
+    assert row["Law Firm / Company"] == "Prospect & Co LLP"
+    assert row["Clio Rep Name"] == "Sam Rep"
+    assert row["Clio Rep Email"] == "sam@clio.test"
+    assert row["Phone"] == "+1 555 0100"
+    assert row["Status"] == "scheduled"
+    assert row["Meeting Start"] == "2026-07-01T15:00:00Z"
+    # Migration date pulled out of the free-form question answers.
+    assert row["Clio Migration Date"] == "2026-08-15", row["Clio Migration Date"]
+    # Question answers rendered in the combined cell.
+    assert "Full GL" in row["Questions/Answers"]
+    assert "What do you want to migrate?: Full GL" in row["Questions/Answers"]
+
+    # Raw payload column is never present in the export.
+    assert "raw_payload_json" not in header
+    assert "Raw" not in " ".join(header)
+
+    # Non-operator (anonymous) is blocked.
+    anon = appmod.app.test_client()
+    r404 = anon.get("/operator/leads.csv")
+    assert r404.status_code in (302, 404), r404.status_code
+    print("T10 OK: CSV export content type, columns, data, Q/A; non-op blocked")
+
+
+def t11_csv_export_no_secret_leaks():
+    os.environ["CALENDLY_API_TOKEN"] = "tok-CSVLEAK"
+    os.environ["CALENDLY_WEBHOOK_SECRET"] = "secret-CSVLEAK"
+    try:
+        c0 = appmod.app.test_client()
+        _post(c0, _created_payload(uri=INVITEE_URI + "-csvsec"),
+              query_string={"secret": "secret-CSVLEAK"})
+        c = appmod.app.test_client()
+        _signup_operator(c)
+        text = c.get("/operator/leads.csv").get_data(as_text=True)
+        for needle in ("tok-CSVLEAK", "secret-CSVLEAK"):
+            assert needle not in text, f"secret leaked in CSV: {needle}"
+    finally:
+        os.environ.pop("CALENDLY_API_TOKEN", None)
+        os.environ.pop("CALENDLY_WEBHOOK_SECRET", None)
+    print("T11 OK: no secrets in CSV export")
+
+
 if __name__ == "__main__":
     t1_created_makes_lead()
     t2_duplicate_is_idempotent()
@@ -344,4 +438,6 @@ if __name__ == "__main__":
     t7_operator_route_lists_and_blocks()
     t8_no_secret_leaks()
     t9_signature_verification()
+    t10_csv_export()
+    t11_csv_export_no_secret_leaks()
     print("\nALL CALENDLY SMOKE TESTS PASSED")
