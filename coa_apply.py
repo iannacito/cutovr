@@ -34,6 +34,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 
+QBO_ACCT_NUM_MAX = 100  # QBO AcctNum field character limit
 
 # ----------------------------------------------------------------------------
 # PCLaw -> QBO type-mapping table.
@@ -890,6 +891,30 @@ def _build_qbo_payload(entry: CreatePlanEntry) -> dict:
     if entry.account_number:
         payload["AcctNum"] = str(entry.account_number).strip()
     return payload
+
+
+def _acct_num_update_payload(
+    qbo_account: dict,
+    pclaw_number: str,
+) -> "dict | None":
+    """
+    Build a sparse QBO Account UPDATE payload to set AcctNum = pclaw_number.
+    Returns None if update should be skipped (already correct or too long).
+    """
+    if not pclaw_number:
+        return None
+    pclaw_number = str(pclaw_number).strip()
+    if len(pclaw_number) > QBO_ACCT_NUM_MAX:
+        return None
+    current = (qbo_account.get("AcctNum") or "").strip()
+    if current == pclaw_number:
+        return None  # already correct — no-op
+    return {
+        "sparse": True,
+        "Id": qbo_account["Id"],
+        "SyncToken": qbo_account["SyncToken"],
+        "AcctNum": pclaw_number,
+    }
 
 
 def apply_create_plan(qbo_client, plan: CreatePlan) -> dict:

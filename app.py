@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, abort, make_response
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, abort
 from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
 from pathlib import Path
@@ -681,16 +681,19 @@ def inject_user():
     firm = db.get_firm(user["firm_id"]) if user else None
     ctx = {"user": user, "firm": firm, "now_year": datetime.utcnow().year}
     ctx.update(branding.context())
-    # Resolve the primary "Book a discovery call" CTA target. Every public
-    # CTA routes to the in-app booking page (/book-discovery-call), which
-    # embeds the Calendly inline widget. This keeps visitors on the branded
-    # Cutovr site instead of bouncing to an external Calendly tab.
-    # `discovery_call_is_external` stays False everywhere so templates render
-    # an in-app link (no target=_blank). When DISCOVERY_CALL_URL is unset the
-    # booking page itself falls back to the in-app request form, so the CTA
-    # never dead-ends.
-    ctx["discovery_call_href"] = url_for("book_discovery_call")
-    ctx["discovery_call_is_external"] = False
+    # Resolve the primary "Book a discovery call" CTA target. When
+    # DISCOVERY_CALL_URL (a Calendly link) is configured we send visitors
+    # straight to it; otherwise we keep the CTA safe by routing to the
+    # in-app request form so the button never dead-ends. Templates read
+    # `discovery_call_href` for the link and `discovery_call_is_external`
+    # to decide whether to open in a new tab.
+    discovery_url = (branding.DISCOVERY_CALL_URL or "").strip()
+    if discovery_url:
+        ctx["discovery_call_href"] = discovery_url
+        ctx["discovery_call_is_external"] = True
+    else:
+        ctx["discovery_call_href"] = url_for("quote_request")
+        ctx["discovery_call_is_external"] = False
     # True when SUPPORT_EMAIL has been set to a real monitored address.
     # Templates use this to suppress mailto: links pointing at the
     # deploy-default placeholder so customers/beta testers never see
@@ -2805,51 +2808,6 @@ def pricing():
         stripe_plans=stripe_checkout.plan_configs(),
         stripe_enabled=stripe_checkout.stripe_enabled(),
     )
-
-
-# Calendly origins the booking page needs to load the inline widget. Kept here
-# so the per-page CSP override and any future allowlist stay in one place.
-_CALENDLY_SCRIPT_SRC = "https://assets.calendly.com"
-_CALENDLY_FRAME_SRC = "https://calendly.com https://*.calendly.com"
-_CALENDLY_STYLE_SRC = "https://assets.calendly.com"
-_CALENDLY_IMG_SRC = "https://*.calendly.com"
-
-
-@app.route("/book-discovery-call")
-def book_discovery_call():
-    """Public, branded booking page that embeds the Calendly inline widget.
-
-    The widget loads DISCOVERY_CALL_URL (a Calendly link). When that env is
-    unset we fall back to the in-app "Send migration details" request form so
-    the page never dead-ends. The Calendly widget script is loaded ONLY on
-    this page via a per-response CSP override (see below); the rest of the app
-    keeps its strict, no-third-party-script CSP.
-    """
-    calendly_url = (branding.DISCOVERY_CALL_URL or "").strip()
-    resp = make_response(
-        render_template(
-            "book-discovery-call.html",
-            calendly_url=calendly_url,
-        )
-    )
-    if calendly_url:
-        # Override the strict global CSP for just this page so the Calendly
-        # inline widget (script + iframe + assets) can load. We do not relax
-        # any other directive.
-        resp.headers["Content-Security-Policy"] = (
-            "default-src 'self'; "
-            f"script-src 'self' {_CALENDLY_SCRIPT_SRC}; "
-            f"style-src 'self' https://fonts.googleapis.com {_CALENDLY_STYLE_SRC} 'unsafe-inline'; "
-            "font-src 'self' https://fonts.gstatic.com data:; "
-            f"img-src 'self' data: {_CALENDLY_IMG_SRC}; "
-            "connect-src 'self' https://*.calendly.com; "
-            f"frame-src {_CALENDLY_FRAME_SRC}; "
-            "form-action 'self' https://appcenter.intuit.com; "
-            "frame-ancestors 'none'; "
-            "base-uri 'self'; "
-            "object-src 'none'"
-        )
-    return resp
 
 
 def _checkout_base_url() -> str:

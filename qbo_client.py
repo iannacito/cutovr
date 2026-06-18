@@ -394,6 +394,19 @@ class QBOClient:
             )
         return response.json()
 
+    def update_accounts(self, payloads: "list[dict]") -> "list[dict]":
+        """
+        Sparse-update QBO Account objects to set AcctNum.
+        Caller must chunk to <=25 items before calling.
+        """
+        batch_items = [
+            {"bId": str(i + 1), "operation": "update", "Account": p}
+            for i, p in enumerate(payloads)
+        ]
+        url = f"{self.base_url}/batch?minorversion=75"
+        resp = self._post(url, {"BatchItemRequest": batch_items})
+        return resp.get("BatchItemResponse", [])
+
     # --- Customer / Vendor helpers -----------------------------------------
 
     @staticmethod
