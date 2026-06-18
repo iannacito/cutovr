@@ -230,6 +230,37 @@ CREATE TABLE IF NOT EXISTS intake_submissions (
 CREATE INDEX IF NOT EXISTS idx_intake_firm ON intake_submissions(firm_id);
 CREATE INDEX IF NOT EXISTS idx_intake_created ON intake_submissions(created_at);
 
+CREATE TABLE IF NOT EXISTS calendly_leads (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    invitee_uri         TEXT NOT NULL UNIQUE,
+    invitee_uuid        TEXT,
+    event_uri           TEXT,
+    event_type_uri      TEXT,
+    event_name          TEXT,
+    name                TEXT,
+    email               TEXT,
+    phone               TEXT,
+    firm_name           TEXT,
+    clio_rep_name       TEXT,
+    clio_rep_email      TEXT,
+    meeting_start       TEXT,
+    meeting_end         TEXT,
+    timezone            TEXT,
+    status              TEXT NOT NULL DEFAULT 'scheduled',
+    cancel_reason       TEXT,
+    canceled_by         TEXT,
+    rescheduled         INTEGER NOT NULL DEFAULT 0,
+    questions_json      TEXT,
+    enrichment_status   TEXT,
+    raw_payload_json    TEXT,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_calendly_leads_start
+    ON calendly_leads(meeting_start);
+CREATE INDEX IF NOT EXISTS idx_calendly_leads_created
+    ON calendly_leads(created_at);
+
 CREATE TABLE IF NOT EXISTS cutover_settings (
     firm_id              INTEGER PRIMARY KEY REFERENCES firms(id) ON DELETE CASCADE,
     cutover_date         TEXT,
@@ -1250,6 +1281,105 @@ class AppDB:
         with self._conn() as c:
             rows = c.execute(
                 "SELECT * FROM intake_submissions ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    # --- Calendly discovery-call leads ------------------------------------
+
+    def upsert_calendly_lead(self, *, invitee_uri: str, fields: dict) -> int:
+        """Insert or update a Calendly lead keyed on its invitee URI.
+
+        ``invitee_uri`` is Calendly's canonical, globally-unique identifier
+        for one person on one scheduled event, so it makes the webhook
+        idempotent: a duplicate delivery (same invitee) updates the existing
+        row instead of creating a second lead. Returns the row id.
+
+        ``fields`` may contain any of the lead columns; only the keys that
+        are present are written, so a sparse ``invitee.canceled`` payload can
+        flip ``status`` without clobbering the name/email captured at
+        ``invitee.created`` time. JSON sub-objects (questions, raw payload)
+        must already be serialized to TEXT by the caller.
+        """
+        invitee_uri = (invitee_uri or "").strip()
+        if not invitee_uri:
+            raise ValueError("invitee_uri is required")
+
+        allowed = (
+            "invitee_uuid", "event_uri", "event_type_uri", "event_name",
+            "name", "email", "phone", "firm_name", "clio_rep_name",
+            "clio_rep_email", "meeting_start", "meeting_end", "timezone",
+            "status", "cancel_reason", "canceled_by", "rescheduled",
+            "questions_json", "enrichment_status", "raw_payload_json",
+        )
+        with self._conn() as c:
+            existing = c.execute(
+                "SELECT id FROM calendly_leads WHERE invitee_uri = ?",
+                (invitee_uri,),
+            ).fetchone()
+            if existing:
+                sets = []
+                vals: list = []
+                for k in allowed:
+                    if k in fields and fields[k] is not None:
+                        sets.append(f"{k} = ?")
+                        vals.append(fields[k])
+                sets.append("updated_at = ?")
+                vals.append(_now())
+                vals.append(invitee_uri)
+                c.execute(
+                    f"UPDATE calendly_leads SET {', '.join(sets)} "
+                    f"WHERE invitee_uri = ?",
+                    vals,
+                )
+                return existing["id"]
+
+            cols = ["invitee_uri"]
+            vals = [invitee_uri]
+            for k in allowed:
+                if k == "status":
+                    continue
+                if k in fields and fields[k] is not None:
+                    cols.append(k)
+                    vals.append(fields[k])
+            cols += ["status", "created_at", "updated_at"]
+            vals += [fields.get("status") or "scheduled", _now(), _now()]
+            ph = ",".join("?" * len(vals))
+            cur = c.execute(
+                f"INSERT INTO calendly_leads ({', '.join(cols)}) VALUES ({ph})",
+                vals,
+            )
+            return cur.lastrowid
+
+    def get_calendly_lead(self, lead_id: int) -> Optional[dict]:
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT * FROM calendly_leads WHERE id = ?", (lead_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_calendly_lead_by_invitee(self, invitee_uri: str) -> Optional[dict]:
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT * FROM calendly_leads WHERE invitee_uri = ?",
+                ((invitee_uri or "").strip(),),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def list_calendly_leads(self, limit: int = 200) -> list:
+        """Return leads ordered so upcoming/recent meetings surface first.
+
+        Sorts by meeting_start descending with NULL start times last, then
+        by created_at descending as a tiebreaker. This puts the soonest /
+        most recently booked calls at the top, which is what the operator
+        Leads view wants.
+        """
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT * FROM calendly_leads "
+                "ORDER BY (meeting_start IS NULL) ASC, "
+                "         meeting_start DESC, created_at DESC "
+                "LIMIT ?",
                 (limit,),
             ).fetchall()
             return [dict(r) for r in rows]

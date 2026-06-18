@@ -18,6 +18,7 @@ import encryption
 
 from app_db import AppDB
 import branding
+import calendly_webhook
 import data_retention
 import demo_mode
 import job_checkpoints
@@ -592,7 +593,10 @@ def _csrf_protect():
     # Static files are GET-only, so they wouldn't reach here. The OAuth
     # callback is a GET. We still want to skip on, e.g., a future webhook
     # path — define exempt list explicitly so it's auditable.
-    if request.endpoint in {"static"}:
+    # Third-party server-to-server webhooks can't carry our per-session
+    # CSRF token. They authenticate via their own signature / shared secret
+    # inside the view, so they're explicitly exempt here.
+    if request.endpoint in {"static", "calendly_webhook_endpoint"}:
         return None
     expected = session.get(CSRF_SESSION_KEY)
     submitted = request.form.get(CSRF_FORM_FIELD) or request.headers.get("X-CSRF-Token")
@@ -10001,6 +10005,299 @@ def operator_run_cleanup():
         "success",
     )
     return redirect(url_for("operator_dashboard"))
+
+
+# ---------------------------------------------------------------------------
+# Calendly discovery-call lead capture
+#
+# Calendly stays the booking + form UI. We subscribe to its webhooks and
+# store each booked call as a lead so the team has its own database + an
+# admin "Leads" view. The webhook is idempotent on the Calendly invitee URI,
+# returns 2xx quickly, and never fails because of a missing API token or a
+# failed enrichment fetch.
+# ---------------------------------------------------------------------------
+
+def _calendly_send_lead_emails(lead: dict) -> None:
+    """Best-effort internal + (optional) customer emails for a lead.
+
+    Never raises and never blocks the webhook response on a slow/failed
+    send. Internal recipients reuse the intake notification config
+    (INTERNAL_INTAKE_EMAILS, falling back to a real SUPPORT_EMAIL). The
+    customer email is sent only when CALENDLY_CONFIRMATION_EMAIL is enabled
+    and SMTP is configured, and never for a cancellation.
+    """
+    if not email_sender.is_smtp_configured():
+        return
+    app_name = branding.APP_NAME
+    support = branding.SUPPORT_EMAIL
+
+    try:
+        recipients = intake.internal_recipients(support)
+        if recipients:
+            subject, body = calendly_webhook.internal_email_bodies(
+                app_name=app_name, lead=lead, support_email=support
+            )
+            for addr in recipients:
+                email_sender.send_email(to=addr, subject=subject, body_text=body)
+    except Exception:  # noqa: BLE001 - notification must never break webhook
+        logging.exception("Calendly internal notification failed")
+
+    confirm_on = (os.environ.get("CALENDLY_CONFIRMATION_EMAIL") or "").strip().lower()
+    if (
+        confirm_on in ("1", "true", "yes", "on")
+        and lead.get("status") != "canceled"
+        and lead.get("email")
+    ):
+        try:
+            # customer_email_bodies resolves a real contact mailbox (the
+            # Cutovr support address) when SUPPORT_EMAIL is still the deploy
+            # placeholder, so the prospect always has a way to reach us.
+            subject, body = calendly_webhook.customer_email_bodies(
+                app_name=app_name, lead=lead, support_email=support,
+            )
+            email_sender.send_email(to=lead["email"], subject=subject, body_text=body)
+        except Exception:  # noqa: BLE001
+            logging.exception("Calendly customer confirmation failed")
+
+
+@app.route("/integrations/calendly/webhook", methods=["POST"])
+def calendly_webhook_endpoint():
+    """Receive Calendly webhook events and persist discovery-call leads.
+
+    Handles invitee.created, invitee.canceled, and (optionally)
+    routing_form_submission.created. Authenticity is checked via the
+    Calendly signature (CALENDLY_WEBHOOK_SIGNING_KEY) or a shared secret
+    (CALENDLY_WEBHOOK_SECRET); when neither is configured the delivery is
+    accepted but flagged unverified so the operator can finish wiring auth.
+
+    Always returns 2xx for an accepted/duplicate delivery so Calendly does
+    not retry-storm. Returns 401 only when auth is configured and fails.
+    """
+    raw = request.get_data() or b""
+    auth = calendly_webhook.authenticate(
+        raw,
+        signature_header=request.headers.get("Calendly-Webhook-Signature"),
+        provided_secret=(
+            request.args.get("secret")
+            or request.headers.get("X-Calendly-Webhook-Secret")
+        ),
+    )
+    if auth["method"] == "rejected":
+        _audit(
+            "calendly_webhook_rejected",
+            target_type="calendly",
+            target_id="webhook",
+            details="signature/secret verification failed",
+        )
+        return jsonify({"error": "unauthorized"}), 401
+
+    try:
+        payload = json.loads(raw.decode("utf-8")) if raw else {}
+    except (ValueError, UnicodeDecodeError):
+        return jsonify({"error": "invalid json"}), 400
+    if not isinstance(payload, dict):
+        return jsonify({"error": "invalid payload"}), 400
+
+    event = (payload.get("event") or "").strip()
+    handled = {
+        "invitee.created", "invitee.canceled",
+        "routing_form_submission.created",
+    }
+    if event not in handled:
+        # Acknowledge so Calendly stops retrying, but record nothing.
+        return jsonify({"status": "ignored", "event": event}), 200
+
+    invitee_uri = calendly_webhook.invitee_uri_from_payload(payload)
+    if not invitee_uri:
+        return jsonify({"status": "ignored", "reason": "no invitee uri"}), 200
+
+    # Optional enrichment: fetch full invitee (incl. question answers) from
+    # the Calendly API. Fails soft — the lead is stored either way.
+    enriched = None
+    enrichment_status = "skipped"
+    if calendly_webhook.api_token():
+        result = calendly_webhook.fetch_invitee(invitee_uri)
+        enrichment_status = result["status"]
+        if result["ok"]:
+            enriched = result["resource"]
+
+    fields = calendly_webhook.extract_lead_fields(payload, enriched_invitee=enriched)
+    fields["raw_payload_json"] = json.dumps(payload)[:200_000]
+    fields["enrichment_status"] = enrichment_status
+
+    try:
+        lead_id = db.upsert_calendly_lead(invitee_uri=invitee_uri, fields=fields)
+    except Exception:  # noqa: BLE001 - never 500 a webhook on a write hiccup
+        logging.exception("Calendly lead upsert failed")
+        return jsonify({"status": "error"}), 200
+
+    _audit(
+        "calendly_lead_captured",
+        target_type="calendly_lead",
+        target_id=str(lead_id),
+        details=(
+            f"event={event} status={fields.get('status', 'scheduled')} "
+            f"verified={auth['method']} enrichment={enrichment_status}"
+        ),
+    )
+
+    # Notifications are best-effort and only for full invitee events.
+    if event in ("invitee.created", "invitee.canceled"):
+        lead = db.get_calendly_lead(lead_id) or fields
+        _calendly_send_lead_emails(lead)
+
+    return jsonify({"status": "ok", "lead_id": lead_id}), 200
+
+
+def _calendly_lead_view(row: dict) -> dict:
+    """Shape a calendly_leads row for the operator Leads templates.
+
+    Decodes the questions JSON into a list and omits the raw payload /
+    internal columns the UI shouldn't surface.
+    """
+    try:
+        qa = json.loads(row.get("questions_json") or "[]")
+    except (ValueError, TypeError):
+        qa = []
+    return {
+        "id": row.get("id"),
+        "name": row.get("name") or "(no name)",
+        "email": row.get("email") or "—",
+        "phone": row.get("phone"),
+        "firm_name": row.get("firm_name"),
+        "clio_rep_name": row.get("clio_rep_name"),
+        "clio_rep_email": row.get("clio_rep_email"),
+        "event_name": row.get("event_name"),
+        "meeting_start": row.get("meeting_start"),
+        "meeting_end": row.get("meeting_end"),
+        "timezone": row.get("timezone"),
+        "status": row.get("status") or "scheduled",
+        "cancel_reason": row.get("cancel_reason"),
+        "event_uri": row.get("event_uri"),
+        "enrichment_status": row.get("enrichment_status"),
+        "questions": qa,
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+    }
+
+
+@app.route("/operator/leads")
+@operator_required
+def operator_leads_list():
+    """Read-only list of captured Calendly discovery-call leads.
+
+    Shows everyone who filled out the Calendly form and scheduled a call,
+    upcoming/recent first. Never renders the raw webhook payload or any
+    secret — only the form answers and booking metadata.
+    """
+    rows = db.list_calendly_leads(limit=200)
+    leads = [_calendly_lead_view(r) for r in rows]
+    return render_template("operator-leads.html", leads=leads)
+
+
+@app.route("/operator/leads/<int:lead_id>")
+@operator_required
+def operator_lead_detail(lead_id):
+    """Per-lead detail: all Calendly form answers + booking metadata."""
+    row = db.get_calendly_lead(lead_id)
+    if not row:
+        abort(404)
+    return render_template("operator-lead.html", lead=_calendly_lead_view(row))
+
+
+# Hints used to pull a Clio migration date out of the free-form Calendly
+# question answers, since it is not a first-class lead column.
+_MIGRATION_DATE_HINTS = ("migration date", "migrate date", "go live", "go-live",
+                         "target date", "cutover date", "clio date")
+
+
+def _calendly_lead_csv_row(row: dict) -> dict:
+    """Flatten one calendly_leads DB row into the export's column values.
+
+    Sources ``Clio Migration Date`` from the question answers (it is not a
+    stored column) and renders the questions/answers as a readable,
+    single-cell ``Q: A | Q: A`` string. Deliberately excludes the raw webhook
+    payload and any signing/secret material so the export carries only the
+    booking + form data.
+    """
+    try:
+        qa = json.loads(row.get("questions_json") or "[]")
+    except (ValueError, TypeError):
+        qa = []
+    if not isinstance(qa, list):
+        qa = []
+
+    migration_date = ""
+    qa_parts = []
+    for item in qa:
+        if not isinstance(item, dict):
+            continue
+        q = (item.get("question") or "").strip()
+        a = (item.get("answer") or "").strip()
+        qa_parts.append(f"{q}: {a}")
+        if not migration_date and any(h in q.lower() for h in _MIGRATION_DATE_HINTS):
+            migration_date = a
+
+    return {
+        "Lead ID": row.get("id"),
+        "Status": row.get("status") or "scheduled",
+        "Meeting Start": row.get("meeting_start") or "",
+        "Meeting End": row.get("meeting_end") or "",
+        "Timezone": row.get("timezone") or "",
+        "Name": row.get("name") or "",
+        "Email": row.get("email") or "",
+        "Phone": row.get("phone") or "",
+        "Law Firm / Company": row.get("firm_name") or "",
+        "Clio Rep Name": row.get("clio_rep_name") or "",
+        "Clio Rep Email": row.get("clio_rep_email") or "",
+        "Clio Migration Date": migration_date,
+        "Created At": row.get("created_at") or "",
+        "Updated At": row.get("updated_at") or "",
+        "Calendly Event URI": row.get("event_uri") or "",
+        "Invitee URI": row.get("invitee_uri") or "",
+        "Questions/Answers": " | ".join(qa_parts),
+    }
+
+
+_CALENDLY_CSV_COLUMNS = [
+    "Lead ID", "Status", "Meeting Start", "Meeting End", "Timezone",
+    "Name", "Email", "Phone", "Law Firm / Company",
+    "Clio Rep Name", "Clio Rep Email", "Clio Migration Date",
+    "Created At", "Updated At", "Calendly Event URI", "Invitee URI",
+    "Questions/Answers",
+]
+
+
+@app.route("/operator/leads.csv")
+@operator_required
+def operator_leads_csv():
+    """Export every captured Calendly lead as a spreadsheet (CSV).
+
+    One row per lead, all leads (no pagination), so it opens cleanly in
+    Excel / Google Sheets. Never includes the raw webhook payload or any
+    secret material — only booking metadata and the prospect's form answers.
+    """
+    rows = db.list_calendly_leads(limit=100_000)
+    buf = StringIO()
+    writer = _csv.DictWriter(buf, fieldnames=_CALENDLY_CSV_COLUMNS)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(_calendly_lead_csv_row(row))
+    _audit(
+        "calendly_leads_exported",
+        target_type="calendly_lead",
+        target_id="all",
+        details=f"rows={len(rows)}",
+    )
+    return Response(
+        buf.getvalue(),
+        mimetype="text/csv",
+        headers={
+            "Content-Disposition": (
+                'attachment; filename="cutovr-calendly-leads.csv"'
+            ),
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -44,6 +44,7 @@
           <a href="{{ url_for('support') }}">Support</a>
           {% if is_operator %}
             <a href="{{ url_for('readiness_page') }}">Readiness</a>
+            <a href="{{ url_for('operator_leads_list') }}">Leads</a>
             <a href="{{ url_for('operator_dashboard') }}">Operator</a>
           {% endif %}
           {% if demo_visible %}

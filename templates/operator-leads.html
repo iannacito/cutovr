@@ -1,0 +1,73 @@
+{% extends "_base.html" %}
+{% block title %}Discovery-call leads &mdash; Operator{% endblock %}
+{% block content %}
+<section class="page">
+  <div class="hero">
+    <p class="eyebrow">Internal &middot; Operator view</p>
+    <h1>Discovery-call <em>leads</em>.</h1>
+    <p>Everyone who filled out the Calendly form and scheduled a discovery call. Captured automatically from Calendly. Upcoming / most recent first.</p>
+    {% if leads %}
+    <p><a class="btn btn-secondary" data-testid="operator-leads-export" href="{{ url_for('operator_leads_csv') }}">Export to spreadsheet (CSV)</a></p>
+    {% endif %}
+  </div>
+
+  <section class="card">
+    {% if leads %}
+    <div class="table-wrap">
+      <table data-testid="operator-leads-table">
+        <thead>
+          <tr>
+            <th>Meeting time</th>
+            <th>Prospect</th>
+            <th>Firm</th>
+            <th>Clio rep</th>
+            <th>Status</th>
+            <th>Booked</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for lead in leads %}
+          <tr data-testid="operator-lead-row">
+            <td>
+              {% if lead.meeting_start %}
+              {{ lead.meeting_start }}
+              {% if lead.timezone %}<br><small class="muted">{{ lead.timezone }}</small>{% endif %}
+              {% else %}<span class="muted">&mdash;</span>{% endif %}
+            </td>
+            <td>
+              {{ lead.name }}<br>
+              <small class="muted">{{ lead.email }}{% if lead.phone %} &middot; {{ lead.phone }}{% endif %}</small>
+            </td>
+            <td>{{ lead.firm_name or '—' }}</td>
+            <td>
+              {% if lead.clio_rep_name or lead.clio_rep_email %}
+              {{ lead.clio_rep_name or '' }}
+              {% if lead.clio_rep_email %}<br><small class="muted">{{ lead.clio_rep_email }}</small>{% endif %}
+              {% else %}<span class="muted">—</span>{% endif %}
+            </td>
+            <td data-testid="operator-lead-status">
+              {% if lead.status == 'canceled' %}
+              <strong style="color:var(--danger, #b42318);">Canceled</strong>
+              {% else %}
+              <strong style="color:var(--ok, #1a7f37);">Scheduled</strong>
+              {% endif %}
+            </td>
+            <td><small class="muted">{{ lead.created_at }}</small></td>
+            <td><a href="{{ url_for('operator_lead_detail', lead_id=lead.id) }}">Details</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="muted" data-testid="operator-leads-empty">No discovery-call leads yet. They appear here automatically once Calendly sends a booking webhook.</p>
+    {% endif %}
+  </section>
+
+  <p class="muted" data-testid="operator-leads-help">
+    Leads are captured from Calendly bookings. Questions about a booking?
+    Contact <a href="mailto:support@cutovr.com">support@cutovr.com</a>.
+  </p>
+</section>
+{% endblock %}

@@ -1,0 +1,56 @@
+{% extends "_base.html" %}
+{% block title %}Lead &mdash; {{ lead.name }}{% endblock %}
+{% block content %}
+<section class="page">
+  <div class="hero">
+    <p class="eyebrow">Internal &middot; Operator view &middot; <a href="{{ url_for('operator_leads_list') }}">All leads</a></p>
+    <h1>{{ lead.name }}</h1>
+    <p>Discovery-call lead captured from Calendly.</p>
+  </div>
+
+  <section class="card">
+    <h2>Booking</h2>
+    <dl class="kv">
+      <dt>Status</dt>
+      <dd data-testid="operator-lead-detail-status">
+        {% if lead.status == 'canceled' %}Canceled{% else %}Scheduled{% endif %}
+        {% if lead.cancel_reason %}<br><small class="muted">{{ lead.cancel_reason }}</small>{% endif %}
+      </dd>
+      <dt>Email</dt><dd>{{ lead.email }}</dd>
+      {% if lead.phone %}<dt>Phone</dt><dd>{{ lead.phone }}</dd>{% endif %}
+      {% if lead.firm_name %}<dt>Firm</dt><dd>{{ lead.firm_name }}</dd>{% endif %}
+      {% if lead.clio_rep_name or lead.clio_rep_email %}
+      <dt>Clio rep</dt><dd>{{ lead.clio_rep_name or '' }}{% if lead.clio_rep_email %} &lt;{{ lead.clio_rep_email }}&gt;{% endif %}</dd>
+      {% endif %}
+      {% if lead.event_name %}<dt>Event</dt><dd>{{ lead.event_name }}</dd>{% endif %}
+      {% if lead.meeting_start %}
+      <dt>Meeting start</dt><dd>{{ lead.meeting_start }}{% if lead.timezone %} ({{ lead.timezone }}){% endif %}</dd>
+      {% endif %}
+      {% if lead.meeting_end %}<dt>Meeting end</dt><dd>{{ lead.meeting_end }}</dd>{% endif %}
+      <dt>Booked</dt><dd>{{ lead.created_at }}</dd>
+      <dt>Enrichment</dt><dd><code>{{ lead.enrichment_status or '—' }}</code></dd>
+    </dl>
+  </section>
+
+  <section class="card">
+    <h2>Form answers</h2>
+    {% if lead.questions %}
+    <dl class="kv" data-testid="operator-lead-questions">
+      {% for qa in lead.questions %}
+      <dt>{{ qa.question }}</dt>
+      <dd>{{ qa.answer or '—' }}</dd>
+      {% endfor %}
+    </dl>
+    {% else %}
+    <p class="muted">No custom questions were captured for this booking.</p>
+    {% endif %}
+  </section>
+
+  {% if lead.event_uri %}
+  <section class="card">
+    <h2>Calendly</h2>
+    <p><small class="muted">Event URI</small><br><code>{{ lead.event_uri }}</code></p>
+  </section>
+  {% endif %}
+</section>
+{% endblock %}
