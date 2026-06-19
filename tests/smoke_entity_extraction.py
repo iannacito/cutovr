@@ -53,7 +53,7 @@ AP = "Accounts Payable"
 def e1_recognizes_pclaw_client_headers():
     for header in ("Client Name", "Client", "Matter", "client_name", "Client-Name"):
         row = {header: "Acme Industries", "debit": "100", "credit": "0"}
-        kind, name = derive_entity_hint(row, AR)
+        kind, name, _id = derive_entity_hint(row, AR)
         assert kind == "Customer", (header, kind)
         assert name == "Acme Industries", (header, name)
     print("E1 OK: PCLaw client/matter header variants recognized for A/R")
@@ -63,12 +63,12 @@ def e2_priority_order_honored():
     # An explicit customer column must win over the generic "Reference".
     row = {"Reference": "INV-1001", "Client Name": "Beta LLP",
            "debit": "100", "credit": "0"}
-    _kind, name = derive_entity_hint(row, AR)
+    _kind, name, _id = derive_entity_hint(row, AR)
     assert name == "Beta LLP", name
     # When only Reference carries the entity, it is used rather than the
     # default (better than collapsing everyone into one customer).
     row2 = {"Reference": "Gamma Trust", "debit": "100", "credit": "0"}
-    _k2, name2 = derive_entity_hint(row2, AR)
+    _k2, name2, _id2 = derive_entity_hint(row2, AR)
     assert name2 == "Gamma Trust", name2
     print("E2 OK: explicit customer column beats generic reference")
 
@@ -76,7 +76,7 @@ def e2_priority_order_honored():
 def e3_vendor_variants():
     for header in ("Payee", "Vendor", "vendor_name", "Supplier", "Paid To"):
         row = {header: "Office Supplies Co", "debit": "0", "credit": "50"}
-        kind, name = derive_entity_hint(row, AP)
+        kind, name, _id = derive_entity_hint(row, AP)
         assert kind == "Vendor", (header, kind)
         assert name == "Office Supplies Co", (header, name)
     print("E3 OK: A/P recognizes payee/vendor/supplier variants")
@@ -84,10 +84,10 @@ def e3_vendor_variants():
 
 def e4_safe_default_when_no_entity_column():
     row = {"account_number": "1200", "debit": "100", "credit": "0"}
-    _kind, name = derive_entity_hint(row, AR)
+    _kind, name, _id = derive_entity_hint(row, AR)
     assert name == DEFAULT_CUSTOMER_NAME, name
     row_ap = {"account_number": "2000", "debit": "0", "credit": "100"}
-    _k, name_ap = derive_entity_hint(row_ap, AP)
+    _k, name_ap, _id_ap = derive_entity_hint(row_ap, AP)
     assert name_ap == DEFAULT_VENDOR_NAME, name_ap
     print("E4 OK: falls back to the safe default when no entity column")
 

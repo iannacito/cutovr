@@ -427,6 +427,12 @@ class QBOClient:
         return items[0] if items else None
 
     def create_customer(self, display_name):
+        if not str(display_name or "").strip():
+            raise QBOError(
+                "Refusing to create a Customer with a blank DisplayName. "
+                "Resolve the customer name before syncing.",
+                status_code=None,
+            )
         url = f"{self.base_url}/v3/company/{self.realm_id}/customer?minorversion=75"
         response = requests.post(
             url, headers=self._headers(), json={"DisplayName": display_name}, timeout=30
@@ -442,6 +448,12 @@ class QBOClient:
         return response.json().get("Customer", {})
 
     def create_vendor(self, display_name):
+        if not str(display_name or "").strip():
+            raise QBOError(
+                "Refusing to create a Vendor with a blank DisplayName. "
+                "Resolve the vendor name before syncing.",
+                status_code=None,
+            )
         url = f"{self.base_url}/v3/company/{self.realm_id}/vendor?minorversion=75"
         response = requests.post(
             url, headers=self._headers(), json={"DisplayName": display_name}, timeout=30

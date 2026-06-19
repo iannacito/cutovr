@@ -161,6 +161,17 @@ _VENDOR_KEY_CANDIDATES = (
     "name", "reference",
 )
 
+# Identifier columns used to match a GL row back to an uploaded vendor /
+# customer listing. An id is unambiguous where a name can collide, so the
+# listing lookup tries the id first (see entity_resolution.EntityIndex).
+_CUSTOMER_ID_CANDIDATES = (
+    "client_id", "client_no", "client_number",
+    "matter_id", "matter_no", "matter_number", "customer_id",
+)
+_VENDOR_ID_CANDIDATES = (
+    "vendor_id", "vendor_no", "vendor_number", "supplier_id",
+)
+
 
 def _normalize_key(key):
     """Lower-case a CSV header and collapse spaces / separators so
@@ -183,20 +194,27 @@ def _first_entity_value(row, candidates):
 
 
 def derive_entity_hint(row, account_type):
-    """Return ('Customer'|'Vendor', display_name) or None for a GL row.
+    """Return ('Customer'|'Vendor', display_name, identifier) or None.
 
     QBO requires an Entity on JournalEntry lines that post to A/R or A/P.
     The client/matter (A/R) or vendor (A/P) is read from the PCLaw header
     variants in ``_CUSTOMER_KEY_CANDIDATES`` / ``_VENDOR_KEY_CANDIDATES``,
     matched case-insensitively, falling back to the beginner-safe default
     so the import never fails just because a row lacks an entity column.
+
+    The third tuple element is an optional identifier (client / matter /
+    vendor id) used to match the row back to an uploaded vendor /
+    customer listing before falling back to the GL-derived name. See
+    ``entity_resolution.resolve_entity_name``.
     """
     if account_type == "Accounts Receivable":
         name = _first_entity_value(row, _CUSTOMER_KEY_CANDIDATES)
-        return ("Customer", name or DEFAULT_CUSTOMER_NAME)
+        identifier = _first_entity_value(row, _CUSTOMER_ID_CANDIDATES)
+        return ("Customer", name or DEFAULT_CUSTOMER_NAME, identifier)
     if account_type == "Accounts Payable":
         name = _first_entity_value(row, _VENDOR_KEY_CANDIDATES)
-        return ("Vendor", name or DEFAULT_VENDOR_NAME)
+        identifier = _first_entity_value(row, _VENDOR_ID_CANDIDATES)
+        return ("Vendor", name or DEFAULT_VENDOR_NAME, identifier)
     return None
 
 
@@ -280,7 +298,11 @@ def build_journal_entry_payload(
         account_type = account_type_index.get(qbo_account_id)
         hint = derive_entity_hint(row, account_type)
         if hint:
-            line["_pclaw_entity_hint"] = {"type": hint[0], "name": hint[1]}
+            line["_pclaw_entity_hint"] = {
+                "type": hint[0],
+                "name": hint[1],
+                "identifier": hint[2],
+            }
 
         lines.append(line)
 
