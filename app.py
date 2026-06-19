@@ -2518,20 +2518,37 @@ def migration_hub_page():
     gl_rows = _firm_latest_jobs_by_type(firm_id, REPORT_GENERAL_LEDGER, limit=500)
     hydrated = [db.hydrate_job(row["id"]) or row for row in gl_rows]
     qbo_conns = db.list_qbo_connections_for_firm(firm_id)
+    account_mapping_count = _firm_account_mapping_count(firm_id)
     hub = migration_hub.build_hub(
         hydrated,
         has_qbo_connection=bool(qbo_conns),
-        account_mapping_count=_firm_account_mapping_count(firm_id),
+        account_mapping_count=account_mapping_count,
+    )
+    customer_rows = _firm_latest_parsed_list(
+        firm_id, REPORT_CUSTOMER_LIST, "parsed_customer_list"
+    )
+    vendor_rows = _firm_latest_parsed_list(
+        firm_id, REPORT_VENDOR_LIST, "parsed_vendor_list"
+    )
+    setup_cards = migration_hub.build_setup_cards(
+        has_qbo_connection=bool(qbo_conns),
+        account_mapping_count=account_mapping_count,
+        coa_created_count=_firm_coa_created_count(firm_id),
+        customer_list_count=len(customer_rows),
+        vendor_list_count=len(vendor_rows),
+        opening_balance_state=_firm_opening_balance_state(firm_id),
     )
     return render_template(
         "migration-hub.html",
         hub=hub,
         cards=[c.to_dict() for c in hub["cards"]],
+        setup_cards=[c.to_dict() for c in setup_cards],
         **_workflow_stepper_context(firm_id),
     )
 
 
-def _resolve_entity_hints(qbo, payloads, customer_index=None, vendor_index=None):
+def _resolve_entity_hints(qbo, payloads, customer_index=None, vendor_index=None,
+                          firm_id=None, realm_id=None):
     """Replace `_pclaw_entity_hint` markers on JE lines with real Entity refs.
 
     For every line tagged Customer or Vendor, resolve a non-blank display
@@ -2545,12 +2562,27 @@ def _resolve_entity_hints(qbo, payloads, customer_index=None, vendor_index=None)
     any QBO write happens, so we never create a nameless Customer/Vendor
     in QuickBooks. Returns a list of (kind, name, id) tuples for the
     entities that were created (for UI feedback).
+
+    When ``firm_id`` and ``realm_id`` are supplied, resolved entity Ids are
+    read from and written to the persisted per-firm entity map
+    (``db.list_entity_map`` / ``db.save_entity_map_entry``). This makes a
+    re-run of the same GL reuse the QuickBooks entity it resolved last time
+    instead of re-querying — and, crucially, the line's ``EntityRef``
+    references the QuickBooks **Id**, not the raw name string.
     """
     customer_cache = {}
     vendor_cache = {}
     created = []  # list of (kind, name, id)
     customer_offenders = []
     vendor_offenders = []
+
+    # Seed the in-memory caches from the persisted entity map so reruns
+    # skip both the QBO query and a needless re-create. Keyed by normalized
+    # name so "Smith & Co" and "Smith and Co." collapse to one entity.
+    persisted = {}
+    if firm_id is not None and realm_id:
+        for row in db.list_entity_map(firm_id, realm_id):
+            persisted[(row["kind"], row["normalized_name"])] = row["qbo_entity_id"]
 
     # First pass: resolve a clean, non-blank display name for every
     # tagged line and refuse blanks up front. Doing this before any
@@ -2586,7 +2618,9 @@ def _resolve_entity_hints(qbo, payloads, customer_index=None, vendor_index=None)
         raise entity_resolution.EntityNameError(kind, offenders)
 
     # Second pass: find-or-create using the resolved names and rewrite
-    # each line with the QBO Entity block.
+    # each line with the QBO Entity block. The line references the
+    # QuickBooks **Id** (EntityRef.value); the name is carried only as a
+    # human-readable label.
     for payload in payloads:
         for line in payload.get("Line", []):
             hint = line.pop("_pclaw_entity_hint", None)
@@ -2595,28 +2629,15 @@ def _resolve_entity_hints(qbo, payloads, customer_index=None, vendor_index=None)
             kind = hint["type"]
             name = hint["resolved_name"]
 
-            if kind == "Customer":
-                if name not in customer_cache:
-                    existing = qbo.find_customer_by_name(name)
-                    if existing:
-                        customer_cache[name] = existing.get("Id")
-                    else:
-                        new_obj = qbo.create_customer(name)
-                        customer_cache[name] = new_obj.get("Id")
-                        created.append(("Customer", name, customer_cache[name]))
-                entity_id = customer_cache[name]
-            elif kind == "Vendor":
-                if name not in vendor_cache:
-                    existing = qbo.find_vendor_by_name(name)
-                    if existing:
-                        vendor_cache[name] = existing.get("Id")
-                    else:
-                        new_obj = qbo.create_vendor(name)
-                        vendor_cache[name] = new_obj.get("Id")
-                        created.append(("Vendor", name, vendor_cache[name]))
-                entity_id = vendor_cache[name]
-            else:
+            cache = customer_cache if kind == "Customer" else vendor_cache
+            if kind not in ("Customer", "Vendor"):
                 continue
+            if name not in cache:
+                cache[name] = _find_or_create_entity(
+                    qbo, kind, name, persisted, created,
+                    firm_id=firm_id, realm_id=realm_id,
+                )
+            entity_id = cache[name]
 
             line.setdefault("JournalEntryLineDetail", {})["Entity"] = {
                 "Type": kind,
@@ -2624,6 +2645,70 @@ def _resolve_entity_hints(qbo, payloads, customer_index=None, vendor_index=None)
             }
 
     return created
+
+
+def _find_or_create_entity(qbo, kind, name, persisted, created,
+                           firm_id=None, realm_id=None):
+    """Resolve ``name`` to a QuickBooks entity Id, creating it if needed.
+
+    Resolution order, cheapest first:
+
+      1. The persisted entity map (no network call) — keyed by normalized
+         name so trivial punctuation/case differences reuse one entity.
+      2. A QuickBooks lookup by display name (find_customer/vendor_by_name).
+      3. Create the entity. If QuickBooks rejects the create as a duplicate
+         (a name that exists but didn't match our exact-name query, e.g. a
+         differently-punctuated DisplayName), re-query and reuse rather than
+         surfacing the error.
+
+    Any newly created or freshly resolved Id is written back to the
+    persisted map so the next run skips straight to step 1.
+    """
+    norm = entity_resolution._normalize_name(name)
+    cached_id = persisted.get((kind, norm))
+    if cached_id:
+        return cached_id
+
+    finder = qbo.find_customer_by_name if kind == "Customer" else qbo.find_vendor_by_name
+    creator = qbo.create_customer if kind == "Customer" else qbo.create_vendor
+
+    existing = finder(name)
+    if existing and existing.get("Id"):
+        entity_id = existing["Id"]
+    else:
+        try:
+            new_obj = creator(name)
+            entity_id = new_obj.get("Id")
+            created.append((kind, name, entity_id))
+        except QBOError as e:
+            # QuickBooks rejects duplicate DisplayNames (error code 6240).
+            # That means the entity already exists under a name our exact
+            # query missed — re-query and reuse instead of failing the post.
+            if _is_qbo_duplicate_name_error(e):
+                existing = finder(name)
+                if existing and existing.get("Id"):
+                    entity_id = existing["Id"]
+                else:
+                    raise
+            else:
+                raise
+
+    persisted[(kind, norm)] = entity_id
+    if firm_id is not None and realm_id and entity_id:
+        db.save_entity_map_entry(firm_id, realm_id, kind, norm, entity_id,
+                                 display_name=name)
+    return entity_id
+
+
+def _is_qbo_duplicate_name_error(err) -> bool:
+    """True when a QBOError is QuickBooks' duplicate-name rejection.
+
+    QuickBooks returns error code 6240 ("Duplicate Name Exists Error") when
+    a Customer/Vendor DisplayName collides with an existing one. We match on
+    the code and the phrase so a slightly different message still recovers.
+    """
+    text = str(err).lower()
+    return "6240" in text or "duplicate name" in text
 
 
 def _verify_import(job, qbo):
@@ -5174,6 +5259,50 @@ def _firm_entity_indexes(firm_id: int):
     )
 
 
+def _firm_coa_created_count(firm_id: int) -> int:
+    """Count QuickBooks accounts created from the firm's COA uploads.
+
+    Reads the persisted ``coa_create_history`` on each active Chart-of-
+    Accounts job and sums the created-account counts. Best-effort over the
+    various history shapes ever written (a ``created`` list, or a
+    ``created_count`` integer).
+    """
+    total = 0
+    for row in _firm_latest_jobs_by_type(firm_id, REPORT_CHART_OF_ACCOUNTS, limit=50):
+        if demo_mode.is_failed_job(row):
+            continue
+        hydrated = db.hydrate_job(row["id"]) or row
+        for h in hydrated.get("coa_create_history") or []:
+            created = h.get("created")
+            if isinstance(created, list):
+                total += len(created)
+            elif isinstance(h.get("created_count"), int):
+                total += h["created_count"]
+    return total
+
+
+def _firm_opening_balance_state(firm_id: int) -> str:
+    """Return the firm's opening-balance state for the Migration Hub.
+
+    One of ``"posted"`` / ``"failed"`` / ``"pending"`` / ``"none"`` derived
+    from the most recent trial-balance job's opening-balance history. A
+    failed last attempt outranks an earlier success so the hub surfaces a
+    retry; a posted entry means opening balances are in QuickBooks.
+    """
+    state = "none"
+    for row in _firm_latest_jobs_by_type(firm_id, REPORT_TRIAL_BALANCE, limit=50):
+        if demo_mode.is_failed_job(row):
+            continue
+        hydrated = db.hydrate_job(row["id"]) or row
+        history = hydrated.get("opening_balance_history") or []
+        if history:
+            last = history[-1]
+            return "failed" if last.get("status") == "failed" else "posted"
+        # Trial balance on file but never posted -> ready to post.
+        state = "pending"
+    return state
+
+
 def _firm_importable_gl_jobs(firm_id: int, limit: int = 500) -> list[dict]:
     """Return the firm's GL jobs that Step 5 may actually import, newest
     first.
@@ -6915,6 +7044,8 @@ def _import_to_qbo_impl(job_id):
                     qbo, payloads,
                     customer_index=customer_index,
                     vendor_index=vendor_index,
+                    firm_id=user["firm_id"],
+                    realm_id=realm_id,
                 )
             except entity_resolution.EntityNameError as e:
                 job["status"] = "Import blocked: entity names missing"

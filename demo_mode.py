@@ -531,6 +531,7 @@ def reset_demo_workspace(db, firm_id: int, run_id: str,
                 pass
 
     cleared_cutover = 0
+    cleared_entities = 0
     if clear_cutover:
         try:
             cleared_cutover = db.delete_cutover_settings(firm_id)
@@ -538,10 +539,20 @@ def reset_demo_workspace(db, firm_id: int, run_id: str,
             # Older deploys without the delete helper still get a working
             # reset; Step 1 just keeps its prior values.
             cleared_cutover = 0
+        # A genuinely fresh migration is for a different client's books, so
+        # the resolved Customer/Vendor map from the prior batch must not
+        # carry over — a stale entity Id would post the new client's A/R to
+        # the old client's customer. Best-effort: older deploys without the
+        # helper still reset cleanly, they just re-resolve names next post.
+        try:
+            cleared_entities = db.delete_entity_map_for_firm(firm_id)
+        except Exception:  # noqa: BLE001
+            cleared_entities = 0
 
     return {
         "archived_jobs": archived,
         "cleared_mappings": cleared_mappings,
         "cleared_cutover": cleared_cutover,
+        "cleared_entities": cleared_entities,
         "run_id": run_id,
     }

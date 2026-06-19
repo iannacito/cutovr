@@ -167,6 +167,21 @@ CREATE TABLE IF NOT EXISTS account_mappings (
 CREATE INDEX IF NOT EXISTS idx_acctmap_firm_realm
     ON account_mappings(firm_id, realm_id);
 
+CREATE TABLE IF NOT EXISTS entity_map (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    firm_id           INTEGER NOT NULL REFERENCES firms(id),
+    realm_id          TEXT NOT NULL,
+    kind              TEXT NOT NULL,
+    normalized_name   TEXT NOT NULL,
+    qbo_entity_id     TEXT NOT NULL,
+    display_name      TEXT,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    UNIQUE (firm_id, realm_id, kind, normalized_name)
+);
+CREATE INDEX IF NOT EXISTS idx_entitymap_firm_realm
+    ON entity_map(firm_id, realm_id, kind);
+
 CREATE TABLE IF NOT EXISTS audit_logs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     firm_id     INTEGER,
@@ -1036,6 +1051,66 @@ class AppDB:
                 "AND pclaw_account_number IS ? AND pclaw_account_name IS ?",
                 (firm_id, realm_id, pclaw_account_number, pclaw_account_name),
             )
+
+    # --- entity map (resolved QBO customers / vendors) ---------------------
+
+    def list_entity_map(self, firm_id: int, realm_id: str) -> list:
+        """Return every resolved Customer/Vendor mapping for a firm+realm.
+
+        Each row records a normalized entity name and the QuickBooks Id it
+        resolved to, so a re-run of a GL import reuses the same QuickBooks
+        entity instead of re-querying or re-creating it.
+        """
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT kind, normalized_name, qbo_entity_id, display_name "
+                "FROM entity_map WHERE firm_id = ? AND realm_id = ?",
+                (firm_id, realm_id),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def save_entity_map_entry(
+        self,
+        firm_id: int,
+        realm_id: str,
+        kind: str,
+        normalized_name: str,
+        qbo_entity_id: str,
+        display_name: Optional[str] = None,
+    ) -> None:
+        """Persist one resolved entity (Customer/Vendor) by normalized name.
+
+        Keyed on (firm_id, realm_id, kind, normalized_name) so re-resolving
+        the same name updates the stored Id rather than inserting a
+        duplicate row.
+        """
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO entity_map "
+                "(firm_id, realm_id, kind, normalized_name, qbo_entity_id, "
+                " display_name, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(firm_id, realm_id, kind, normalized_name) "
+                "DO UPDATE SET qbo_entity_id = excluded.qbo_entity_id, "
+                "              display_name = excluded.display_name, "
+                "              updated_at = excluded.updated_at",
+                (
+                    firm_id, realm_id, kind, normalized_name, qbo_entity_id,
+                    display_name, _now(), _now(),
+                ),
+            )
+
+    def delete_entity_map_for_firm(self, firm_id: int) -> int:
+        """Drop every entity-map row for a firm. Returns the count deleted.
+
+        Used by Start-new-migration so a fresh migration doesn't carry
+        stale entity resolutions from the prior client's books.
+        """
+        with self._conn() as c:
+            cur = c.execute(
+                "DELETE FROM entity_map WHERE firm_id = ?", (firm_id,)
+            )
+            return cur.rowcount or 0
 
     # --- cutover settings --------------------------------------------------
 

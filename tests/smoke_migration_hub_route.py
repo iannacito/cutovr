@@ -68,7 +68,13 @@ def t1_empty_hub_renders():
     body = r.get_data(as_text=True)
     assert "Migration" in body and "Hub" in body, body[:500]
     assert "No general ledgers yet" in body, "empty state should render"
-    print("T1 OK: /migration-hub renders the empty state for a new firm")
+    # The firm-level setup cards render even for a brand-new firm so the
+    # operator sees what's required (COA, Vendors & Clients, Opening Balances).
+    assert 'data-testid="hub-setup"' in body, "setup section should render"
+    assert "Chart of Accounts" in body
+    assert "Vendors &amp; Clients" in body or "Vendors & Clients" in body
+    assert "Opening Balances" in body
+    print("T1 OK: /migration-hub renders the empty state + setup cards for a new firm")
 
 
 def t2_multiple_gls_each_get_a_card():

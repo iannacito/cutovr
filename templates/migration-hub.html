@@ -44,6 +44,32 @@
     </div>
   </section>
 
+  {# Firm-level setup prerequisites: the things that must be in place
+     before any general ledger can post. Each reflects real migration
+     state (accounts created/matched, listings uploaded, opening balances
+     posted) so the operator sees what's left at a glance. #}
+  {% if setup_cards %}
+    <section style="margin-top:var(--space-6);" data-testid="hub-setup">
+      <p class="eyebrow" style="margin:0 0 var(--space-3);">Migration setup</p>
+      <div class="grid-three">
+        {% for s in setup_cards %}
+          <article class="card" data-testid="hub-setup-card"
+                   data-setup-key="{{ s.key }}"
+                   data-setup-done="{{ 'true' if s.done else 'false' }}">
+            <div class="flex-between" style="align-items:flex-start;gap:var(--space-3);">
+              <h3 style="margin:0;">{{ s.title }}</h3>
+              <span class="badge
+                {%- if s.done %} success
+                {%- elif s.needs_attention %} error{% endif %}"
+                data-testid="hub-setup-status">{{ s.status_label }}</span>
+            </div>
+            <p class="muted" style="margin:var(--space-3) 0 0;">{{ s.detail }}</p>
+          </article>
+        {% endfor %}
+      </div>
+    </section>
+  {% endif %}
+
   {% if not cards %}
     <section class="card" data-testid="hub-empty"
              style="text-align:center;padding:var(--space-8);">

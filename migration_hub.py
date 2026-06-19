@@ -103,6 +103,117 @@ class GLCard:
         }
 
 
+@dataclass
+class SetupCard:
+    """One firm-level setup prerequisite shown above the per-GL board.
+
+    These are the things that must be in place before *any* general ledger
+    can post: the Chart of Accounts, the people the firm bills and pays
+    (Customers & Vendors), and the opening balances. Each card reports a
+    plain-English status and whether it still needs attention.
+    """
+
+    key: str
+    title: str
+    status_label: str
+    detail: str
+    done: bool
+    needs_attention: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "key": self.key,
+            "title": self.title,
+            "status_label": self.status_label,
+            "detail": self.detail,
+            "done": self.done,
+            "needs_attention": self.needs_attention,
+        }
+
+
+def build_setup_cards(*, has_qbo_connection: bool, account_mapping_count: int,
+                      coa_created_count: int, customer_list_count: int,
+                      vendor_list_count: int, opening_balance_state: str
+                      ) -> List[SetupCard]:
+    """Build the three firm-level setup cards from real migration state.
+
+    ``opening_balance_state`` is one of: ``"posted"``, ``"failed"``,
+    ``"pending"`` (uploaded a trial balance but not yet posted), or
+    ``"none"`` (no trial balance on file).
+    """
+    cards: List[SetupCard] = []
+
+    # 1. Chart of Accounts — either accounts were created in QuickBooks from
+    #    an uploaded COA, or the firm matched its PCLaw accounts to existing
+    #    QuickBooks accounts. Either path satisfies "accounts are ready".
+    coa_done = coa_created_count > 0 or account_mapping_count > 0
+    if coa_created_count > 0:
+        coa_detail = f"{coa_created_count} account(s) created in QuickBooks."
+    elif account_mapping_count > 0:
+        coa_detail = f"{account_mapping_count} PCLaw account(s) matched to QuickBooks."
+    else:
+        coa_detail = "Upload your Chart of Accounts and match it to QuickBooks."
+    cards.append(SetupCard(
+        key="chart_of_accounts",
+        title="Chart of Accounts",
+        status_label="Ready" if coa_done else "Needs attention",
+        detail=coa_detail,
+        done=coa_done,
+        needs_attention=not coa_done,
+    ))
+
+    # 2. Vendors & Clients — the uploaded listings are the authoritative
+    #    source for the names A/R / A/P journal lines must reference.
+    entity_total = customer_list_count + vendor_list_count
+    entity_done = entity_total > 0
+    if entity_done:
+        ent_detail = (
+            f"{customer_list_count} client(s) and {vendor_list_count} "
+            "vendor(s) on file to match journal entries against."
+        )
+    else:
+        ent_detail = (
+            "Upload your client and vendor lists so we can match every "
+            "Accounts Receivable / Accounts Payable line to a real name."
+        )
+    cards.append(SetupCard(
+        key="vendors_clients",
+        title="Vendors & Clients",
+        status_label="Ready" if entity_done else "Recommended",
+        detail=ent_detail,
+        done=entity_done,
+        needs_attention=False,
+    ))
+
+    # 3. Opening Balances — the trial balance posted as the opening journal
+    #    entry. A failed attempt is surfaced as needs-attention so the
+    #    operator can retry it.
+    ob_done = opening_balance_state == "posted"
+    ob_failed = opening_balance_state == "failed"
+    ob_label = {
+        "posted": "Posted",
+        "failed": "Needs attention",
+        "pending": "Ready to post",
+        "none": "Not started",
+    }.get(opening_balance_state, "Not started")
+    ob_detail = {
+        "posted": "Opening balances are in QuickBooks.",
+        "failed": "The last opening-balance post failed — open to retry.",
+        "pending": "Trial balance uploaded. Post it to set opening balances.",
+        "none": "Upload your trial balance to set opening balances.",
+    }.get(opening_balance_state, "Upload your trial balance to set opening balances.")
+    cards.append(SetupCard(
+        key="opening_balances",
+        title="Opening Balances",
+        status_label=ob_label,
+        detail=ob_detail,
+        done=ob_done,
+        needs_attention=ob_failed,
+    ))
+
+    return cards
+
+
 def _gl_status_and_blockers(job: dict, *, has_qbo_connection: bool,
                             account_mapping_count: int):
     """Classify a single GL job. Returns (status, blockers, entity_needs)."""
