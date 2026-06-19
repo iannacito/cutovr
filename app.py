@@ -10098,16 +10098,23 @@ def calendly_webhook_endpoint():
     if not isinstance(payload, dict):
         return jsonify({"error": "invalid payload"}), 400
 
-    event = (payload.get("event") or "").strip()
+    event = (payload.get("event") or payload.get("event_type") or "").strip()
     handled = {
         "invitee.created", "invitee.canceled",
         "routing_form_submission.created",
     }
-    if event not in handled:
-        # Acknowledge so Calendly stops retrying, but record nothing.
-        return jsonify({"status": "ignored", "event": event}), 200
-
     invitee_uri = calendly_webhook.invitee_uri_from_payload(payload)
+    if event not in handled:
+        # Be lenient about the envelope: real Calendly always sends a known
+        # ``event`` string, but a proxy/integration (or a manual API replay)
+        # may POST a bare invitee with no event. If the payload still carries
+        # an invitee URI we treat it as a booking so a real lead is never
+        # silently dropped; otherwise we acknowledge and record nothing so
+        # Calendly stops retrying.
+        if not invitee_uri:
+            return jsonify({"status": "ignored", "event": event}), 200
+        event = "invitee.created"
+
     if not invitee_uri:
         return jsonify({"status": "ignored", "reason": "no invitee uri"}), 200
 
@@ -10181,6 +10188,30 @@ def _calendly_lead_view(row: dict) -> dict:
     }
 
 
+def _calendly_diagnostics() -> dict:
+    """Assemble the secret-free Calendly setup snapshot for operator views.
+
+    Combines env-presence booleans (from calendly_webhook.diagnostics) with
+    live DB counts so an operator can tell, at a glance, whether a booked
+    call actually reached the app. Never returns any secret value.
+    """
+    try:
+        lead_count = db.count_calendly_leads()
+    except Exception:  # noqa: BLE001 - diagnostics must never 500
+        lead_count = None
+    try:
+        last_lead_at = db.latest_calendly_lead_received_at()
+    except Exception:  # noqa: BLE001
+        last_lead_at = None
+    return calendly_webhook.diagnostics(
+        app_env=APP_ENV,
+        public_base_url=os.environ.get("PUBLIC_APP_URL") or request.url_root.rstrip("/"),
+        lead_count=lead_count,
+        last_lead_at=last_lead_at,
+        operator_emails_count=len(operator_panel.get_operator_emails()),
+    )
+
+
 @app.route("/operator/leads")
 @operator_required
 def operator_leads_list():
@@ -10192,7 +10223,28 @@ def operator_leads_list():
     """
     rows = db.list_calendly_leads(limit=200)
     leads = [_calendly_lead_view(r) for r in rows]
-    return render_template("operator-leads.html", leads=leads)
+    return render_template(
+        "operator-leads.html",
+        leads=leads,
+        calendly=_calendly_diagnostics(),
+    )
+
+
+@app.route("/operator/calendly")
+@operator_required
+def operator_calendly_diagnostics():
+    """Calendly setup / readiness diagnostics for operators.
+
+    Shows the exact webhook endpoint to paste into Calendly plus non-secret
+    presence flags (signing key / API token / booking URL / notification
+    config), the number of stored leads, and when the last booking webhook
+    was received — so a "booked but not showing up" report is debuggable
+    without any external dashboard. Renders no secret values.
+    """
+    return render_template(
+        "operator-calendly.html",
+        calendly=_calendly_diagnostics(),
+    )
 
 
 @app.route("/operator/leads/<int:lead_id>")
