@@ -351,6 +351,17 @@ class AppDB:
         # corrected QBO AccountType). Persisted alongside create history so
         # the corrections survive a reload too.
         add_col("jobs", "coa_type_overrides_json TEXT")
+        # Entity-name blockers recorded when a GL import is refused because
+        # A/R or A/P rows resolve to a blank customer/vendor name. Persisted
+        # so the Migration Hub and job-detail page can keep showing which
+        # ledger needs names after a reload/redeploy (the in-memory dict is
+        # lost on restart). Shape: {"kind": "Customer"|"Vendor", "offenders": [...]}.
+        add_col("jobs", "entity_name_blockers_json TEXT")
+        # Opening-balance posting attempts (Trial Balance -> opening JE).
+        # Each entry records success or a retryable failure (status, error,
+        # qbo_je_id). Persisted so a failed attempt stays visible and
+        # retryable after a reload instead of silently vanishing.
+        add_col("jobs", "opening_balance_history_json TEXT")
         # Canonical migration checkpoint (durable, resumable foundation).
         # One of: uploaded | parsed | matched | reviewed | importing |
         # completed | needs_attention. Distinct from the free-text status
@@ -760,6 +771,20 @@ class AppDB:
                 if job_dict["coa_type_overrides"]
                 else None
             )
+        if "entity_name_blockers" in job_dict:
+            fields.append("entity_name_blockers_json")
+            values.append(
+                json.dumps(job_dict["entity_name_blockers"])
+                if job_dict["entity_name_blockers"]
+                else None
+            )
+        if "opening_balance_history" in job_dict:
+            fields.append("opening_balance_history_json")
+            values.append(
+                json.dumps(job_dict["opening_balance_history"])
+                if job_dict["opening_balance_history"]
+                else None
+            )
 
         set_clause = ", ".join(f"{f} = ?" for f in fields)
         values.append(job_id)
@@ -821,6 +846,8 @@ class AppDB:
             ("gl_rows_json", "gl_rows"),
             ("coa_create_history_json", "coa_create_history"),
             ("coa_type_overrides_json", "coa_type_overrides"),
+            ("entity_name_blockers_json", "entity_name_blockers"),
+            ("opening_balance_history_json", "opening_balance_history"),
         ]:
             v = row[src] if src in row.keys() else None
             if v:
@@ -1024,6 +1051,21 @@ class AppDB:
                 (firm_id,),
             ).fetchone()
             return dict(row) if row else None
+
+    def delete_cutover_settings(self, firm_id: int) -> int:
+        """Remove a firm's cutover settings row so the next migration
+        starts from a blank Step 1.
+
+        Used by the production "Start a new migration" reset. Returns the
+        number of rows deleted (0 or 1). This only clears the firm's typed
+        migration configuration — it never touches QuickBooks or job rows.
+        """
+        with self._conn() as c:
+            cur = c.execute(
+                "DELETE FROM cutover_settings WHERE firm_id = ?",
+                (firm_id,),
+            )
+            return cur.rowcount or 0
 
     def upsert_cutover_settings(
         self,

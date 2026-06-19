@@ -28,6 +28,26 @@
     <div class="flash error">{{ confirmation_error }}</div>
   {% endif %}
 
+  {% set last_attempt = (job.opening_balance_history or [])|last %}
+  {% if last_attempt and last_attempt.status == 'failed' %}
+    <section class="card error-panel">
+      <p class="eyebrow">Last attempt didn't post</p>
+      <h2><span class="badge error">Retry needed</span> The opening balance hasn't posted yet</h2>
+      <p>
+        We tried to post your starting balances to QuickBooks but the last
+        attempt didn't go through, so <strong>nothing was created</strong>.
+        Your migration is still on track — review the balances below and try
+        again when you're ready.
+      </p>
+      {% if last_attempt.error %}
+        <p class="muted">Details: {{ last_attempt.error }}</p>
+      {% endif %}
+      {% if last_attempt.intuit_tid %}
+        <p class="muted">Intuit reference: {{ last_attempt.intuit_tid }}</p>
+      {% endif %}
+    </section>
+  {% endif %}
+
   {% if tb_coa_validation %}
   <section class="card {% if not tb_coa_validation.ready %}error-panel{% endif %}">
     <p class="eyebrow">Chart of Accounts readiness</p>
@@ -293,6 +313,8 @@
             credits=${{ h.total_credit }}
             {% if h.qbo_je_id %}
               &middot; JE #{{ h.qbo_je_id }}
+            {% elif h.status == 'failed' %}
+              &middot; <span class="badge error">failed</span>{% if h.error %} ({{ h.error }}){% endif %}
             {% elif h.demo_mode %}
               &middot; demo (not posted)
             {% endif %}

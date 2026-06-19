@@ -452,11 +452,19 @@ def supersede_prior_jobs(db, firm_id: int, report_type: str,
     return superseded
 
 
-def reset_demo_workspace(db, firm_id: int, run_id: str) -> dict:
+def reset_demo_workspace(db, firm_id: int, run_id: str,
+                         clear_cutover: bool = False) -> dict:
     """Archive all jobs for a firm so the demo starts from a clean slate.
 
     Returns a dict ``{"archived_jobs": int, "cleared_mappings": int,
-    "run_id": str}``.
+    "cleared_cutover": int, "run_id": str}``.
+
+    ``clear_cutover`` (default False) additionally removes the firm's
+    cutover_settings row so the migration restarts from a blank Step 1.
+    The repeatable demo deliberately leaves this False — re-typing the
+    cutover date every demo run would be hostile. Production "Start a new
+    migration" passes True so a genuinely fresh batch does not inherit the
+    prior batch's cutover date / country / basis.
 
     Important:
 
@@ -522,8 +530,18 @@ def reset_demo_workspace(db, firm_id: int, run_id: str) -> dict:
                 # Don't let a single bad row block the whole reset.
                 pass
 
+    cleared_cutover = 0
+    if clear_cutover:
+        try:
+            cleared_cutover = db.delete_cutover_settings(firm_id)
+        except Exception:  # noqa: BLE001
+            # Older deploys without the delete helper still get a working
+            # reset; Step 1 just keeps its prior values.
+            cleared_cutover = 0
+
     return {
         "archived_jobs": archived,
         "cleared_mappings": cleared_mappings,
+        "cleared_cutover": cleared_cutover,
         "run_id": run_id,
     }
