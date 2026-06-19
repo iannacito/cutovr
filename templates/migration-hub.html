@@ -1,0 +1,118 @@
+{% extends "_base.html" %}
+{% block title %}{{ firm.name }} &mdash; Migration Hub{% endblock %}
+{% block content %}
+<section class="page">
+  {% include "_workflow_stepper.html" %}
+
+  <div class="hero">
+    <p class="eyebrow">{{ firm.name }} &middot; General ledgers</p>
+    <h1>Migration <em>Hub</em>.</h1>
+    <p>
+      One card per general ledger you&rsquo;ve uploaded. Work the list top
+      to bottom &mdash; the ledgers that need attention come first. Open any
+      ledger to fix what it needs or send it to QuickBooks. A ledger that&rsquo;s
+      stuck never hides the others.
+    </p>
+  </div>
+
+  {# Status summary: a quick at-a-glance count so the operator knows how
+     much is left without scanning every card. total_gls excludes
+     replaced/unreadable files. #}
+  <section class="card" data-testid="hub-summary"
+           style="display:flex;flex-wrap:wrap;gap:var(--space-6);align-items:center;">
+    <div>
+      <p class="eyebrow" style="margin:0;">Active ledgers</p>
+      <p style="font-size:1.6rem;margin:0;font-weight:600;">{{ hub.total_gls }}</p>
+    </div>
+    <div>
+      <p class="eyebrow" style="margin:0;">Needs attention</p>
+      <p style="font-size:1.6rem;margin:0;font-weight:600;"
+         data-testid="hub-blocked-count">{{ hub.blocked_count }}</p>
+    </div>
+    <div>
+      <p class="eyebrow" style="margin:0;">Ready to send</p>
+      <p style="font-size:1.6rem;margin:0;font-weight:600;"
+         data-testid="hub-ready-count">{{ hub.ready_count }}</p>
+    </div>
+    <div>
+      <p class="eyebrow" style="margin:0;">Sent to QuickBooks</p>
+      <p style="font-size:1.6rem;margin:0;font-weight:600;"
+         data-testid="hub-imported-count">{{ hub.imported_count }}</p>
+    </div>
+    <div style="margin-left:auto;">
+      <a class="btn" href="{{ url_for('dashboard') }}">Upload another ledger</a>
+    </div>
+  </section>
+
+  {% if not cards %}
+    <section class="card" data-testid="hub-empty"
+             style="text-align:center;padding:var(--space-8);">
+      <h2>No general ledgers yet</h2>
+      <p class="muted" style="max-width:52ch;margin:var(--space-3) auto 0;">
+        Upload your PCLaw transaction-history exports and each one shows up
+        here as its own card.
+      </p>
+      <div class="actions-row" style="justify-content:center;margin-top:var(--space-5);">
+        <a class="btn btn-primary btn-lg" href="{{ url_for('dashboard') }}">Upload a ledger</a>
+      </div>
+    </section>
+  {% else %}
+    <div class="stack" data-testid="hub-cards">
+      {% for card in cards %}
+        <article class="card" data-testid="hub-card"
+                 data-job-id="{{ card.job_id }}"
+                 data-status="{{ card.status }}"
+                 style="margin-bottom:var(--space-4);">
+          <div class="flex-between" style="gap:var(--space-4);align-items:flex-start;">
+            <div>
+              <p class="eyebrow" style="margin:0;">General ledger</p>
+              <h2 style="margin:var(--space-1) 0 0;">{{ card.company or "Untitled ledger" }}</h2>
+              <p class="muted" style="margin:var(--space-2) 0 0;">{{ card.status_blurb }}</p>
+            </div>
+            <span class="badge
+              {%- if card.status == 'imported' %} success
+              {%- elif card.status in ('blocked', 'failed') %} error
+              {%- elif card.status == 'ready' %} success{% endif %}"
+              data-testid="hub-card-status">{{ card.status_label }}</span>
+          </div>
+
+          {% if card.blockers %}
+            <div style="margin-top:var(--space-4);">
+              <p class="eyebrow" style="margin:0 0 var(--space-2);">Before this ledger can post</p>
+              <ul class="secure-list" data-testid="hub-card-blockers">
+                {% for b in card.blockers %}<li>{{ b }}</li>{% endfor %}
+              </ul>
+            </div>
+          {% endif %}
+
+          <dl class="summary-grid" style="margin-top:var(--space-4);">
+            {% if card.line_count %}
+              <div><dt>Rows</dt><dd>{{ card.line_count }}</dd></div>
+            {% endif %}
+            {% if card.je_count %}
+              <div><dt>Journal entries in QuickBooks</dt><dd>{{ card.je_count }}</dd></div>
+            {% endif %}
+            {% if card.created_at %}
+              <div><dt>Uploaded</dt><dd>{{ card.created_at[:10] }}</dd></div>
+            {% endif %}
+          </dl>
+
+          <div class="actions-row" style="margin-top:var(--space-5);">
+            <a class="btn btn-primary"
+               href="{{ url_for('job_detail', job_id=card.job_id) }}"
+               data-testid="hub-card-open">
+              {{ card.action_label }} &rarr;
+            </a>
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  <p class="note" style="margin-top:var(--space-6);">
+    Scope: general ledgers uploaded by <strong>{{ firm.name }}</strong>. Replaced
+    and unreadable files are kept out of the board so the list stays focused on
+    what still needs work.
+  </p>
+</section>
+{% endblock %}

@@ -175,6 +175,7 @@
       </dl>
       <div class="actions-row" style="margin-top:var(--space-6);">
         <a class="btn" href="{{ url_for('migration_checklist') }}">Checklist</a>
+        <a class="btn" href="{{ url_for('migration_hub_page') }}" data-testid="dashboard-hub-link">Ledgers</a>
         <a class="btn" href="{{ url_for('quickbooks_manage') }}">QuickBooks</a>
         <a class="btn btn-link" href="{{ url_for('onboarding') }}">Onboarding guide</a>
         <a class="btn btn-link" href="{{ url_for('quickbooks_guide') }}">New to QuickBooks?</a>
@@ -192,13 +193,13 @@
         <p class="eyebrow" style="margin:0 0 var(--space-2);">New migration</p>
         <h2 style="margin:0;">Start a new client migration</h2>
         <p class="muted" style="margin:var(--space-2) 0 0;max-width:60ch;">
-          Archives this firm&rsquo;s prior uploads and saved account matches in
-          {{ app_name }} and takes you back to Step 1. Nothing is deleted from
-          QuickBooks.
+          Clears this firm&rsquo;s prior uploads, saved account matches, and
+          migration setup in {{ app_name }} and takes you back to Step 1 with a
+          clean slate. Nothing is deleted from QuickBooks.
         </p>
       </div>
       <form action="{{ url_for('welcome_back_start_fresh') }}" method="post"
-            onsubmit="return confirm('Start a new migration? Your in-progress uploads and account matches will be archived.');">
+            onsubmit="return confirm('Start a new migration? Your in-progress uploads, account matches, and migration setup will be cleared so you start fresh.');">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button class="btn btn-primary btn-lg" type="submit"
                 data-testid="dashboard-start-new-cta">
