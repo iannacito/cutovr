@@ -167,6 +167,21 @@ CREATE TABLE IF NOT EXISTS account_mappings (
 CREATE INDEX IF NOT EXISTS idx_acctmap_firm_realm
     ON account_mappings(firm_id, realm_id);
 
+CREATE TABLE IF NOT EXISTS entity_map (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    firm_id           INTEGER NOT NULL REFERENCES firms(id),
+    realm_id          TEXT NOT NULL,
+    kind              TEXT NOT NULL,
+    normalized_name   TEXT NOT NULL,
+    qbo_entity_id     TEXT NOT NULL,
+    display_name      TEXT,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    UNIQUE (firm_id, realm_id, kind, normalized_name)
+);
+CREATE INDEX IF NOT EXISTS idx_entitymap_firm_realm
+    ON entity_map(firm_id, realm_id, kind);
+
 CREATE TABLE IF NOT EXISTS audit_logs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     firm_id     INTEGER,
@@ -351,6 +366,17 @@ class AppDB:
         # corrected QBO AccountType). Persisted alongside create history so
         # the corrections survive a reload too.
         add_col("jobs", "coa_type_overrides_json TEXT")
+        # Entity-name blockers recorded when a GL import is refused because
+        # A/R or A/P rows resolve to a blank customer/vendor name. Persisted
+        # so the Migration Hub and job-detail page can keep showing which
+        # ledger needs names after a reload/redeploy (the in-memory dict is
+        # lost on restart). Shape: {"kind": "Customer"|"Vendor", "offenders": [...]}.
+        add_col("jobs", "entity_name_blockers_json TEXT")
+        # Opening-balance posting attempts (Trial Balance -> opening JE).
+        # Each entry records success or a retryable failure (status, error,
+        # qbo_je_id). Persisted so a failed attempt stays visible and
+        # retryable after a reload instead of silently vanishing.
+        add_col("jobs", "opening_balance_history_json TEXT")
         # Canonical migration checkpoint (durable, resumable foundation).
         # One of: uploaded | parsed | matched | reviewed | importing |
         # completed | needs_attention. Distinct from the free-text status
@@ -760,6 +786,20 @@ class AppDB:
                 if job_dict["coa_type_overrides"]
                 else None
             )
+        if "entity_name_blockers" in job_dict:
+            fields.append("entity_name_blockers_json")
+            values.append(
+                json.dumps(job_dict["entity_name_blockers"])
+                if job_dict["entity_name_blockers"]
+                else None
+            )
+        if "opening_balance_history" in job_dict:
+            fields.append("opening_balance_history_json")
+            values.append(
+                json.dumps(job_dict["opening_balance_history"])
+                if job_dict["opening_balance_history"]
+                else None
+            )
 
         set_clause = ", ".join(f"{f} = ?" for f in fields)
         values.append(job_id)
@@ -821,6 +861,8 @@ class AppDB:
             ("gl_rows_json", "gl_rows"),
             ("coa_create_history_json", "coa_create_history"),
             ("coa_type_overrides_json", "coa_type_overrides"),
+            ("entity_name_blockers_json", "entity_name_blockers"),
+            ("opening_balance_history_json", "opening_balance_history"),
         ]:
             v = row[src] if src in row.keys() else None
             if v:
@@ -1010,6 +1052,66 @@ class AppDB:
                 (firm_id, realm_id, pclaw_account_number, pclaw_account_name),
             )
 
+    # --- entity map (resolved QBO customers / vendors) ---------------------
+
+    def list_entity_map(self, firm_id: int, realm_id: str) -> list:
+        """Return every resolved Customer/Vendor mapping for a firm+realm.
+
+        Each row records a normalized entity name and the QuickBooks Id it
+        resolved to, so a re-run of a GL import reuses the same QuickBooks
+        entity instead of re-querying or re-creating it.
+        """
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT kind, normalized_name, qbo_entity_id, display_name "
+                "FROM entity_map WHERE firm_id = ? AND realm_id = ?",
+                (firm_id, realm_id),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def save_entity_map_entry(
+        self,
+        firm_id: int,
+        realm_id: str,
+        kind: str,
+        normalized_name: str,
+        qbo_entity_id: str,
+        display_name: Optional[str] = None,
+    ) -> None:
+        """Persist one resolved entity (Customer/Vendor) by normalized name.
+
+        Keyed on (firm_id, realm_id, kind, normalized_name) so re-resolving
+        the same name updates the stored Id rather than inserting a
+        duplicate row.
+        """
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO entity_map "
+                "(firm_id, realm_id, kind, normalized_name, qbo_entity_id, "
+                " display_name, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(firm_id, realm_id, kind, normalized_name) "
+                "DO UPDATE SET qbo_entity_id = excluded.qbo_entity_id, "
+                "              display_name = excluded.display_name, "
+                "              updated_at = excluded.updated_at",
+                (
+                    firm_id, realm_id, kind, normalized_name, qbo_entity_id,
+                    display_name, _now(), _now(),
+                ),
+            )
+
+    def delete_entity_map_for_firm(self, firm_id: int) -> int:
+        """Drop every entity-map row for a firm. Returns the count deleted.
+
+        Used by Start-new-migration so a fresh migration doesn't carry
+        stale entity resolutions from the prior client's books.
+        """
+        with self._conn() as c:
+            cur = c.execute(
+                "DELETE FROM entity_map WHERE firm_id = ?", (firm_id,)
+            )
+            return cur.rowcount or 0
+
     # --- cutover settings --------------------------------------------------
 
     def get_cutover_settings(self, firm_id: int) -> Optional[dict]:
@@ -1024,6 +1126,21 @@ class AppDB:
                 (firm_id,),
             ).fetchone()
             return dict(row) if row else None
+
+    def delete_cutover_settings(self, firm_id: int) -> int:
+        """Remove a firm's cutover settings row so the next migration
+        starts from a blank Step 1.
+
+        Used by the production "Start a new migration" reset. Returns the
+        number of rows deleted (0 or 1). This only clears the firm's typed
+        migration configuration — it never touches QuickBooks or job rows.
+        """
+        with self._conn() as c:
+            cur = c.execute(
+                "DELETE FROM cutover_settings WHERE firm_id = ?",
+                (firm_id,),
+            )
+            return cur.rowcount or 0
 
     def upsert_cutover_settings(
         self,

@@ -174,7 +174,7 @@ def build_dry_run_preview(
                 qbo_type = account_type_index.get(qbo_id)
                 hint = derive_entity_hint(r, qbo_type)
                 if hint:
-                    kind, name = hint
+                    kind, name = hint[0], hint[1]
                     bucket = customers_needed if kind == "Customer" else vendors_needed
                     rec = bucket.setdefault(name, {"name": name, "kind": kind, "lines": 0})
                     rec["lines"] += 1

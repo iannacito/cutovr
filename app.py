@@ -21,7 +21,9 @@ import branding
 import calendly_webhook
 import data_retention
 import demo_mode
+import entity_resolution
 import job_checkpoints
+import migration_hub
 import operator_panel
 import readiness
 from pclaw_parser import parse_pclaw_csv, export_qbo_csv
@@ -1558,7 +1560,12 @@ def welcome_back_start_fresh():
     # is exactly what production "start fresh" needs. The helper itself
     # writes no demo-specific data; only its name is demo-flavored.
     run_id = demo_mode.new_demo_run_id()
-    result = demo_mode.reset_demo_workspace(db, firm_id, run_id)
+    # Production "Start a new migration" clears the firm's cutover context
+    # too, so the new batch starts from a blank Step 1 rather than
+    # inheriting the prior migration's cutover date / country / basis.
+    result = demo_mode.reset_demo_workspace(
+        db, firm_id, run_id, clear_cutover=True
+    )
     # Production deploys don't store a per-firm "current demo run id",
     # but in demo mode we still want the run-id roll-forward so the demo
     # data set salts uniquely. Setting it is a no-op if demo mode is off.
@@ -1572,13 +1579,14 @@ def welcome_back_start_fresh():
         target_id=str(firm_id),
         details=(
             f"run_id={run_id} archived_jobs={result['archived_jobs']} "
-            f"cleared_mappings={result.get('cleared_mappings', 0)}"
+            f"cleared_mappings={result.get('cleared_mappings', 0)} "
+            f"cleared_cutover={result.get('cleared_cutover', 0)}"
         ),
     )
     flash(
-        "Starting a new migration. Your prior uploads and saved account "
-        "matches have been archived in this app — nothing was deleted "
-        "from QuickBooks.",
+        "Starting a new migration. Your prior uploads, saved account "
+        "matches, and migration setup have been cleared in this app so you "
+        "begin from a clean slate — nothing was deleted from QuickBooks.",
         "success",
     )
     return redirect(url_for("cutover_setup"))
@@ -2166,10 +2174,29 @@ def _build_reconcile_view(firm_id):
     )
     match_blocked, blocked_job_id = _firm_match_blocked_state(firm_id)
     firm = db.get_firm(firm_id) or {}
+    # Step 6 reachability must survive a re-upload. When a firm uploads a
+    # newer GL of the same type, the prior GL is marked "Superseded" and
+    # dropped from the active set — but if that prior GL was already
+    # imported, its transaction history is still in QuickBooks, so Step 6
+    # must remain reachable. Without this, a re-upload silently knocked
+    # the user from Step 6 back to Step 5. We therefore feed the
+    # reconciliation summary the active jobs PLUS any imported GL the
+    # active filter dropped, deduped by id.
+    summary_jobs = list(hydrated)
+    seen_ids = {j.get("id") for j in summary_jobs}
+    for row in db.list_jobs_for_firm(firm_id, limit=500):
+        if row.get("id") in seen_ids:
+            continue
+        if (row.get("report_type") or "general_ledger") != REPORT_GENERAL_LEDGER:
+            continue
+        h = db.hydrate_job(row["id"]) or row
+        if h.get("import_summary"):
+            summary_jobs.append(h)
+            seen_ids.add(row.get("id"))
     summary = final_report.build_reconciliation_summary(
         firm_name=firm.get("name") or "Your firm",
         cutover=cutover,
-        jobs=hydrated,
+        jobs=summary_jobs,
         qbo_connections=qbo_conns,
         account_mapping_count=_firm_account_mapping_count(firm_id),
     )
@@ -2472,48 +2499,145 @@ def firm_imports():
     )
 
 
-def _resolve_entity_hints(qbo, payloads):
+@app.route("/migration-hub")
+@login_required
+def migration_hub_page():
+    """Per-GL processing board for firms with several general ledgers.
+
+    The single-pass stepper assumes one GL. A firm migrating several
+    monthly general ledgers needs to see each ledger's status side by
+    side, work the blocked ones first, and open any single GL to resolve
+    or post it — without one stuck file hiding the rest. This route is a
+    read-only projection: it hydrates the firm's GL jobs and hands them
+    to ``migration_hub.build_hub``, which performs no I/O. Per-GL retry
+    and posting actions live on the existing job-detail page that each
+    card links to.
+    """
+    user = current_user()
+    firm_id = user["firm_id"]
+    gl_rows = _firm_latest_jobs_by_type(firm_id, REPORT_GENERAL_LEDGER, limit=500)
+    hydrated = [db.hydrate_job(row["id"]) or row for row in gl_rows]
+    qbo_conns = db.list_qbo_connections_for_firm(firm_id)
+    account_mapping_count = _firm_account_mapping_count(firm_id)
+    hub = migration_hub.build_hub(
+        hydrated,
+        has_qbo_connection=bool(qbo_conns),
+        account_mapping_count=account_mapping_count,
+    )
+    customer_rows = _firm_latest_parsed_list(
+        firm_id, REPORT_CUSTOMER_LIST, "parsed_customer_list"
+    )
+    vendor_rows = _firm_latest_parsed_list(
+        firm_id, REPORT_VENDOR_LIST, "parsed_vendor_list"
+    )
+    setup_cards = migration_hub.build_setup_cards(
+        has_qbo_connection=bool(qbo_conns),
+        account_mapping_count=account_mapping_count,
+        coa_created_count=_firm_coa_created_count(firm_id),
+        customer_list_count=len(customer_rows),
+        vendor_list_count=len(vendor_rows),
+        opening_balance_state=_firm_opening_balance_state(firm_id),
+    )
+    return render_template(
+        "migration-hub.html",
+        hub=hub,
+        cards=[c.to_dict() for c in hub["cards"]],
+        setup_cards=[c.to_dict() for c in setup_cards],
+        **_workflow_stepper_context(firm_id),
+    )
+
+
+def _resolve_entity_hints(qbo, payloads, customer_index=None, vendor_index=None,
+                          firm_id=None, realm_id=None):
     """Replace `_pclaw_entity_hint` markers on JE lines with real Entity refs.
 
-    For every line tagged Customer or Vendor, find or create the matching
-    QBO entity, then add the `Entity` block QBO requires for A/R and A/P
-    journal lines. Returns a list of (kind, name, id) tuples for the
+    For every line tagged Customer or Vendor, resolve a non-blank display
+    name (preferring the uploaded vendor/customer listing, then the
+    GL-inferred name), find or create the matching QBO entity, then add
+    the `Entity` block QBO requires for A/R and A/P journal lines.
+
+    Entity names are resolved through ``entity_resolution.resolve_entity_name``
+    which **refuses blank names**. If any A/R or A/P line resolves to a
+    blank/whitespace-only name, this raises ``EntityNameError`` *before*
+    any QBO write happens, so we never create a nameless Customer/Vendor
+    in QuickBooks. Returns a list of (kind, name, id) tuples for the
     entities that were created (for UI feedback).
+
+    When ``firm_id`` and ``realm_id`` are supplied, resolved entity Ids are
+    read from and written to the persisted per-firm entity map
+    (``db.list_entity_map`` / ``db.save_entity_map_entry``). This makes a
+    re-run of the same GL reuse the QuickBooks entity it resolved last time
+    instead of re-querying — and, crucially, the line's ``EntityRef``
+    references the QuickBooks **Id**, not the raw name string.
     """
     customer_cache = {}
     vendor_cache = {}
     created = []  # list of (kind, name, id)
+    customer_offenders = []
+    vendor_offenders = []
 
+    # Seed the in-memory caches from the persisted entity map so reruns
+    # skip both the QBO query and a needless re-create. Keyed by normalized
+    # name so "Smith & Co" and "Smith and Co." collapse to one entity.
+    persisted = {}
+    if firm_id is not None and realm_id:
+        for row in db.list_entity_map(firm_id, realm_id):
+            persisted[(row["kind"], row["normalized_name"])] = row["qbo_entity_id"]
+
+    # First pass: resolve a clean, non-blank display name for every
+    # tagged line and refuse blanks up front. Doing this before any
+    # network call means a blank name aborts the whole post cleanly
+    # instead of part-creating entities and then failing.
+    for payload in payloads:
+        for line in payload.get("Line", []):
+            hint = line.get("_pclaw_entity_hint")
+            if not hint:
+                continue
+            kind = hint.get("type")
+            index = customer_index if kind == "Customer" else vendor_index
+            try:
+                resolved = entity_resolution.resolve_entity_name(
+                    kind=kind,
+                    hint_name=hint.get("name"),
+                    identifier=hint.get("identifier"),
+                    index=index,
+                )
+            except entity_resolution.EntityNameError as e:
+                (customer_offenders if kind == "Customer" else vendor_offenders).extend(
+                    e.offenders
+                )
+                continue
+            hint["resolved_name"] = resolved
+
+    if customer_offenders or vendor_offenders:
+        # Surface the customer kind first if present; the caller flashes
+        # the message. Both buckets are reported so the operator sees the
+        # full set of rows that need a name.
+        offenders = customer_offenders + vendor_offenders
+        kind = "Customer" if customer_offenders else "Vendor"
+        raise entity_resolution.EntityNameError(kind, offenders)
+
+    # Second pass: find-or-create using the resolved names and rewrite
+    # each line with the QBO Entity block. The line references the
+    # QuickBooks **Id** (EntityRef.value); the name is carried only as a
+    # human-readable label.
     for payload in payloads:
         for line in payload.get("Line", []):
             hint = line.pop("_pclaw_entity_hint", None)
             if not hint:
                 continue
             kind = hint["type"]
-            name = hint["name"]
+            name = hint["resolved_name"]
 
-            if kind == "Customer":
-                if name not in customer_cache:
-                    existing = qbo.find_customer_by_name(name)
-                    if existing:
-                        customer_cache[name] = existing.get("Id")
-                    else:
-                        new_obj = qbo.create_customer(name)
-                        customer_cache[name] = new_obj.get("Id")
-                        created.append(("Customer", name, customer_cache[name]))
-                entity_id = customer_cache[name]
-            elif kind == "Vendor":
-                if name not in vendor_cache:
-                    existing = qbo.find_vendor_by_name(name)
-                    if existing:
-                        vendor_cache[name] = existing.get("Id")
-                    else:
-                        new_obj = qbo.create_vendor(name)
-                        vendor_cache[name] = new_obj.get("Id")
-                        created.append(("Vendor", name, vendor_cache[name]))
-                entity_id = vendor_cache[name]
-            else:
+            cache = customer_cache if kind == "Customer" else vendor_cache
+            if kind not in ("Customer", "Vendor"):
                 continue
+            if name not in cache:
+                cache[name] = _find_or_create_entity(
+                    qbo, kind, name, persisted, created,
+                    firm_id=firm_id, realm_id=realm_id,
+                )
+            entity_id = cache[name]
 
             line.setdefault("JournalEntryLineDetail", {})["Entity"] = {
                 "Type": kind,
@@ -2521,6 +2645,70 @@ def _resolve_entity_hints(qbo, payloads):
             }
 
     return created
+
+
+def _find_or_create_entity(qbo, kind, name, persisted, created,
+                           firm_id=None, realm_id=None):
+    """Resolve ``name`` to a QuickBooks entity Id, creating it if needed.
+
+    Resolution order, cheapest first:
+
+      1. The persisted entity map (no network call) — keyed by normalized
+         name so trivial punctuation/case differences reuse one entity.
+      2. A QuickBooks lookup by display name (find_customer/vendor_by_name).
+      3. Create the entity. If QuickBooks rejects the create as a duplicate
+         (a name that exists but didn't match our exact-name query, e.g. a
+         differently-punctuated DisplayName), re-query and reuse rather than
+         surfacing the error.
+
+    Any newly created or freshly resolved Id is written back to the
+    persisted map so the next run skips straight to step 1.
+    """
+    norm = entity_resolution._normalize_name(name)
+    cached_id = persisted.get((kind, norm))
+    if cached_id:
+        return cached_id
+
+    finder = qbo.find_customer_by_name if kind == "Customer" else qbo.find_vendor_by_name
+    creator = qbo.create_customer if kind == "Customer" else qbo.create_vendor
+
+    existing = finder(name)
+    if existing and existing.get("Id"):
+        entity_id = existing["Id"]
+    else:
+        try:
+            new_obj = creator(name)
+            entity_id = new_obj.get("Id")
+            created.append((kind, name, entity_id))
+        except QBOError as e:
+            # QuickBooks rejects duplicate DisplayNames (error code 6240).
+            # That means the entity already exists under a name our exact
+            # query missed — re-query and reuse instead of failing the post.
+            if _is_qbo_duplicate_name_error(e):
+                existing = finder(name)
+                if existing and existing.get("Id"):
+                    entity_id = existing["Id"]
+                else:
+                    raise
+            else:
+                raise
+
+    persisted[(kind, norm)] = entity_id
+    if firm_id is not None and realm_id and entity_id:
+        db.save_entity_map_entry(firm_id, realm_id, kind, norm, entity_id,
+                                 display_name=name)
+    return entity_id
+
+
+def _is_qbo_duplicate_name_error(err) -> bool:
+    """True when a QBOError is QuickBooks' duplicate-name rejection.
+
+    QuickBooks returns error code 6240 ("Duplicate Name Exists Error") when
+    a Customer/Vendor DisplayName collides with an existing one. We match on
+    the code and the phrase so a slightly different message still recovers.
+    """
+    text = str(err).lower()
+    return "6240" in text or "duplicate name" in text
 
 
 def _verify_import(job, qbo):
@@ -5033,6 +5221,88 @@ def _firm_latest_jobs_by_type(firm_id: int, report_type: str, limit: int = 20) -
     return [j for j in all_jobs if (j.get("report_type") or "general_ledger") == report_type]
 
 
+def _firm_latest_parsed_list(firm_id: int, report_type: str, parsed_key: str) -> list[dict]:
+    """Return the parsed rows of the firm's most recent listing upload.
+
+    Vendor / customer listings are stored on the job dict under
+    ``parsed_vendor_list`` / ``parsed_customer_list``. Newest non-failed
+    upload wins; empty list when none on file.
+    """
+    for row in _firm_latest_jobs_by_type(firm_id, report_type, limit=50):
+        if demo_mode.is_failed_job(row):
+            continue
+        hydrated = db.hydrate_job(row["id"]) or row
+        parsed = hydrated.get(parsed_key)
+        if parsed:
+            return parsed
+    return []
+
+
+def _firm_entity_indexes(firm_id: int):
+    """Build (customer_index, vendor_index) from the firm's uploaded
+    customer / vendor listings.
+
+    The listings are the authoritative source for entity names, so GL
+    posting consults them before falling back to GL-inferred names. When
+    a firm has not uploaded a listing the index is empty and posting
+    falls back to the GL-derived name (still refusing blanks).
+    """
+    customer_rows = _firm_latest_parsed_list(
+        firm_id, REPORT_CUSTOMER_LIST, "parsed_customer_list"
+    )
+    vendor_rows = _firm_latest_parsed_list(
+        firm_id, REPORT_VENDOR_LIST, "parsed_vendor_list"
+    )
+    return (
+        entity_resolution.build_customer_index(customer_rows),
+        entity_resolution.build_vendor_index(vendor_rows),
+    )
+
+
+def _firm_coa_created_count(firm_id: int) -> int:
+    """Count QuickBooks accounts created from the firm's COA uploads.
+
+    Reads the persisted ``coa_create_history`` on each active Chart-of-
+    Accounts job and sums the created-account counts. Best-effort over the
+    various history shapes ever written (a ``created`` list, or a
+    ``created_count`` integer).
+    """
+    total = 0
+    for row in _firm_latest_jobs_by_type(firm_id, REPORT_CHART_OF_ACCOUNTS, limit=50):
+        if demo_mode.is_failed_job(row):
+            continue
+        hydrated = db.hydrate_job(row["id"]) or row
+        for h in hydrated.get("coa_create_history") or []:
+            created = h.get("created")
+            if isinstance(created, list):
+                total += len(created)
+            elif isinstance(h.get("created_count"), int):
+                total += h["created_count"]
+    return total
+
+
+def _firm_opening_balance_state(firm_id: int) -> str:
+    """Return the firm's opening-balance state for the Migration Hub.
+
+    One of ``"posted"`` / ``"failed"`` / ``"pending"`` / ``"none"`` derived
+    from the most recent trial-balance job's opening-balance history. A
+    failed last attempt outranks an earlier success so the hub surfaces a
+    retry; a posted entry means opening balances are in QuickBooks.
+    """
+    state = "none"
+    for row in _firm_latest_jobs_by_type(firm_id, REPORT_TRIAL_BALANCE, limit=50):
+        if demo_mode.is_failed_job(row):
+            continue
+        hydrated = db.hydrate_job(row["id"]) or row
+        history = hydrated.get("opening_balance_history") or []
+        if history:
+            last = history[-1]
+            return "failed" if last.get("status") == "failed" else "posted"
+        # Trial balance on file but never posted -> ready to post.
+        state = "pending"
+    return state
+
+
 def _firm_importable_gl_jobs(firm_id: int, limit: int = 500) -> list[dict]:
     """Return the firm's GL jobs that Step 5 may actually import, newest
     first.
@@ -5518,27 +5788,64 @@ def _opening_balance_post(job, user, qbo, qbo_conn, plan):
         return redirect(url_for("opening_balance_preview", job_id=job_id))
 
     payload = build_opening_je_payload(plan)
+
+    def _record_opening_failure(message, intuit_tid=None):
+        """Persist a retryable failure on the job without breaking the flow.
+
+        A failed opening-balance post must not throw the migration into a
+        broken/misleading step state. We record the attempt (with
+        ``error``, no ``qbo_je_id``) so the opening-balance card can show a
+        clear, retryable error, and the stepper/hub keep their context. The
+        checklist still treats the step as "uploaded, not yet posted"
+        (in progress) — never silently complete.
+        """
+        history_entry = {
+            "created_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            "as_of_date": plan.as_of_date,
+            "total_debit": plan.total_debit,
+            "total_credit": plan.total_credit,
+            "line_count": len(plan.postable_lines),
+            "qbo_je_id": None,
+            "status": "failed",
+            "error": message,
+            "intuit_tid": intuit_tid,
+            "realm_id": qbo_conn.get("realm_id"),
+            "company_name": qbo_conn.get("company_name"),
+        }
+        job.setdefault("opening_balance_history", []).append(history_entry)
+        job["status"] = "Opening balance posting failed (retryable)"
+        _save_job(job_id)
+
     try:
         response = qbo.create_journal_entry(payload)
     except QBOError as e:
+        hint = qbo_error_hint.parse(str(e), intuit_tid=e.intuit_tid)
+        _record_opening_failure(hint.get("summary") or str(e)[:300], e.intuit_tid)
         _audit(
             "opening_balance_post_failed",
             target_type="job", target_id=job_id,
             details=_audit_details_with_tid(str(e)[:300], e.intuit_tid),
         )
         flash(
-            "Could not post the opening balance JE to QuickBooks. Nothing "
-            f"was created.{' Intuit ref: ' + e.intuit_tid if e.intuit_tid else ''}",
+            "We couldn't post the opening balance to QuickBooks, so nothing "
+            "was created. You can fix the issue and retry from this page — "
+            "your migration progress is saved."
+            f"{' Intuit reference: ' + e.intuit_tid if e.intuit_tid else ''}",
             "error",
         )
         return redirect(url_for("opening_balance_preview", job_id=job_id))
     except Exception as e:  # noqa: BLE001
+        _record_opening_failure(str(e)[:300])
         _audit(
             "opening_balance_post_failed",
             target_type="job", target_id=job_id,
             details=str(e)[:300],
         )
-        flash("Could not post the opening balance JE. Nothing was created.", "error")
+        flash(
+            "We couldn't post the opening balance, so nothing was created. "
+            "You can retry from this page — your migration progress is saved.",
+            "error",
+        )
         return redirect(url_for("opening_balance_preview", job_id=job_id))
 
     je = (response or {}).get("JournalEntry") or {}
@@ -6729,8 +7036,41 @@ def _import_to_qbo_impl(job_id):
 
             # QBO requires Entity (Customer/Vendor) on A/R and A/P lines.
             # Resolve and inject before posting; create missing entities.
+            # The firm's uploaded vendor/customer listings are the primary
+            # source for names so we never sync a blank DisplayName.
+            customer_index, vendor_index = _firm_entity_indexes(user["firm_id"])
             try:
-                new_entities = _resolve_entity_hints(qbo, payloads)
+                new_entities = _resolve_entity_hints(
+                    qbo, payloads,
+                    customer_index=customer_index,
+                    vendor_index=vendor_index,
+                    firm_id=user["firm_id"],
+                    realm_id=realm_id,
+                )
+            except entity_resolution.EntityNameError as e:
+                job["status"] = "Import blocked: entity names missing"
+                _record_checkpoint(job, job_id, job_checkpoints.NEEDS_ATTENTION)
+                job["entity_name_blockers"] = {
+                    "kind": e.kind,
+                    "offenders": e.offenders,
+                }
+                _save_job(job_id)
+                _audit(
+                    "import_blocked_entity_names",
+                    target_type="job", target_id=job_id,
+                    details=f"kind={e.kind} count={len(e.offenders)}",
+                )
+                flash(
+                    "We can't send this to QuickBooks yet: some Accounts "
+                    "Receivable / Accounts Payable rows have no customer or "
+                    "vendor name. Upload your customer and vendor lists so we "
+                    "can match every name, then try again. Rows needing a "
+                    f"name: {'; '.join(e.offenders[:5])}"
+                    + ("" if len(e.offenders) <= 5 else f" (+{len(e.offenders) - 5} more)")
+                    + ".",
+                    "error",
+                )
+                return redirect(url_for("job_detail", job_id=job_id))
             except QBOError as e:
                 job["status"] = "Import failed (entity setup)"
                 job["last_error"] = qbo_error_hint.parse(str(e), intuit_tid=e.intuit_tid)
@@ -6893,6 +7233,10 @@ def _import_to_qbo_impl(job_id):
             job["unmapped_accounts"] = None
             job["unmapped_account_guidance"] = None
             job["last_error"] = None
+            # A successful post clears any prior entity-name block so the
+            # Migration Hub / job-detail page stop showing a stale "needs
+            # names" warning on a ledger that has since posted.
+            job["entity_name_blockers"] = None
             job["qbo_results"] = created
             job["import_summary"] = {
                 "source_transaction_count": len(txn_ids),
