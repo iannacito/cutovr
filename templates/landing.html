@@ -49,6 +49,59 @@ href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_bla
   </div>
 </section>
 
+<!-- Three-step journey (above the fold, no sign-in required) ---------- -->
+<section class="landing-journey" id="three-steps" data-testid="landing-three-steps"
+         aria-label="How it works in three steps">
+  <div class="landing-journey__inner">
+    <p class="eyebrow">A simple, done-for-you journey</p>
+    <h2 class="h-serif landing-journey__title">Three steps to QuickBooks.</h2>
+
+    <ol class="landing-journey__steps">
+      <li class="journey-step" data-testid="journey-step-1">
+        <span class="journey-step__node">
+          <span class="journey-step__num">1</span>
+          <svg class="journey-step__icon" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+               stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <rect x="3" y="4.5" width="18" height="16" rx="2"></rect>
+            <path d="M3 9h18M8 2.5v4M16 2.5v4"></path>
+          </svg>
+        </span>
+        <h3 class="journey-step__label">Step 1 &middot; Book a discovery call</h3>
+        <p class="journey-step__copy">Share a few details so our team can prepare.</p>
+      </li>
+
+      <li class="journey-step" data-testid="journey-step-2">
+        <span class="journey-step__node">
+          <span class="journey-step__num">2</span>
+          <svg class="journey-step__icon" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+               stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M6 3h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"></path>
+            <path d="M14 3v6h6M9 13h6M9 17h6"></path>
+          </svg>
+        </span>
+        <h3 class="journey-step__label">Step 2 &middot; Get a quote</h3>
+        <p class="journey-step__copy">We scope the migration and provide a clear quote on the call.</p>
+      </li>
+
+      <li class="journey-step" data-testid="journey-step-3">
+        <span class="journey-step__node">
+          <span class="journey-step__num">3</span>
+          <svg class="journey-step__icon" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+               stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M3 7.5a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+            <path d="M12 10v6M9 13l3 3 3-3"></path>
+          </svg>
+        </span>
+        <h3 class="journey-step__label">Step 3 &middot; Have your data migrated</h3>
+        <p class="journey-step__copy">{{ app_name }} handles the migration and reviews the details with you.</p>
+      </li>
+    </ol>
+  </div>
+</section>
+
 <!-- How the engagement works ----------------------------------------- -->
 <section class="landing-section landing-section--steps" id="how-it-works">
   <div class="landing-section__inner">
