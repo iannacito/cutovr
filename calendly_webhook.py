@@ -108,6 +108,78 @@ def shared_secret() -> Optional[str]:
     return _env("CALENDLY_WEBHOOK_SECRET")
 
 
+def booking_url() -> Optional[str]:
+    return _env("DISCOVERY_CALL_URL")
+
+
+def confirmation_email_enabled() -> bool:
+    raw = (os.environ.get("CALENDLY_CONFIRMATION_EMAIL") or "").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+WEBHOOK_PATH = "/integrations/calendly/webhook"
+
+
+def webhook_endpoint_url(public_base_url: Optional[str] = None) -> str:
+    """Return the exact URL Calendly must POST to.
+
+    Uses the deploy's PUBLIC_APP_URL (or an explicit ``public_base_url``)
+    so the diagnostics panel / setup docs always show the operator the
+    real endpoint to paste into Calendly, not a hard-coded guess. Falls
+    back to the production host when nothing is configured.
+    """
+    base = (public_base_url or _env("PUBLIC_APP_URL") or "https://www.cutovr.com").rstrip("/")
+    return base + WEBHOOK_PATH
+
+
+def diagnostics(*, app_env: Optional[str] = None,
+                public_base_url: Optional[str] = None,
+                lead_count: Optional[int] = None,
+                last_lead_at: Optional[str] = None,
+                operator_emails_count: Optional[int] = None) -> dict:
+    """Return a secret-free Calendly setup status snapshot.
+
+    Reports only presence booleans, the (non-secret) webhook endpoint to
+    paste into Calendly, and counts — never the value of any signing key,
+    API token, or shared secret. ``authenticity_mode`` mirrors the policy
+    in ``authenticate``: in a non-dev deploy a delivery is rejected unless a
+    signing key or shared secret is configured, so an unverified-open state
+    is flagged as a setup gap to fix.
+    """
+    env = (app_env or os.environ.get("APP_ENV") or "local").lower()
+    is_prod = env not in ("local", "dev", "development", "test")
+
+    has_signing = bool(signing_key())
+    has_secret = bool(shared_secret())
+    auth_configured = has_signing or has_secret
+
+    # Mirror authenticate(): if a signing key or shared secret is configured,
+    # deliveries must pass it ("verified"); otherwise they are accepted but
+    # flagged "unverified-open" so a first test booking still lands. In a
+    # production deploy, running unverified-open is a setup gap to close.
+    if auth_configured:
+        authenticity_mode = "verified"
+    else:
+        authenticity_mode = "unverified-open"
+
+    bk = booking_url()
+    return {
+        "app_env": env,
+        "is_production": is_prod,
+        "webhook_endpoint_url": webhook_endpoint_url(public_base_url),
+        "booking_url_configured": bool(bk),
+        "booking_url_is_default": not bool(bk),
+        "signing_key_configured": has_signing,
+        "shared_secret_configured": has_secret,
+        "api_token_configured": bool(api_token()),
+        "confirmation_email_enabled": confirmation_email_enabled(),
+        "authenticity_mode": authenticity_mode,
+        "lead_count": lead_count if lead_count is not None else None,
+        "last_lead_at": last_lead_at,
+        "operator_emails_count": operator_emails_count,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Authenticity
 # ---------------------------------------------------------------------------
@@ -229,12 +301,28 @@ def extract_lead_fields(payload: dict, enriched_invitee: Optional[dict] = None) 
     Never raises on missing/oddly-shaped data — absent fields are simply
     omitted.
     """
-    event = (payload.get("event") or "").strip()
-    body = payload.get("payload") or {}
+    event = (payload.get("event") or payload.get("event_type") or "").strip()
+    body = payload.get("payload")
+    if not isinstance(body, dict):
+        # Some integrations / API responses POST the bare invitee with no
+        # envelope, or use {"resource": {...}}. Fall back to those so a real
+        # booking is never dropped just because the envelope shape differs.
+        if isinstance(payload.get("resource"), dict):
+            body = payload["resource"]
+        elif payload.get("uri") or payload.get("email"):
+            body = payload
+        else:
+            body = {}
 
-    # The invitee object is the webhook payload itself for invitee.* events;
-    # enrichment (when present) overrides individual fields.
-    invitee = dict(body)
+    # The invitee object is the webhook payload itself for invitee.* events,
+    # but some deliveries nest it one level deeper under "invitee". Merge the
+    # nested invitee in first so its fields are available, then let the
+    # top-level body win, then enrichment (most authoritative) win last.
+    invitee: dict = {}
+    nested = body.get("invitee")
+    if isinstance(nested, dict):
+        invitee.update(nested)
+    invitee.update({k: v for k, v in body.items() if k != "invitee"})
     if enriched_invitee and isinstance(enriched_invitee, dict):
         for k, v in enriched_invitee.items():
             if v is not None:
@@ -270,10 +358,17 @@ def extract_lead_fields(payload: dict, enriched_invitee: Optional[dict] = None) 
         if sched.get("end_time"):
             fields["meeting_end"] = str(sched["end_time"])
         et = sched.get("event_type")
-        if et:
+        if isinstance(et, dict):
+            # Calendly sometimes expands event_type into an object; keep its uri.
+            if et.get("uri"):
+                fields["event_type_uri"] = str(et["uri"])
+        elif et:
             fields["event_type_uri"] = str(et)
     if invitee.get("event"):
         fields.setdefault("event_uri", str(invitee["event"]))
+    if invitee.get("event_type") and "event_type_uri" not in fields:
+        et = invitee["event_type"]
+        fields["event_type_uri"] = str(et.get("uri")) if isinstance(et, dict) else str(et)
     if invitee.get("timezone"):
         fields["timezone"] = str(invitee["timezone"])
 
@@ -302,8 +397,18 @@ def extract_lead_fields(payload: dict, enriched_invitee: Optional[dict] = None) 
                 fields["phone"] = str(invitee[key])[:60]
                 break
 
-    # Status / cancellation.
-    if event == "invitee.canceled" or invitee.get("status") == "canceled":
+    # Status / cancellation. We key primarily off the event name but also
+    # honor an explicit status / cancellation block in the payload so a
+    # delivery with a missing or unexpected ``event`` field still classifies
+    # correctly instead of being dropped. Anything that isn't clearly a
+    # cancellation is treated as a scheduled booking.
+    is_canceled = (
+        event == "invitee.canceled"
+        or invitee.get("status") == "canceled"
+        or bool(invitee.get("cancellation"))
+        or bool(invitee.get("canceled_at"))
+    )
+    if is_canceled:
         fields["status"] = "canceled"
         cancel = invitee.get("cancellation") or {}
         if isinstance(cancel, dict):
@@ -313,7 +418,7 @@ def extract_lead_fields(payload: dict, enriched_invitee: Optional[dict] = None) 
                 fields["canceled_by"] = str(
                     cancel.get("canceled_by") or cancel.get("canceler_type")
                 )[:120]
-    elif event == "invitee.created":
+    else:
         fields["status"] = "scheduled"
 
     if invitee.get("rescheduled"):
@@ -323,16 +428,26 @@ def extract_lead_fields(payload: dict, enriched_invitee: Optional[dict] = None) 
 
 
 def invitee_uri_from_payload(payload: dict) -> Optional[str]:
-    """Return the invitee URI (idempotency key) from a webhook envelope."""
-    body = payload.get("payload") or {}
-    uri = body.get("uri")
-    if uri and "/invitees/" in str(uri):
-        return str(uri)
+    """Return the invitee URI (idempotency key) from a webhook envelope.
+
+    Resolves the canonical ``uri`` across the shapes Calendly (and the
+    occasional proxy/integration) actually send: the standard
+    ``{"payload": {...}}`` envelope, a ``{"resource": {...}}`` wrapper, a
+    bare invitee object, or a body that nests the invitee under ``invitee``.
+    """
+    if not isinstance(payload, dict):
+        return None
+    body = payload.get("payload")
+    if not isinstance(body, dict):
+        body = payload.get("resource") if isinstance(payload.get("resource"), dict) else payload
+    nested = body.get("invitee") if isinstance(body, dict) else None
+    uri = body.get("uri") if isinstance(body, dict) else None
+    if not uri and isinstance(nested, dict):
+        uri = nested.get("uri")
     # invitee.* and routing_form_submission.* payloads both carry their
-    # canonical uri at payload.uri, which is the idempotency key.
-    if uri:
-        return str(uri)
-    return None
+    # canonical uri, which is the idempotency key. Prefer an invitee URI but
+    # accept any uri so a routing-form submission is still keyed.
+    return str(uri) if uri else None
 
 
 # ---------------------------------------------------------------------------

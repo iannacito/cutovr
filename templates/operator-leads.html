@@ -6,9 +6,12 @@
     <p class="eyebrow">Internal &middot; Operator view</p>
     <h1>Discovery-call <em>leads</em>.</h1>
     <p>Everyone who filled out the Calendly form and scheduled a discovery call. Captured automatically from Calendly. Upcoming / most recent first.</p>
-    {% if leads %}
-    <p><a class="btn btn-secondary" data-testid="operator-leads-export" href="{{ url_for('operator_leads_csv') }}">Export to spreadsheet (CSV)</a></p>
-    {% endif %}
+    <p>
+      {% if leads %}
+      <a class="btn btn-secondary" data-testid="operator-leads-export" href="{{ url_for('operator_leads_csv') }}">Export to spreadsheet (CSV)</a>
+      {% endif %}
+      <a class="btn btn-secondary" data-testid="operator-leads-diagnostics-link" href="{{ url_for('operator_calendly_diagnostics') }}">Calendly setup diagnostics</a>
+    </p>
   </div>
 
   <section class="card">
@@ -61,7 +64,20 @@
       </table>
     </div>
     {% else %}
-    <p class="muted" data-testid="operator-leads-empty">No discovery-call leads yet. They appear here automatically once Calendly sends a booking webhook.</p>
+    <div data-testid="operator-leads-empty">
+      <p class="muted">No discovery-call leads yet. They appear here automatically once Calendly sends a booking webhook.</p>
+      <p class="muted" data-testid="operator-leads-empty-webhook-hint">
+        If you booked a test call and it is not listed here, confirm the
+        Calendly webhook is configured to POST to:
+      </p>
+      <p><code data-testid="operator-leads-empty-webhook-url">{{ calendly.webhook_endpoint_url }}</code></p>
+      <p class="muted">
+        A Calendly confirmation email arriving does <strong>not</strong> mean
+        Cutovr received the booking. See
+        <a href="{{ url_for('operator_calendly_diagnostics') }}">Calendly setup diagnostics</a>
+        for the full checklist.
+      </p>
+    </div>
     {% endif %}
   </section>
 

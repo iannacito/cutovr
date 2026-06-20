@@ -1383,3 +1383,26 @@ class AppDB:
                 (limit,),
             ).fetchall()
             return [dict(r) for r in rows]
+
+    def count_calendly_leads(self) -> int:
+        """Total number of stored Calendly leads (all statuses)."""
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT COUNT(*) AS n FROM calendly_leads"
+            ).fetchone()
+            return int(row["n"]) if row else 0
+
+    def latest_calendly_lead_received_at(self) -> Optional[str]:
+        """Timestamp of the most recently received Calendly webhook, if any.
+
+        Uses MAX(created_at, updated_at) so a recent cancel/reschedule (which
+        only updates an existing row) still counts as "we heard from Calendly
+        recently". Returns None when no lead has ever been captured — the key
+        signal that the webhook is not wired up.
+        """
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT MAX(MAX(created_at), MAX(updated_at)) AS last_at "
+                "FROM calendly_leads"
+            ).fetchone()
+            return row["last_at"] if row and row["last_at"] else None

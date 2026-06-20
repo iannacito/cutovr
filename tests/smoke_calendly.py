@@ -24,6 +24,15 @@ Covers:
       column header, the seeded lead's data, and its question answers; a
       non-operator is blocked.
   T11 CSV export does not leak any secret material.
+  T12 A sparse invitee.created (only uri+name+email) still saves a lead.
+  T13 Real payload variations (nested scheduled_event/event_type object,
+      first_name/last_name, missing top-level 'event') still save correctly.
+  T14 The empty Leads state shows the exact webhook endpoint to configure,
+      and the page links to the diagnostics view.
+  T15 /operator/calendly diagnostics reports the expected non-secret
+      statuses (webhook URL, signing/api flags, lead count) and is gated.
+  T16 The diagnostics page never renders any secret value.
+  T17 calendly_webhook.diagnostics() reports correct booleans, no secrets.
 
 No live Calendly network call is required.
 """
@@ -427,6 +436,160 @@ def t11_csv_export_no_secret_leaks():
     print("T11 OK: no secrets in CSV export")
 
 
+def t12_minimal_payload_still_saves():
+    """A realistic-but-sparse invitee.created (no firm/clio/phone/event
+    details, only uri+name+email) must still create a scheduled lead."""
+    uri = INVITEE_URI + "-min"
+    minimal = {
+        "event": "invitee.created",
+        "payload": {"uri": uri, "name": "Min Imal", "email": "min@firm.test"},
+    }
+    c = appmod.app.test_client()
+    r = _post(c, minimal)
+    assert r.status_code == 200, r.status_code
+    lead = appmod.db.get_calendly_lead_by_invitee(uri)
+    assert lead, "minimal lead not stored"
+    assert lead["name"] == "Min Imal"
+    assert lead["email"] == "min@firm.test"
+    assert lead["status"] == "scheduled"
+    # Optional fields absent, not an error.
+    assert lead["firm_name"] in (None, "")
+    print("T12 OK: minimal payload (missing optionals) still saves a lead")
+
+
+def t13_nested_and_first_last_name_payload():
+    """Real Calendly variations: scheduled_event with event_type as an object,
+    first_name/last_name instead of name, missing top-level 'event' string."""
+    uri = INVITEE_URI + "-nest"
+    payload = {
+        # No top-level "event" key — must still classify as scheduled.
+        "payload": {
+            "uri": uri,
+            "first_name": "Casey",
+            "last_name": "Counsel",
+            "email": "casey@firm.test",
+            "timezone": "America/New_York",
+            "scheduled_event": {
+                "uri": "https://api.calendly.com/scheduled_events/EVTX",
+                "name": "Discovery",
+                "start_time": "2026-09-09T10:00:00Z",
+                "end_time": "2026-09-09T10:30:00Z",
+                "event_type": {"uri": "https://api.calendly.com/event_types/ETX"},
+            },
+            "questions_and_answers": [
+                {"question": "Company", "answer": "Counsel LLP"},
+            ],
+        },
+    }
+    c = appmod.app.test_client()
+    r = _post(c, payload)
+    assert r.status_code == 200, r.status_code
+    lead = appmod.db.get_calendly_lead_by_invitee(uri)
+    assert lead, "nested-variation lead not stored"
+    assert lead["name"] == "Casey Counsel", lead["name"]
+    assert lead["status"] == "scheduled"
+    assert lead["meeting_start"] == "2026-09-09T10:00:00Z"
+    assert lead["event_type_uri"] == "https://api.calendly.com/event_types/ETX"
+    assert lead["firm_name"] == "Counsel LLP"
+    print("T13 OK: nested/first+last-name/no-event-string payload saves correctly")
+
+
+def t14_empty_state_shows_webhook_endpoint():
+    """The Leads empty state must tell the operator the exact webhook URL.
+
+    Renders the operator-leads template directly with no leads so the test is
+    independent of the shared DB (which other tests populate). Also confirms
+    the populated page always links to the diagnostics page.
+    """
+    diag = appmod.calendly_webhook.diagnostics()
+    with appmod.app.test_request_context("/operator/leads"):
+        empty_html = appmod.render_template(
+            "operator-leads.html", leads=[], calendly=diag
+        )
+    assert "/integrations/calendly/webhook" in empty_html, "webhook endpoint missing from empty Leads state"
+    assert "operator-leads-empty-webhook-url" in empty_html
+    assert "/operator/calendly" in empty_html
+
+    # The live (possibly populated) page must still link to diagnostics.
+    c = appmod.app.test_client()
+    _signup_operator(c)
+    body = c.get("/operator/leads").get_data(as_text=True)
+    assert "/operator/calendly" in body or "Calendly setup diagnostics" in body
+    print("T14 OK: empty Leads state shows webhook endpoint; page links diagnostics")
+
+
+def t15_diagnostics_route_reports_statuses():
+    """The /operator/calendly diagnostics page reports the expected
+    non-secret statuses and is operator-gated."""
+    # Seed a lead so the count/last-received are populated.
+    c0 = appmod.app.test_client()
+    _post(c0, _created_payload(uri=INVITEE_URI + "-diag"))
+
+    os.environ["CALENDLY_WEBHOOK_SIGNING_KEY"] = "whsec-diag"
+    try:
+        c = appmod.app.test_client()
+        _signup_operator(c)
+        r = c.get("/operator/calendly")
+        assert r.status_code == 200, r.status_code
+        body = r.get_data(as_text=True)
+        assert "/integrations/calendly/webhook" in body
+        # Signing configured -> shows verified / yes.
+        assert "Verified" in body or "Yes" in body
+        # Stored-lead count present.
+        assert "Stored Calendly leads" in body
+        assert "Most recent webhook received" in body
+
+        # Non-operator blocked.
+        anon = appmod.app.test_client()
+        r404 = anon.get("/operator/calendly")
+        assert r404.status_code in (302, 404), r404.status_code
+    finally:
+        os.environ.pop("CALENDLY_WEBHOOK_SIGNING_KEY", None)
+    print("T15 OK: diagnostics route reports statuses; non-operator blocked")
+
+
+def t16_diagnostics_no_secret_leaks():
+    """Diagnostics page renders presence flags but never any secret value."""
+    os.environ["CALENDLY_WEBHOOK_SIGNING_KEY"] = "whsec-DIAGLEAK"
+    os.environ["CALENDLY_API_TOKEN"] = "tok-DIAGLEAK"
+    os.environ["CALENDLY_WEBHOOK_SECRET"] = "secret-DIAGLEAK"
+    try:
+        c = appmod.app.test_client()
+        _signup_operator(c)
+        body = c.get("/operator/calendly").get_data(as_text=True)
+        for needle in ("whsec-DIAGLEAK", "tok-DIAGLEAK", "secret-DIAGLEAK"):
+            assert needle not in body, f"secret leaked in diagnostics: {needle}"
+    finally:
+        os.environ.pop("CALENDLY_WEBHOOK_SIGNING_KEY", None)
+        os.environ.pop("CALENDLY_API_TOKEN", None)
+        os.environ.pop("CALENDLY_WEBHOOK_SECRET", None)
+    print("T16 OK: no secrets rendered on diagnostics page")
+
+
+def t17_diagnostics_helper_unit():
+    """Unit-level: calendly_webhook.diagnostics reports the right booleans
+    and never includes secret values."""
+    os.environ["CALENDLY_WEBHOOK_SIGNING_KEY"] = "whsec-UNIT"
+    os.environ["APP_ENV"] = "production"
+    try:
+        d = calendly_webhook.diagnostics(lead_count=3, last_lead_at="2026-06-19T00:00:00")
+        assert d["signing_key_configured"] is True
+        assert d["authenticity_mode"] == "verified"
+        assert d["is_production"] is True
+        assert d["lead_count"] == 3
+        assert d["webhook_endpoint_url"].endswith("/integrations/calendly/webhook")
+        # No secret value anywhere in the dict.
+        assert "whsec-UNIT" not in json.dumps(d)
+    finally:
+        os.environ.pop("CALENDLY_WEBHOOK_SIGNING_KEY", None)
+        os.environ.pop("APP_ENV", None)
+    # Without auth in a non-prod env, mode is unverified-open.
+    d2 = calendly_webhook.diagnostics(app_env="local")
+    assert d2["authenticity_mode"] == "unverified-open"
+    assert d2["signing_key_configured"] is False
+    print("T17 OK: diagnostics() reports correct booleans, no secrets")
+
+
 if __name__ == "__main__":
     t1_created_makes_lead()
     t2_duplicate_is_idempotent()
@@ -440,4 +603,10 @@ if __name__ == "__main__":
     t9_signature_verification()
     t10_csv_export()
     t11_csv_export_no_secret_leaks()
+    t12_minimal_payload_still_saves()
+    t13_nested_and_first_last_name_payload()
+    t14_empty_state_shows_webhook_endpoint()
+    t15_diagnostics_route_reports_statuses()
+    t16_diagnostics_no_secret_leaks()
+    t17_diagnostics_helper_unit()
     print("\nALL CALENDLY SMOKE TESTS PASSED")

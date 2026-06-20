@@ -1,0 +1,122 @@
+{% extends "_base.html" %}
+{% block title %}Calendly setup &mdash; Operator{% endblock %}
+{% block content %}
+<section class="page">
+  <div class="hero">
+    <p class="eyebrow">Internal &middot; Operator view</p>
+    <h1>Calendly <em>setup</em> diagnostics.</h1>
+    <p>
+      Use this to confirm Cutovr is actually receiving Calendly bookings.
+      A Calendly confirmation email arriving does <strong>not</strong> mean a
+      lead reached Cutovr &mdash; the webhook below must be configured.
+    </p>
+    <p><a class="btn btn-secondary" href="{{ url_for('operator_leads_list') }}">&larr; Back to Leads</a></p>
+  </div>
+
+  <section class="card" data-testid="calendly-diagnostics">
+    <h2>Webhook endpoint</h2>
+    <p>Point your Calendly webhook subscription at this exact URL:</p>
+    <p>
+      <code data-testid="calendly-webhook-url">{{ calendly.webhook_endpoint_url }}</code>
+    </p>
+    <p class="muted">
+      Subscribe to <code>invitee.created</code> and <code>invitee.canceled</code>
+      (and <code>routing_form_submission.created</code> if you use a routing form).
+    </p>
+  </section>
+
+  <section class="card">
+    <h2>Capture status</h2>
+    <table data-testid="calendly-status-table">
+      <tbody>
+        <tr>
+          <th>Stored Calendly leads</th>
+          <td data-testid="calendly-lead-count">
+            {% if calendly.lead_count is not none %}{{ calendly.lead_count }}{% else %}&mdash;{% endif %}
+          </td>
+        </tr>
+        <tr>
+          <th>Most recent webhook received</th>
+          <td data-testid="calendly-last-received">
+            {% if calendly.last_lead_at %}{{ calendly.last_lead_at }}{% else %}
+            <strong style="color:var(--danger, #b42318);">Never</strong>
+            &mdash; no booking has ever reached this app.
+            {% endif %}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    {% if not calendly.last_lead_at %}
+    <p class="muted" data-testid="calendly-never-received-hint">
+      If you booked a test call and nothing is listed, the Calendly webhook is
+      almost certainly not configured to POST to the endpoint above. Confirm
+      the subscription in Calendly (API/Integrations &rarr; Webhooks) and that
+      the signing key matches Render.
+    </p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Configuration (no secrets shown)</h2>
+    <table data-testid="calendly-config-table">
+      <tbody>
+        <tr>
+          <th>Deploy environment</th>
+          <td>{{ calendly.app_env }}{% if calendly.is_production %} (production){% endif %}</td>
+        </tr>
+        <tr>
+          <th>Booking URL (DISCOVERY_CALL_URL)</th>
+          <td>
+            {% if calendly.booking_url_configured %}
+            <strong style="color:var(--ok, #1a7f37);">Configured</strong>
+            {% else %}
+            Using built-in default
+            {% endif %}
+          </td>
+        </tr>
+        <tr>
+          <th>Webhook signing key (CALENDLY_WEBHOOK_SIGNING_KEY)</th>
+          <td data-testid="calendly-signing-status">
+            {% if calendly.signing_key_configured %}
+            <strong style="color:var(--ok, #1a7f37);">Yes</strong>
+            {% else %}<strong style="color:var(--danger, #b42318);">No</strong>{% endif %}
+          </td>
+        </tr>
+        <tr>
+          <th>Shared secret (CALENDLY_WEBHOOK_SECRET)</th>
+          <td>{% if calendly.shared_secret_configured %}Yes{% else %}No{% endif %}</td>
+        </tr>
+        <tr>
+          <th>API token for enrichment (CALENDLY_API_TOKEN)</th>
+          <td>{% if calendly.api_token_configured %}Yes{% else %}No{% endif %}</td>
+        </tr>
+        <tr>
+          <th>Prospect confirmation email (CALENDLY_CONFIRMATION_EMAIL)</th>
+          <td>{% if calendly.confirmation_email_enabled %}On{% else %}Off{% endif %}</td>
+        </tr>
+        <tr>
+          <th>Authenticity mode</th>
+          <td data-testid="calendly-authenticity-mode">
+            {% if calendly.authenticity_mode == 'verified' %}
+            <strong style="color:var(--ok, #1a7f37);">Verified</strong> &mdash; deliveries must pass signature/secret.
+            {% else %}
+            <strong style="color:var(--danger, #b42318);">Unverified-open</strong>
+            &mdash; deliveries are accepted without verification.
+            {% if calendly.is_production %}Configure a signing key before relying on this in production.{% endif %}
+            {% endif %}
+          </td>
+        </tr>
+        <tr>
+          <th>Operator emails configured (OPERATOR_EMAILS)</th>
+          <td data-testid="calendly-operator-count">{{ calendly.operator_emails_count }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <p class="muted">
+    Full setup steps: see <code>CALENDLY_SETUP.md</code>. Questions?
+    Contact <a href="mailto:support@cutovr.com">support@cutovr.com</a>.
+  </p>
+</section>
+{% endblock %}
