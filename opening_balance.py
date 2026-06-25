@@ -40,6 +40,8 @@ from dataclasses import dataclass, field, asdict
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 
+import reserved_accounts
+
 
 OPENING_BALANCE_CONFIRMATION_PHRASE = "POST OPENING BALANCE"
 
@@ -115,6 +117,10 @@ class OpeningLine:
     qbo_account_type: Optional[str]
     qbo_acct_num: Optional[str] = None
     blocker: Optional[str] = None      # set when the line can't be posted
+    # When the TB row is a reserved account (Net Income, Retained Earnings,
+    # A/R, A/P) we post it to a "-PC Law" holding account instead of
+    # QuickBooks' built-in one. This names the holding account for the UI.
+    routed_to: Optional[str] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -225,6 +231,7 @@ def build_opening_balance_plan(
     plan_as_of = (as_of_date or detected_as_of or "").strip()
 
     lines: list[OpeningLine] = []
+    warnings: list[str] = []
     omitted = 0
     total_debit = Decimal("0.00")
     total_credit = Decimal("0.00")
@@ -243,12 +250,26 @@ def build_opening_balance_plan(
             omitted += 1
             continue
 
-        # Saved mapping wins, then AcctNum, then Name.
+        # Reserved accounts (Net Income, Retained Earnings, A/R, A/P) never
+        # post to QuickBooks' built-in account — QBO either calculates them
+        # itself (Net Income) or expects per-entity detail (A/R, A/P). We
+        # route them to a dedicated "-PC Law" holding account so the
+        # firm's QuickBooks totals stay clean and the later A/R / A/P work
+        # can move the balances onto real invoices and bills. An explicit
+        # operator mapping still wins over the automatic routing.
+        reserved = reserved_accounts.match_reserved(name)
+
         qbo_account = None
+        routed_to: Optional[str] = None
         if num and num in saved_by_num and saved_by_num[num] in qbo_by_id:
             qbo_account = qbo_by_id[saved_by_num[num]]
         elif name and name.lower() in saved_by_name_lower and saved_by_name_lower[name.lower()] in qbo_by_id:
             qbo_account = qbo_by_id[saved_by_name_lower[name.lower()]]
+        elif reserved:
+            routed_to = reserved.pc_law_name
+            pc_law_lower = reserved.pc_law_name.lower()
+            if pc_law_lower in by_name_lower:
+                qbo_account = by_name_lower[pc_law_lower]
         elif num and num in by_num:
             qbo_account = by_num[num]
         elif name and name.lower() in by_name_lower:
@@ -256,11 +277,27 @@ def build_opening_balance_plan(
 
         blocker: Optional[str] = None
         if not qbo_account:
-            blocker = (
-                f"Account {num or '(no number)'} '{name or '(no name)'}' "
-                "does not exist in QuickBooks. Create it via the Chart of "
-                "Accounts step (or add an Account Mapping) before posting "
-                "the opening balance."
+            if reserved:
+                blocker = (
+                    f"Create an account named \"{reserved.pc_law_name}\" "
+                    f"({reserved.qbo_account_type}) in QuickBooks — via the "
+                    "Chart of Accounts step — so the opening balance posts "
+                    f"there instead of QuickBooks' built-in {reserved.label}. "
+                    "Keeping these separate stops the migration from changing "
+                    "your QuickBooks totals."
+                )
+            else:
+                blocker = (
+                    f"Account {num or '(no number)'} '{name or '(no name)'}' "
+                    "does not exist in QuickBooks. Create it via the Chart of "
+                    "Accounts step (or add an Account Mapping) before posting "
+                    "the opening balance."
+                )
+        elif reserved:
+            warnings.append(
+                f"'{name}' will post to the \"{reserved.pc_law_name}\" "
+                f"holding account, not QuickBooks' built-in {reserved.label}, "
+                "so your QuickBooks totals stay clean."
             )
 
         lines.append(OpeningLine(
@@ -273,6 +310,7 @@ def build_opening_balance_plan(
             qbo_account_type=qbo_account.get("AccountType") if qbo_account else None,
             qbo_acct_num=((qbo_account.get("AcctNum") or "").strip() or None) if qbo_account else None,
             blocker=blocker,
+            routed_to=routed_to,
         ))
         total_debit += debit
         total_credit += credit
@@ -281,7 +319,6 @@ def build_opening_balance_plan(
     balanced = (delta == 0) and bool(lines)
 
     blockers: list[str] = []
-    warnings: list[str] = []
     if not lines:
         blockers.append(
             "Trial Balance has no non-zero rows — nothing to post as the "

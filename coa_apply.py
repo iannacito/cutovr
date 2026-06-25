@@ -34,6 +34,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 
+import reserved_accounts
+
 QBO_ACCT_NUM_MAX = 100  # QBO AcctNum field character limit
 
 # ----------------------------------------------------------------------------
@@ -107,7 +109,14 @@ def is_system_calculated_account(row: dict) -> bool:
     short-circuit, and by the create-plan builder to exclude these rows
     from QBO writes entirely.
     """
-    name_norm = _norm((row or {}).get("account_name"))
+    raw_name = (row or {}).get("account_name")
+    # Our own "Net Income-PC Law" holding account is a *real*, createable
+    # account that intentionally carries the words "Net Income". It must
+    # never be short-circuited as system-calculated, or the migration could
+    # not seed an opening balance into it.
+    if reserved_accounts.is_reserved_pc_law_name(raw_name):
+        return False
+    name_norm = _norm(raw_name)
     if not name_norm:
         return False
     # Use ``in`` rather than equality so common decorations like
@@ -302,6 +311,15 @@ _TYPE_TABLE: dict[str, tuple[str, str]] = {
 # pattern, not a guess. Adding a new pattern is safe only when the term
 # is unambiguous across legal/professional services chart-of-accounts.
 _SAFE_NAME_PATTERNS: list[tuple[str, str, tuple[str, str]]] = [
+    # ---- Reserved "-PC Law" holding accounts (created first so the
+    # opening trial balance can post Net Income / Retained Earnings / A/R /
+    # A/P into a clearly-labelled account instead of QuickBooks' built-in
+    # one. These are unambiguous compound forms unique to this migration.
+    ("netincomepclaw", "contains", ("Equity", "OwnersEquity")),
+    ("repclaw", "contains", ("Equity", "OwnersEquity")),
+    ("arpclaw", "contains", ("Other Current Asset", "OtherCurrentAssets")),
+    ("appclaw", "contains", ("Other Current Liability", "OtherCurrentLiabilities")),
+
     # ---- Equity (specific compound terms only) ----
     ("ownerdraw", "contains", ("Equity", "OwnersEquity")),       # "Owner Draws"
     ("ownersdraw", "contains", ("Equity", "OwnersEquity")),
