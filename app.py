@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, abort
 from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
+from werkzeug.datastructures import FileStorage
 from pathlib import Path
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -25,6 +26,8 @@ import entity_resolution
 import job_checkpoints
 import migration_hub
 import operator_panel
+import excel_convert
+import io as _io
 import readiness
 from pclaw_parser import parse_pclaw_csv, export_qbo_csv
 from pclaw_pipeline import (
@@ -3697,6 +3700,30 @@ def _extract_pclaw_accounts_from_gl_rows(gl_rows):
     return list(seen.values())
 
 
+def _excel_to_csv_filestorage(file_storage, safe_name: str):
+    """Convert an uploaded Excel FileStorage to an in-memory CSV FileStorage.
+
+    Returns ``(new_file_storage, new_safe_name)``. Raises
+    ``excel_convert.ExcelConversionError`` (with a friendly message) for
+    legacy .xls, empty, or unreadable workbooks. The returned FileStorage
+    is backed by BytesIO so it can be ``.save()``-d and re-read like a real
+    upload; callers that read it twice should ``.stream.seek(0)`` between.
+    """
+    try:
+        file_storage.stream.seek(0)
+    except Exception:  # noqa: BLE001
+        pass
+    raw = file_storage.read()
+    csv_bytes = excel_convert.excel_bytes_to_csv_bytes(raw, safe_name)
+    csv_name = secure_filename(excel_convert.csv_filename_for(safe_name)) or "upload.csv"
+    new_fs = FileStorage(
+        stream=_io.BytesIO(csv_bytes),
+        filename=csv_name,
+        content_type="text/csv",
+    )
+    return new_fs, csv_name
+
+
 def _process_uploaded_csv(
     file_storage,
     company: str,
@@ -3738,6 +3765,23 @@ def _process_uploaded_csv(
             "category": "error",
         }
     safe_name = secure_filename(file_storage.filename)
+    # PCLaw reports often come out as Excel (.xlsx). Convert to CSV up front
+    # so the rest of the pipeline is unchanged; give a specific, friendly
+    # message for legacy .xls or unreadable files rather than a generic
+    # ledger error.
+    if excel_convert.is_excel_filename(safe_name):
+        try:
+            file_storage, safe_name = _excel_to_csv_filestorage(file_storage, safe_name)
+        except excel_convert.ExcelConversionError as exc:
+            return {
+                "ok": False,
+                "job_id": None,
+                "report_type": None,
+                "detected": None,
+                "filename": safe_name or file_storage.filename or "",
+                "message": str(exc),
+                "category": "error",
+            }
     if not safe_name.lower().endswith(".csv"):
         return {
             "ok": False,
@@ -3746,8 +3790,8 @@ def _process_uploaded_csv(
             "detected": None,
             "filename": safe_name or file_storage.filename or "",
             "message": (
-                "Only .csv files exported from PCLaw are supported. "
-                "Re-export the report as CSV and try again."
+                "Only CSV or Excel (.xlsx) files exported from PCLaw are "
+                "supported. Re-export the report as CSV or Excel and try again."
             ),
             "category": "error",
         }
@@ -4141,6 +4185,24 @@ def _classify_and_process_files(files, *, company, user_email, user):
     for f in files:
         original_name = f.filename or ""
         safe_name = secure_filename(original_name)
+        # Accept Excel (.xlsx) by converting to CSV first; reject legacy
+        # .xls and other types with a specific, friendly reason.
+        if excel_convert.is_excel_filename(safe_name):
+            try:
+                f, safe_name = _excel_to_csv_filestorage(f, safe_name)
+            except excel_convert.ExcelConversionError as exc:
+                aggregated.append({
+                    "filename": original_name,
+                    "report_type": None,
+                    "report_label": "",
+                    "confidence": bulk_upload.CONFIDENCE_NONE,
+                    "status": bulk_upload.STATUS_REJECTED,
+                    "reason": str(exc),
+                    "warning": "",
+                    "job_id": None,
+                    "job_status": None,
+                })
+                continue
         if not safe_name.lower().endswith(".csv"):
             aggregated.append({
                 "filename": original_name,
@@ -4149,8 +4211,8 @@ def _classify_and_process_files(files, *, company, user_email, user):
                 "confidence": bulk_upload.CONFIDENCE_NONE,
                 "status": bulk_upload.STATUS_REJECTED,
                 "reason": (
-                    "Only .csv files exported from PCLaw are supported. "
-                    "Re-export this report as CSV."
+                    "Only CSV or Excel (.xlsx) files exported from PCLaw are "
+                    "supported. Re-export this report as CSV or Excel."
                 ),
                 "warning": "",
                 "job_id": None,

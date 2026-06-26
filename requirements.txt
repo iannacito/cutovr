@@ -20,6 +20,10 @@ reportlab==4.2.5
 # leaves the backend. Pinned to a recent stable release that supports the
 # Checkout Sessions API used in stripe_checkout.py.
 stripe==11.4.1
+# openpyxl reads PCLaw Excel (.xlsx) exports so firms can upload reports
+# straight from Excel without re-saving as CSV (see excel_convert.py). Pure
+# Python, no system libraries — fine on Render's slim image.
+openpyxl==3.1.5
 # python-dotenv backs the `from dotenv import load_dotenv` call at the top of
 # app.py. It is imported unconditionally at module import time, so a missing
 # wheel makes `gunicorn app:app` fail to boot the worker and the Render deploy
