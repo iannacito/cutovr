@@ -590,6 +590,258 @@ def t17_diagnostics_helper_unit():
     print("T17 OK: diagnostics() reports correct booleans, no secrets")
 
 
+def t18_real_form_qa_classification():
+    """The real discovery-call form questions map to the right columns.
+
+    Mirrors the live Calendly form, including the tricky "role at the firm"
+    question that contains the word "firm" but must NOT be filed as the firm
+    name.
+    """
+    qa = [
+        {"question": "What is the name of your law firm?", "answer": "Test LLP"},
+        {"question": "What is your role at the firm?", "answer": "MP"},
+        {"question": "When is your Clio Migration date? (YYYY-MM-DD)", "answer": "2026-07-02"},
+        {"question": "Years of history to bring over.", "answer": "3-5 years"},
+        {"question": "Rough volume — transactions or reports (e.g 30,000 GL rows, 12 reports)", "answer": "30k rows"},
+        {"question": "Notes & timeline", "answer": "Tight timeline"},
+    ]
+    fields = calendly_webhook.classify_qa_fields(qa)
+    assert fields["firm_name"] == "Test LLP", fields.get("firm_name")
+    assert fields["role"] == "MP", fields.get("role")
+    assert fields["migration_date"] == "2026-07-02", fields.get("migration_date")
+    assert fields["years_history"] == "3-5 years", fields.get("years_history")
+    assert fields["volume"] == "30k rows", fields.get("volume")
+    assert fields["notes"] == "Tight timeline", fields.get("notes")
+    print("T18 OK: real form Q&A classified into firm/role/date/years/volume/notes")
+
+
+def t19_extract_stores_new_fields_via_webhook():
+    """A booking with the real form answers stores the derived columns and a
+    full Q&A list for the Details view."""
+    uri = INVITEE_URI + "-real"
+    payload = {
+        "event": "invitee.created",
+        "payload": {
+            "uri": uri,
+            "name": "Test Test",
+            "email": "support@cutovr.com",
+            "timezone": "America/New_York",
+            "scheduled_event": {
+                "uri": "https://api.calendly.com/scheduled_events/REAL1",
+                "name": "Cutovr - Discovery Call",
+                "start_time": "2026-06-29T20:00:00.000000Z",
+                "end_time": "2026-06-29T20:30:00.000000Z",
+            },
+            "questions_and_answers": [
+                {"question": "What is the name of your law firm?", "answer": "Test LLP"},
+                {"question": "What is your role at the firm?", "answer": "MP"},
+                {"question": "When is your Clio Migration date? (YYYY-MM-DD)", "answer": "2026-07-02"},
+                {"question": "Years of history to bring over.", "answer": "3-5 years"},
+            ],
+        },
+    }
+    c = appmod.app.test_client()
+    r = _post(c, payload)
+    assert r.status_code == 200, r.status_code
+    lead = appmod.db.get_calendly_lead_by_invitee(uri)
+    assert lead["firm_name"] == "Test LLP", lead["firm_name"]
+    assert lead["role"] == "MP", lead["role"]
+    assert lead["migration_date"] == "2026-07-02", lead["migration_date"]
+    assert lead["years_history"] == "3-5 years", lead["years_history"]
+    assert lead["meeting_start"].startswith("2026-06-29T20:00:00")
+    assert lead["meeting_end"].startswith("2026-06-29T20:30:00")
+    qa = json.loads(lead["questions_json"])
+    assert len(qa) == 4
+    print("T19 OK: webhook stores firm/role/migration date + meeting times + full Q&A")
+
+
+def t20_meeting_time_formatting_and_detail_view():
+    """Human-readable meeting time is rendered (not raw ISO) and the Details
+    page shows all custom answers instead of the 'No custom questions' copy."""
+    uri = INVITEE_URI + "-fmt"
+    payload = {
+        "event": "invitee.created",
+        "payload": {
+            "uri": uri,
+            "name": "Format Tester",
+            "email": "fmt@firm.test",
+            "timezone": "America/New_York",
+            "scheduled_event": {
+                "uri": "https://api.calendly.com/scheduled_events/FMT1",
+                "name": "Cutovr - Discovery Call",
+                "start_time": "2026-06-29T20:00:00.000000Z",
+                "end_time": "2026-06-29T20:30:00.000000Z",
+            },
+            "questions_and_answers": [
+                {"question": "What is the name of your law firm?", "answer": "Format LLP"},
+                {"question": "What is your role at the firm?", "answer": "Partner"},
+            ],
+        },
+    }
+    c0 = appmod.app.test_client()
+    _post(c0, payload)
+    lead_row = appmod.db.get_calendly_lead_by_invitee(uri)
+
+    # The view helper produces a human label in the invitee timezone (EDT),
+    # not the raw ISO string.
+    view = appmod._calendly_lead_view(lead_row)
+    disp = view["meeting_display"]
+    assert disp and "2026-06-29T20:00:00" not in disp, disp
+    assert "2026" in disp and ("EDT" in disp or "EST" in disp or "America" in disp), disp
+
+    c = appmod.app.test_client()
+    _signup_operator(c)
+    detail = c.get(f"/operator/leads/{lead_row['id']}").get_data(as_text=True)
+    # All custom answers present; the empty-state copy is NOT shown.
+    assert "Format LLP" in detail
+    assert "Partner" in detail
+    assert "No custom questions were captured" not in detail
+    # Details page shows the human meeting time.
+    assert "operator-lead-detail-meeting" in detail
+
+    # The list page shows the human meeting time and a migration/role column.
+    listing = c.get("/operator/leads").get_data(as_text=True)
+    assert "operator-lead-meeting" in listing
+    print("T20 OK: human meeting time + Details shows all Q&A (no empty-state copy)")
+
+
+def t21_sync_backfill_upserts(monkeypatched=True):
+    """sync_recent_bookings pulls events + invitees and upserts leads, keyed on
+    invitee URI (idempotent, fail-soft without a token)."""
+    # Without a token, sync is a soft no-op.
+    os.environ.pop("CALENDLY_API_TOKEN", None)
+    no_token = calendly_webhook.sync_recent_bookings(upsert=lambda u, f: 1)
+    assert no_token["ok"] is False and no_token["status"] == "no_token"
+
+    # With a token + mocked API, sync upserts one lead per invitee.
+    os.environ["CALENDLY_API_TOKEN"] = "tok-sync-should-not-leak"
+    event_uri = "https://api.calendly.com/scheduled_events/SYNC1"
+    invitee_uri = "https://api.calendly.com/scheduled_events/SYNC1/invitees/INVSYNC"
+    orig_org = calendly_webhook.fetch_current_organization
+    orig_events = calendly_webhook.fetch_scheduled_events
+    orig_inv = calendly_webhook.fetch_event_invitees
+    try:
+        calendly_webhook.fetch_current_organization = lambda session=None: {
+            "ok": True, "organization": "https://api.calendly.com/organizations/ORG1",
+            "status": "ok",
+        }
+        calendly_webhook.fetch_scheduled_events = lambda org, count=20, session=None: {
+            "ok": True, "status": "ok", "events": [{
+                "uri": event_uri,
+                "name": "Cutovr - Discovery Call",
+                "start_time": "2026-06-29T20:00:00.000000Z",
+                "end_time": "2026-06-29T20:30:00.000000Z",
+                "status": "active",
+            }],
+        }
+        calendly_webhook.fetch_event_invitees = lambda ev, session=None: {
+            "ok": True, "status": "ok", "invitees": [{
+                "uri": invitee_uri,
+                "name": "Synced Prospect",
+                "email": "synced@firm.test",
+                "status": "active",
+                "timezone": "America/New_York",
+                "questions_and_answers": [
+                    {"question": "What is the name of your law firm?", "answer": "Synced LLP"},
+                    {"question": "What is your role at the firm?", "answer": "COO"},
+                ],
+            }],
+        }
+        captured = {}
+
+        def fake_upsert(uri, fields):
+            captured["uri"] = uri
+            captured["fields"] = fields
+            return appmod.db.upsert_calendly_lead(invitee_uri=uri, fields=fields)
+
+        summary = calendly_webhook.sync_recent_bookings(upsert=fake_upsert, count=5)
+        assert summary["ok"] is True, summary
+        assert summary["events"] == 1
+        assert summary["invitees"] == 1
+        assert summary["upserted"] == 1
+        assert captured["uri"] == invitee_uri
+        f = captured["fields"]
+        assert f["firm_name"] == "Synced LLP"
+        assert f["role"] == "COO"
+        assert f["meeting_start"].startswith("2026-06-29T20:00:00")
+        assert f["enrichment_status"] == "synced"
+
+        # Idempotent: a second sync updates the same row, not a new one.
+        before = appmod.db.count_calendly_leads()
+        calendly_webhook.sync_recent_bookings(upsert=fake_upsert, count=5)
+        after = appmod.db.count_calendly_leads()
+        assert before == after, (before, after)
+
+        stored = appmod.db.get_calendly_lead_by_invitee(invitee_uri)
+        assert stored["firm_name"] == "Synced LLP"
+        # Token never leaks into the stored lead.
+        assert "tok-sync-should-not-leak" not in json.dumps(dict(stored))
+    finally:
+        calendly_webhook.fetch_current_organization = orig_org
+        calendly_webhook.fetch_scheduled_events = orig_events
+        calendly_webhook.fetch_event_invitees = orig_inv
+        os.environ.pop("CALENDLY_API_TOKEN", None)
+    print("T21 OK: sync backfill upserts leads idempotently, no token leak")
+
+
+def t22_sync_route_operator_gated_and_no_token_message():
+    """The /operator/calendly/sync route is operator-gated and gives a clear
+    message when no API token is configured."""
+    os.environ.pop("CALENDLY_API_TOKEN", None)
+    # Non-operator (anonymous) is blocked (redirect to login or 404).
+    anon = appmod.app.test_client()
+    r = anon.post("/operator/calendly/sync")
+    assert r.status_code in (302, 404), r.status_code
+
+    # Operator with no token gets redirected with the token hint flashed.
+    c = appmod.app.test_client()
+    _signup_operator(c)
+    r2 = c.post("/operator/calendly/sync", follow_redirects=True)
+    assert r2.status_code == 200, r2.status_code
+    body = r2.get_data(as_text=True)
+    assert "CALENDLY_API_TOKEN" in body, "missing no-token guidance"
+    print("T22 OK: sync route operator-gated; clear no-token message")
+
+
+def t23_meeting_enrichment_via_event_api():
+    """When the invitee payload lacks meeting times but carries an event URI,
+    the webhook enriches start/end from the scheduled-event API."""
+    uri = INVITEE_URI + "-evtenrich"
+    event_uri = "https://api.calendly.com/scheduled_events/ENR1"
+    os.environ["CALENDLY_API_TOKEN"] = "tok-evt"
+    orig_event = calendly_webhook.fetch_scheduled_event
+    try:
+        calendly_webhook.fetch_scheduled_event = lambda u, session=None: {
+            "ok": True, "status": "ok", "resource": {
+                "uri": event_uri,
+                "name": "Cutovr - Discovery Call",
+                "start_time": "2026-07-10T14:00:00.000000Z",
+                "end_time": "2026-07-10T14:30:00.000000Z",
+            },
+        }
+        payload = {
+            "event": "invitee.created",
+            "payload": {
+                "uri": uri,
+                "name": "No Times",
+                "email": "notimes@firm.test",
+                # Only an event URI, no scheduled_event start/end inline.
+                "event": event_uri,
+            },
+        }
+        c = appmod.app.test_client()
+        r = _post(c, payload)
+        assert r.status_code == 200, r.status_code
+        lead = appmod.db.get_calendly_lead_by_invitee(uri)
+        assert lead["event_uri"] == event_uri
+        assert lead["meeting_start"].startswith("2026-07-10T14:00:00"), lead["meeting_start"]
+        assert lead["meeting_end"].startswith("2026-07-10T14:30:00"), lead["meeting_end"]
+    finally:
+        calendly_webhook.fetch_scheduled_event = orig_event
+        os.environ.pop("CALENDLY_API_TOKEN", None)
+    print("T23 OK: meeting times enriched from scheduled-event API when payload lacks them")
+
+
 if __name__ == "__main__":
     t1_created_makes_lead()
     t2_duplicate_is_idempotent()
@@ -609,4 +861,10 @@ if __name__ == "__main__":
     t15_diagnostics_route_reports_statuses()
     t16_diagnostics_no_secret_leaks()
     t17_diagnostics_helper_unit()
+    t18_real_form_qa_classification()
+    t19_extract_stores_new_fields_via_webhook()
+    t20_meeting_time_formatting_and_detail_view()
+    t21_sync_backfill_upserts()
+    t22_sync_route_operator_gated_and_no_token_message()
+    t23_meeting_enrichment_via_event_api()
     print("\nALL CALENDLY SMOKE TESTS PASSED")

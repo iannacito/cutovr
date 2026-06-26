@@ -56,6 +56,28 @@
     {% endif %}
   </section>
 
+  <section class="card" data-testid="calendly-sync">
+    <h2>Backfill recent bookings</h2>
+    <p>
+      Pull the most recent scheduled events and invitees from the Calendly API
+      and upsert them as leads. Use this for calls booked while the webhook was
+      misconfigured. Existing leads are matched by invitee, so this never
+      duplicates a row.
+    </p>
+    {% if calendly.api_token_configured %}
+    <form action="{{ url_for('operator_calendly_sync') }}" method="post"
+          onsubmit="return confirm('Fetch recent Calendly bookings and update leads now?');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn btn-primary" type="submit" data-testid="calendly-sync-button">Sync recent Calendly bookings</button>
+    </form>
+    {% else %}
+    <p class="muted" data-testid="calendly-sync-no-token">
+      Set <code>CALENDLY_API_TOKEN</code> in the environment (Render) to enable
+      sync. Without it, only live webhook deliveries can create leads.
+    </p>
+    {% endif %}
+  </section>
+
   <section class="card">
     <h2>Configuration (no secrets shown)</h2>
     <table data-testid="calendly-config-table">

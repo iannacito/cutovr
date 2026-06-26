@@ -67,7 +67,7 @@ in `CALENDLY_WEBHOOK_SIGNING_KEY` (below) so Cutovr can verify each delivery.
 | `DISCOVERY_CALL_URL` | Recommended | The Calendly link used by the website "Book a discovery call" CTA. |
 | `CALENDLY_WEBHOOK_SIGNING_KEY` | Recommended | Calendly's per-subscription signing key. Cutovr verifies the `Calendly-Webhook-Signature` HMAC against it. |
 | `CALENDLY_WEBHOOK_SECRET` | Optional | Simpler shared-secret gate (alternative to the signing key). Cutovr compares it against `?secret=...` or the `X-Calendly-Webhook-Secret` header. |
-| `CALENDLY_API_TOKEN` | Optional | Personal Access Token used to *enrich* a booking by fetching the full invitee record (incl. all question answers) from the Calendly API. If unset, Cutovr stores whatever the webhook payload provides and marks enrichment `skipped`. |
+| `CALENDLY_API_TOKEN` | Recommended | Personal Access Token (Calendly → Integrations → API & webhooks → Personal access tokens). Used to *enrich* a booking by fetching the full invitee record (all question answers) **and the scheduled event's start/end time** from the Calendly API, and to power the operator **Sync recent Calendly bookings** backfill. If unset, Cutovr stores whatever the webhook payload provides and marks enrichment `skipped`; sync is disabled. |
 | `CALENDLY_CONFIRMATION_EMAIL` | Optional | Set to `1` to also send a Cutovr-branded "we received your details" email to the prospect (in addition to Calendly's own confirmation). Off by default. Never sent for cancellations or when SMTP is unconfigured. |
 | `INTERNAL_INTAKE_EMAILS` | Recommended | Comma-separated internal recipients for the "new discovery call" notification. Falls back to `SUPPORT_EMAIL` if unset. |
 | `SUPPORT_EMAIL` | Recommended | Customer-facing contact mailbox. Set to `support@cutovr.com` in production. It's echoed in the optional prospect confirmation email and the team notification; when left at the deploy placeholder, the lead emails fall back to `support@cutovr.com`. |
@@ -96,6 +96,17 @@ in the UI.
    **Canceled**.
 5. From the Leads page, click **Export to spreadsheet (CSV)** and confirm a
    `cutovr-calendly-leads.csv` file downloads with the test booking row.
+
+### Backfilling bookings made before the webhook was wired up
+
+If a call was booked while the webhook was misconfigured, the live webhook
+will not retroactively create that lead. With `CALENDLY_API_TOKEN` set, open
+**Leads** (`/operator/leads`) or **Calendly setup diagnostics**
+(`/operator/calendly`) and click **Sync recent Calendly bookings**. Cutovr
+pulls the most recent scheduled events and their invitees from the Calendly
+API and upserts them as leads (keyed on the invitee URI, so it never
+duplicates an existing row). The button is hidden / disabled with a hint when
+no API token is configured.
 
 > **The embed alone does not store leads.** The `/book-discovery-call` Calendly
 > inline embed lets prospects book a meeting, but a lead is only captured in

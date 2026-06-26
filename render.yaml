@@ -56,6 +56,14 @@ services:
         sync: false
       - key: STRIPE_PRICE_COMPLETE
         sync: false
+      # Calendly discovery-call lead capture. Set the signing key and API
+      # token in the Render dashboard (never commit them). The API token
+      # powers enrichment (meeting times + form answers) and the operator
+      # "Sync recent Calendly bookings" backfill — see CALENDLY_SETUP.md.
+      - key: CALENDLY_WEBHOOK_SIGNING_KEY
+        sync: false
+      - key: CALENDLY_API_TOKEN
+        sync: false
     disk:
       name: pclaw-qbo-data
       mountPath: /var/data

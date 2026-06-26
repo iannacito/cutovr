@@ -19,14 +19,19 @@
       <dt>Email</dt><dd>{{ lead.email }}</dd>
       {% if lead.phone %}<dt>Phone</dt><dd>{{ lead.phone }}</dd>{% endif %}
       {% if lead.firm_name %}<dt>Firm</dt><dd>{{ lead.firm_name }}</dd>{% endif %}
+      {% if lead.role %}<dt>Role</dt><dd>{{ lead.role }}</dd>{% endif %}
+      {% if lead.migration_date %}<dt>Clio migration date</dt><dd>{{ lead.migration_date }}</dd>{% endif %}
+      {% if lead.years_history %}<dt>Years of history</dt><dd>{{ lead.years_history }}</dd>{% endif %}
+      {% if lead.volume %}<dt>Rough volume</dt><dd>{{ lead.volume }}</dd>{% endif %}
+      {% if lead.notes %}<dt>Notes &amp; timeline</dt><dd>{{ lead.notes }}</dd>{% endif %}
       {% if lead.clio_rep_name or lead.clio_rep_email %}
       <dt>Clio rep</dt><dd>{{ lead.clio_rep_name or '' }}{% if lead.clio_rep_email %} &lt;{{ lead.clio_rep_email }}&gt;{% endif %}</dd>
       {% endif %}
       {% if lead.event_name %}<dt>Event</dt><dd>{{ lead.event_name }}</dd>{% endif %}
-      {% if lead.meeting_start %}
-      <dt>Meeting start</dt><dd>{{ lead.meeting_start }}{% if lead.timezone %} ({{ lead.timezone }}){% endif %}</dd>
+      {% if lead.meeting_display %}
+      <dt>Meeting start</dt><dd data-testid="operator-lead-detail-meeting">{{ lead.meeting_display }}{% if lead.timezone %} <small class="muted">({{ lead.timezone }})</small>{% endif %}</dd>
       {% endif %}
-      {% if lead.meeting_end %}<dt>Meeting end</dt><dd>{{ lead.meeting_end }}</dd>{% endif %}
+      {% if lead.meeting_end_display %}<dt>Meeting end</dt><dd>{{ lead.meeting_end_display }}</dd>{% endif %}
       <dt>Booked</dt><dd>{{ lead.created_at }}</dd>
       <dt>Enrichment</dt><dd><code>{{ lead.enrichment_status or '—' }}</code></dd>
     </dl>

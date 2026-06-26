@@ -3,7 +3,8 @@ from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
 from werkzeug.datastructures import FileStorage
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone as _dt_timezone
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 from functools import wraps
 from typing import Optional
@@ -10535,6 +10536,27 @@ def calendly_webhook_endpoint():
             enriched = result["resource"]
 
     fields = calendly_webhook.extract_lead_fields(payload, enriched_invitee=enriched)
+
+    # Meeting start/end often aren't in the invitee payload/record — they live
+    # on the scheduled event. If we have a token and an event URI but no
+    # meeting time yet, fetch the event to fill it in. Fails soft.
+    if (
+        calendly_webhook.api_token()
+        and fields.get("event_uri")
+        and not fields.get("meeting_start")
+    ):
+        ev = calendly_webhook.fetch_scheduled_event(fields["event_uri"])
+        if ev["ok"] and isinstance(ev["resource"], dict):
+            res = ev["resource"]
+            if res.get("start_time"):
+                fields["meeting_start"] = str(res["start_time"])
+            if res.get("end_time"):
+                fields["meeting_end"] = str(res["end_time"])
+            if res.get("name") and not fields.get("event_name"):
+                fields["event_name"] = str(res["name"])[:300]
+            if enrichment_status in ("skipped", "ok"):
+                enrichment_status = "ok"
+
     fields["raw_payload_json"] = json.dumps(payload)[:200_000]
     fields["enrichment_status"] = enrichment_status
 
@@ -10562,28 +10584,78 @@ def calendly_webhook_endpoint():
     return jsonify({"status": "ok", "lead_id": lead_id}), 200
 
 
+# Timezone used to render meeting times when the invitee didn't share one.
+# Cutovr's prospects are North-American law firms, so an Eastern default
+# reads naturally; an explicit invitee timezone always wins.
+_DEFAULT_DISPLAY_TZ = "America/Toronto"
+
+
+def _format_meeting_datetime(iso_value, tz_name=None):
+    """Render a Calendly ISO start time human-readably in a local timezone.
+
+    Converts the stored UTC ISO timestamp (e.g. "2026-06-29T20:00:00Z") to
+    the invitee's timezone (or an Eastern default) and formats it like
+    "Mon, Jun 29, 2026 · 4:00 PM EDT". Returns None for empty input and falls
+    back to the raw string if parsing fails, so the UI never shows a blank or
+    crashes on an unexpected value.
+    """
+    if not iso_value:
+        return None
+    raw = str(iso_value)
+    try:
+        ts = raw.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(ts)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=_dt_timezone.utc)
+        tz = None
+        for name in (tz_name, _DEFAULT_DISPLAY_TZ):
+            if not name:
+                continue
+            try:
+                tz = ZoneInfo(name)
+                break
+            except Exception:  # noqa: BLE001 - unknown tz name -> try next
+                continue
+        if tz is not None:
+            dt = dt.astimezone(tz)
+        label = dt.strftime("%a, %b %-d, %Y · %-I:%M %p")
+        tzabbr = dt.strftime("%Z")
+        return f"{label} {tzabbr}".strip()
+    except Exception:  # noqa: BLE001 - never break the Leads UI on a bad value
+        return raw
+
+
 def _calendly_lead_view(row: dict) -> dict:
     """Shape a calendly_leads row for the operator Leads templates.
 
-    Decodes the questions JSON into a list and omits the raw payload /
-    internal columns the UI shouldn't surface.
+    Decodes the questions JSON into a list, adds a human-readable meeting
+    time, and omits the raw payload / internal columns the UI shouldn't
+    surface.
     """
     try:
         qa = json.loads(row.get("questions_json") or "[]")
     except (ValueError, TypeError):
         qa = []
+    tz = row.get("timezone")
     return {
         "id": row.get("id"),
         "name": row.get("name") or "(no name)",
         "email": row.get("email") or "—",
         "phone": row.get("phone"),
         "firm_name": row.get("firm_name"),
+        "role": row.get("role"),
+        "migration_date": row.get("migration_date"),
+        "years_history": row.get("years_history"),
+        "volume": row.get("volume"),
+        "notes": row.get("notes"),
         "clio_rep_name": row.get("clio_rep_name"),
         "clio_rep_email": row.get("clio_rep_email"),
         "event_name": row.get("event_name"),
         "meeting_start": row.get("meeting_start"),
         "meeting_end": row.get("meeting_end"),
-        "timezone": row.get("timezone"),
+        "meeting_display": _format_meeting_datetime(row.get("meeting_start"), tz),
+        "meeting_end_display": _format_meeting_datetime(row.get("meeting_end"), tz),
+        "timezone": tz,
         "status": row.get("status") or "scheduled",
         "cancel_reason": row.get("cancel_reason"),
         "event_uri": row.get("event_uri"),
@@ -10661,6 +10733,56 @@ def operator_lead_detail(lead_id):
     if not row:
         abort(404)
     return render_template("operator-lead.html", lead=_calendly_lead_view(row))
+
+
+@app.route("/operator/calendly/sync", methods=["POST"])
+@operator_required
+def operator_calendly_sync():
+    """Backfill leads from recent Calendly bookings via the API.
+
+    Operator-only. Pulls the most recent scheduled events + invitees using
+    CALENDLY_API_TOKEN and upserts them (keyed on invitee URI, so it merges
+    with webhook-captured rows instead of duplicating). Useful for bookings
+    made while the webhook was misconfigured. Fails soft: a missing token or
+    API error flashes a clear message rather than erroring.
+    """
+    if not calendly_webhook.api_token():
+        flash(
+            "Calendly sync needs CALENDLY_API_TOKEN configured in the "
+            "environment (Render). No token is set, so nothing was synced.",
+            "error",
+        )
+        return redirect(url_for("operator_calendly_diagnostics"))
+
+    summary = calendly_webhook.sync_recent_bookings(
+        upsert=lambda uri, fields: db.upsert_calendly_lead(
+            invitee_uri=uri, fields=fields
+        ),
+        count=30,
+    )
+    _audit(
+        "calendly_leads_synced",
+        target_type="calendly_lead",
+        target_id="sync",
+        details=(
+            f"status={summary['status']} events={summary['events']} "
+            f"invitees={summary['invitees']} upserted={summary['upserted']} "
+            f"errors={summary['errors']}"
+        ),
+    )
+    if summary["ok"]:
+        flash(
+            f"Calendly sync complete: {summary['upserted']} booking(s) from "
+            f"{summary['events']} recent event(s) updated.",
+            "success",
+        )
+    else:
+        flash(
+            "Calendly sync could not complete "
+            f"(status: {summary['status']}). Check the API token and try again.",
+            "error",
+        )
+    return redirect(url_for("operator_leads_list"))
 
 
 # Hints used to pull a Clio migration date out of the free-form Calendly

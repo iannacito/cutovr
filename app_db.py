@@ -256,6 +256,11 @@ CREATE TABLE IF NOT EXISTS calendly_leads (
     email               TEXT,
     phone               TEXT,
     firm_name           TEXT,
+    role                TEXT,
+    migration_date      TEXT,
+    years_history       TEXT,
+    volume              TEXT,
+    notes               TEXT,
     clio_rep_name       TEXT,
     clio_rep_email      TEXT,
     meeting_start       TEXT,
@@ -422,6 +427,16 @@ class AppDB:
         # When this record was last touched by a Stripe event, so a replayed
         # webhook can be recognised as already-applied (idempotency).
         add_col("intake_submissions", "paid_at TEXT")
+
+        # Calendly lead: first-class columns derived from the discovery-call
+        # form answers, added after the initial calendly_leads schema. All
+        # nullable so existing lead rows stay valid; the webhook/sync write
+        # path fills them from questions_and_answers when present.
+        add_col("calendly_leads", "role TEXT")
+        add_col("calendly_leads", "migration_date TEXT")
+        add_col("calendly_leads", "years_history TEXT")
+        add_col("calendly_leads", "volume TEXT")
+        add_col("calendly_leads", "notes TEXT")
 
     @contextmanager
     def _conn(self):
@@ -1424,7 +1439,8 @@ class AppDB:
 
         allowed = (
             "invitee_uuid", "event_uri", "event_type_uri", "event_name",
-            "name", "email", "phone", "firm_name", "clio_rep_name",
+            "name", "email", "phone", "firm_name", "role", "migration_date",
+            "years_history", "volume", "notes", "clio_rep_name",
             "clio_rep_email", "meeting_start", "meeting_end", "timezone",
             "status", "cancel_reason", "canceled_by", "rescheduled",
             "questions_json", "enrichment_status", "raw_payload_json",

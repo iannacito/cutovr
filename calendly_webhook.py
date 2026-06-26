@@ -252,16 +252,66 @@ def authenticate(raw_body: bytes, *, signature_header: Optional[str],
 
 # Question texts we map onto first-class lead columns. Calendly question
 # labels are operator-defined, so we match loosely (lowercased substring).
-_FIRM_HINTS = ("firm", "company", "law firm", "organization", "organisation")
-_CLIO_NAME_HINTS = ("clio rep name", "clio representative", "clio contact name",
-                     "clio rep")
-_CLIO_EMAIL_HINTS = ("clio rep email", "clio email", "clio representative email")
-_PHONE_HINTS = ("phone", "mobile", "cell", "telephone")
+#
+# Order matters: each answered question is assigned to the FIRST field below
+# whose hints match, then skipped. This resolves overlaps such as "What is
+# your role at the firm?" (which contains "firm") — ``role`` is checked before
+# ``firm_name`` so the role question is not mis-filed as the firm name.
+_QA_FIELD_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("role", ("your role", "role at", "role/title", "job title", "what is your role",
+              "position at", "your title")),
+    ("migration_date", ("migration date", "clio migration", "migrate date",
+                        "go live", "go-live", "cutover date", "target date",
+                        "clio date", "migration target")),
+    ("years_history", ("years of history", "history to bring", "years of data",
+                       "how many years", "years to migrate", "years to bring")),
+    ("volume", ("rough volume", "volume", "transactions or reports", "gl rows",
+                "number of transactions", "transaction volume")),
+    ("notes", ("notes & timeline", "notes and timeline", "notes/timeline",
+               "notes", "timeline", "anything else", "additional context")),
+    ("clio_rep_email", ("clio rep email", "clio email",
+                        "clio representative email")),
+    ("clio_rep_name", ("clio rep name", "clio representative",
+                       "clio contact name", "clio rep")),
+    ("phone", ("phone", "mobile", "cell", "telephone")),
+    ("firm_name", ("law firm", "firm name", "name of your firm", "your firm",
+                   "company", "organization", "organisation", "firm")),
+)
+
+# Per-field max lengths so a long free-form answer can't blow out a column.
+_QA_FIELD_LIMITS = {
+    "firm_name": 300, "role": 200, "migration_date": 100, "years_history": 100,
+    "volume": 500, "notes": 2000, "clio_rep_name": 300, "clio_rep_email": 254,
+    "phone": 60,
+}
 
 
 def _match_hint(label: str, hints) -> bool:
     low = (label or "").strip().lower()
     return any(h in low for h in hints)
+
+
+def classify_qa_fields(qa: list[dict]) -> dict:
+    """Map a normalized Q&A list onto first-class lead columns.
+
+    Each answered question is assigned to at most one field, using the first
+    matching rule in ``_QA_FIELD_RULES`` (priority order). Empty answers are
+    ignored. Returns only the fields that were found, each truncated to its
+    column limit. Never raises.
+    """
+    out: dict = {}
+    for item in qa or []:
+        q = (item.get("question") or "")
+        a = (item.get("answer") or "").strip()
+        if not a:
+            continue
+        for field, hints in _QA_FIELD_RULES:
+            if field in out:
+                continue
+            if _match_hint(q, hints):
+                out[field] = a[: _QA_FIELD_LIMITS.get(field, 300)]
+                break
+    return out
 
 
 def _normalize_qa(questions_and_answers) -> list[dict]:
@@ -372,23 +422,14 @@ def extract_lead_fields(payload: dict, enriched_invitee: Optional[dict] = None) 
     if invitee.get("timezone"):
         fields["timezone"] = str(invitee["timezone"])
 
-    # Custom question answers.
+    # Custom question answers. Store the full list for the Details view and
+    # derive first-class columns (firm, role, migration date, years, volume,
+    # notes, Clio rep, phone) from it.
     qa = _normalize_qa(invitee.get("questions_and_answers"))
     if qa:
         fields["questions_json"] = json.dumps(qa)
-        for item in qa:
-            q = item["question"]
-            a = item["answer"]
-            if not a:
-                continue
-            if "firm_name" not in fields and _match_hint(q, _FIRM_HINTS):
-                fields["firm_name"] = a[:300]
-            elif "clio_rep_email" not in fields and _match_hint(q, _CLIO_EMAIL_HINTS):
-                fields["clio_rep_email"] = a[:254]
-            elif "clio_rep_name" not in fields and _match_hint(q, _CLIO_NAME_HINTS):
-                fields["clio_rep_name"] = a[:300]
-            elif "phone" not in fields and _match_hint(q, _PHONE_HINTS):
-                fields["phone"] = a[:60]
+        for field, value in classify_qa_fields(qa).items():
+            fields.setdefault(field, value)
 
     # Calendly also exposes a dedicated text_reminder_number / phone field.
     if "phone" not in fields:
@@ -487,6 +528,194 @@ def fetch_invitee(invitee_uri: str, *, session: Optional["requests.Session"] = N
     except ValueError:
         return {"ok": False, "resource": None, "status": "http_error"}
     return {"ok": True, "resource": data.get("resource") or {}, "status": "ok"}
+
+
+def _auth_headers() -> Optional[dict]:
+    token = api_token()
+    if not token:
+        return None
+    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+
+def _get_json(url: str, *, params: Optional[dict] = None,
+              session: Optional["requests.Session"] = None) -> dict:
+    """GET a Calendly API URL with the bearer token. Fails soft.
+
+    Returns {"ok": bool, "data": dict, "status": str}. ``status`` is one of
+    "ok", "no_token", "http_error", "network_error". The token is never
+    logged.
+    """
+    headers = _auth_headers()
+    if not headers:
+        return {"ok": False, "data": {}, "status": "no_token"}
+    sess = session or requests
+    try:
+        resp = sess.get(url, headers=headers, params=params,
+                        timeout=_API_TIMEOUT_SECONDS)
+    except Exception:  # noqa: BLE001 - network/timeout/SSL all fail soft
+        log.warning("Calendly API network error")
+        return {"ok": False, "data": {}, "status": "network_error"}
+    if resp.status_code != 200:
+        log.warning("Calendly API HTTP %s", resp.status_code)
+        return {"ok": False, "data": {}, "status": "http_error"}
+    try:
+        return {"ok": True, "data": resp.json() or {}, "status": "ok"}
+    except ValueError:
+        return {"ok": False, "data": {}, "status": "http_error"}
+
+
+def fetch_scheduled_event(event_uri: str, *,
+                          session: Optional["requests.Session"] = None) -> dict:
+    """Fetch a scheduled event (start/end/name/status) from Calendly.
+
+    The invitee webhook/API record carries the question answers but not
+    always the meeting start/end; the scheduled-event resource does. Returns
+    {"ok": bool, "resource": dict|None, "status": str}. Never raises.
+    """
+    if not event_uri:
+        return {"ok": False, "resource": None, "status": "no_uri"}
+    r = _get_json(event_uri, session=session)
+    if not r["ok"]:
+        return {"ok": False, "resource": None, "status": r["status"]}
+    return {"ok": True, "resource": r["data"].get("resource") or {}, "status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Backfill / sync. Pull recent scheduled events + invitees from the Calendly
+# API and upsert them as leads, so bookings made while the webhook was
+# misconfigured still populate. Fails soft; never raises.
+# ---------------------------------------------------------------------------
+
+def fetch_current_organization(*, session: Optional["requests.Session"] = None) -> dict:
+    """Resolve the token's organization URI via GET /users/me. Fails soft.
+
+    Returns {"ok": bool, "organization": str|None, "status": str}.
+    """
+    r = _get_json(f"{CALENDLY_API_BASE}/users/me", session=session)
+    if not r["ok"]:
+        return {"ok": False, "organization": None, "status": r["status"]}
+    resource = r["data"].get("resource") or {}
+    org = resource.get("current_organization")
+    if not org:
+        return {"ok": False, "organization": None, "status": "no_org"}
+    return {"ok": True, "organization": str(org), "status": "ok"}
+
+
+def fetch_scheduled_events(organization: str, *, count: int = 20,
+                           session: Optional["requests.Session"] = None) -> dict:
+    """List recent scheduled events for an organization (newest first).
+
+    Returns {"ok": bool, "events": list, "status": str}. Fails soft.
+    """
+    if not organization:
+        return {"ok": False, "events": [], "status": "no_org"}
+    params = {
+        "organization": organization,
+        "count": max(1, min(int(count or 20), 100)),
+        "sort": "start_time:desc",
+    }
+    r = _get_json(f"{CALENDLY_API_BASE}/scheduled_events", params=params,
+                  session=session)
+    if not r["ok"]:
+        return {"ok": False, "events": [], "status": r["status"]}
+    events = r["data"].get("collection") or []
+    return {"ok": True, "events": events if isinstance(events, list) else [],
+            "status": "ok"}
+
+
+def fetch_event_invitees(event_uri: str, *,
+                         session: Optional["requests.Session"] = None) -> dict:
+    """List invitees for a scheduled event. Returns {ok, invitees, status}."""
+    if not event_uri:
+        return {"ok": False, "invitees": [], "status": "no_uri"}
+    r = _get_json(f"{event_uri.rstrip('/')}/invitees",
+                  params={"count": 100}, session=session)
+    if not r["ok"]:
+        return {"ok": False, "invitees": [], "status": r["status"]}
+    invitees = r["data"].get("collection") or []
+    return {"ok": True, "invitees": invitees if isinstance(invitees, list) else [],
+            "status": "ok"}
+
+
+def lead_fields_from_event_and_invitee(event: dict, invitee: dict) -> dict:
+    """Build lead column fields from a scheduled-event + invitee API pair.
+
+    Reuses ``extract_lead_fields`` by nesting the event under the invitee as
+    ``scheduled_event`` so meeting start/end/name and the question answers are
+    all extracted by the same code path the webhook uses.
+    """
+    inv = dict(invitee or {})
+    if event:
+        inv["scheduled_event"] = event
+    payload = {"event": "invitee.created", "payload": inv}
+    return extract_lead_fields(payload)
+
+
+def sync_recent_bookings(*, upsert, count: int = 20,
+                         session: Optional["requests.Session"] = None) -> dict:
+    """Backfill leads from recent Calendly scheduled events.
+
+    ``upsert`` is a callable ``(invitee_uri, fields) -> lead_id`` (normally a
+    thin wrapper over AppDB.upsert_calendly_lead) so this module stays free of
+    any DB dependency and is easy to test with a fake.
+
+    Fetches the token's organization, the most recent ``count`` scheduled
+    events, and each event's invitees, then upserts one lead per invitee
+    (keyed on the invitee URI, so it merges with any webhook-captured row
+    instead of duplicating). Fails soft: a missing token or any API error
+    yields a summary with ``ok=False`` and a ``status`` describing the gap;
+    it never raises and never touches secrets in its return value.
+
+    Returns a summary dict: {ok, status, events, invitees, upserted,
+    errors}.
+    """
+    summary = {"ok": False, "status": "", "events": 0, "invitees": 0,
+               "upserted": 0, "errors": 0}
+
+    if not api_token():
+        summary["status"] = "no_token"
+        return summary
+
+    org = fetch_current_organization(session=session)
+    if not org["ok"]:
+        summary["status"] = f"org_{org['status']}"
+        return summary
+
+    ev = fetch_scheduled_events(org["organization"], count=count, session=session)
+    if not ev["ok"]:
+        summary["status"] = f"events_{ev['status']}"
+        return summary
+
+    summary["events"] = len(ev["events"])
+    for event in ev["events"]:
+        if not isinstance(event, dict):
+            continue
+        event_uri = event.get("uri")
+        if not event_uri:
+            continue
+        inv = fetch_event_invitees(event_uri, session=session)
+        if not inv["ok"]:
+            summary["errors"] += 1
+            continue
+        for invitee in inv["invitees"]:
+            if not isinstance(invitee, dict):
+                continue
+            invitee_uri = invitee.get("uri")
+            if not invitee_uri:
+                continue
+            summary["invitees"] += 1
+            try:
+                fields = lead_fields_from_event_and_invitee(event, invitee)
+                fields["enrichment_status"] = "synced"
+                upsert(str(invitee_uri), fields)
+                summary["upserted"] += 1
+            except Exception:  # noqa: BLE001 - one bad row must not abort sync
+                log.exception("Calendly sync upsert failed for an invitee")
+                summary["errors"] += 1
+
+    summary["ok"] = True
+    summary["status"] = "ok"
+    return summary
 
 
 # ---------------------------------------------------------------------------
