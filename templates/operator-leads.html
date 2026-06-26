@@ -11,7 +11,17 @@
       <a class="btn btn-secondary" data-testid="operator-leads-export" href="{{ url_for('operator_leads_csv') }}">Export to spreadsheet (CSV)</a>
       {% endif %}
       <a class="btn btn-secondary" data-testid="operator-leads-diagnostics-link" href="{{ url_for('operator_calendly_diagnostics') }}">Calendly setup diagnostics</a>
+      <form action="{{ url_for('operator_calendly_sync') }}" method="post" style="display:inline;"
+            onsubmit="return confirm('Fetch recent Calendly bookings and update leads now?');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-secondary" type="submit" data-testid="operator-leads-sync">Sync recent Calendly bookings</button>
+      </form>
     </p>
+    {% if not calendly.api_token_configured %}
+    <p class="muted" data-testid="operator-leads-sync-token-hint">
+      Sync needs <code>CALENDLY_API_TOKEN</code> set in the environment (Render) to pull bookings from the Calendly API.
+    </p>
+    {% endif %}
   </div>
 
   <section class="card">
@@ -23,7 +33,7 @@
             <th>Meeting time</th>
             <th>Prospect</th>
             <th>Firm</th>
-            <th>Clio rep</th>
+            <th>Clio migration</th>
             <th>Status</th>
             <th>Booked</th>
             <th></th>
@@ -32,10 +42,9 @@
         <tbody>
           {% for lead in leads %}
           <tr data-testid="operator-lead-row">
-            <td>
-              {% if lead.meeting_start %}
-              {{ lead.meeting_start }}
-              {% if lead.timezone %}<br><small class="muted">{{ lead.timezone }}</small>{% endif %}
+            <td data-testid="operator-lead-meeting">
+              {% if lead.meeting_display %}
+              {{ lead.meeting_display }}
               {% else %}<span class="muted">&mdash;</span>{% endif %}
             </td>
             <td>
@@ -44,9 +53,8 @@
             </td>
             <td>{{ lead.firm_name or '—' }}</td>
             <td>
-              {% if lead.clio_rep_name or lead.clio_rep_email %}
-              {{ lead.clio_rep_name or '' }}
-              {% if lead.clio_rep_email %}<br><small class="muted">{{ lead.clio_rep_email }}</small>{% endif %}
+              {% if lead.migration_date %}{{ lead.migration_date }}
+              {% elif lead.role %}<small class="muted">{{ lead.role }}</small>
               {% else %}<span class="muted">—</span>{% endif %}
             </td>
             <td data-testid="operator-lead-status">
