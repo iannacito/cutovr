@@ -244,10 +244,14 @@
                    title="Select all"
                    onchange="document.querySelectorAll('.hub-active-check').forEach(c=>c.checked=this.checked)">
           </th>
-          <th>Batch / file</th>
+          <th data-sort="label" data-sort-dir="asc" style="cursor:pointer;user-select:none;">
+            Batch / file <span class="sort-indicator" aria-hidden="true">⇅</span>
+          </th>
           <th>Step progress</th>
           <th>Status</th>
-          <th>Last updated</th>
+          <th data-sort="updated" data-sort-dir="asc" style="cursor:pointer;user-select:none;">
+            Last updated <span class="sort-indicator" aria-hidden="true">⇅</span>
+          </th>
           <th style="text-align:right">Action</th>
         </tr>
       </thead>
@@ -477,4 +481,51 @@
   </dialog>
 
 </div>
+
+<script>
+(function () {
+  'use strict';
+
+  function hubTableSort(table, colIndex, dir) {
+    var tbody = table.querySelector('tbody');
+    if (!tbody) return;
+    var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
+    rows.sort(function (a, b) {
+      var aCell = a.cells[colIndex];
+      var bCell = b.cells[colIndex];
+      var aVal = aCell ? (aCell.dataset.sortVal || aCell.textContent || '').trim().toLowerCase() : '';
+      var bVal = bCell ? (bCell.dataset.sortVal || bCell.textContent || '').trim().toLowerCase() : '';
+      if (aVal < bVal) return dir === 'asc' ? -1 : 1;
+      if (aVal > bVal) return dir === 'asc' ? 1 : -1;
+      return 0;
+    });
+    rows.forEach(function (r) { tbody.appendChild(r); });
+  }
+
+  document.querySelectorAll('th[data-sort]').forEach(function (th) {
+    th.addEventListener('click', function () {
+      var table = th.closest('table');
+      if (!table) return;
+      var headers = Array.prototype.slice.call(table.querySelectorAll('thead th'));
+      var colIndex = headers.indexOf(th);
+      var dir = th.dataset.sortDir === 'asc' ? 'desc' : 'asc';
+
+      // Reset all sortable headers
+      table.querySelectorAll('th[data-sort]').forEach(function (h) {
+        h.dataset.sortDir = 'asc';
+        var ind = h.querySelector('.sort-indicator');
+        if (ind) ind.textContent = '⇅';
+      });
+
+      // Set this header
+      th.dataset.sortDir = dir;
+      var indicator = th.querySelector('.sort-indicator');
+      if (indicator) indicator.textContent = dir === 'asc' ? '↑' : '↓';
+
+      hubTableSort(table, colIndex, dir);
+    });
+  });
+}());
+</script>
+
 {% endblock %}
