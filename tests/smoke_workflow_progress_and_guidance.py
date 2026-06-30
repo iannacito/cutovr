@@ -158,14 +158,18 @@ def w1_step3_complete_card_renders_when_all_saved():
     # Plain-English completion message (post copy-cleanup).
     assert "Amazing! We" in body and "matched your accounts" in body, \
         "expected plain-English Step 3 success message"
-    # The duplicate in-page Proceed CTA was removed per the walkthrough
-    # fixes — only the footer Proceed CTA remains. Verify exactly one
-    # Proceed-to-Step-4 link is rendered, in the footer.
-    assert 'data-testid="step3-proceed-to-step4"' in body
-    assert body.count("Proceed to Step 4: Review import") == 1, (
-        "expected exactly one Proceed-to-Step-4 CTA (footer only)"
+    # Two Proceed-to-Step-4 CTAs render once mapping is complete: one in
+    # the top success card (next to the success message) and one in the
+    # footer nav. Both target the same Step 4 dispatcher.
+    assert 'data-testid="step3-proceed-to-step4-top"' in body, \
+        "expected top Proceed-to-Step-4 CTA in the success card"
+    assert 'data-testid="step3-proceed-to-step4"' in body, \
+        "expected footer Proceed-to-Step-4 CTA"
+    assert body.count("Proceed to Step 4: Review import") == 2, (
+        "expected exactly two Proceed-to-Step-4 CTAs (top success card "
+        "+ footer)"
     )
-    print("W1 OK: Step 3 complete card + single footer Proceed-to-Step-4 CTA")
+    print("W1 OK: Step 3 complete card + top & footer Proceed-to-Step-4 CTAs")
 
 
 def w2_review_stage_guidance_renders():

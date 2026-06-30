@@ -372,8 +372,22 @@ def c8_match_accounts_step_nav_buttons_present():
     assert 'data-testid="step3-proceed-to-step4"' in complete
     assert "/import-job" in complete
 
+    # A second Proceed-to-Step-4 CTA sits in the success card near the
+    # top "we matched your accounts" message. It only renders once
+    # mapping is complete and targets the same Step 4 dispatcher. The
+    # footer CTA uses the exact id `step3-proceed-to-step4"` (closing
+    # quote) while the top CTA uses `step3-proceed-to-step4-top"`.
+    assert 'data-testid="step3-proceed-to-step4-top"' not in partial
+    assert 'data-testid="step3-proceed-to-step4-top"' in complete
+    top_idx = complete.index('data-testid="step3-proceed-to-step4-top"')
+    footer_idx = complete.index('data-testid="step3-proceed-to-step4"')
+    assert top_idx < footer_idx, (
+        "top CTA must appear before the footer CTA in the page"
+    )
+
     print("C8 OK: Step 3 match-accounts exposes Back to Step 2 always "
-          "and Proceed to Step 4 once every account is mapped")
+          "and both Proceed to Step 4 CTAs (top + footer) once every "
+          "account is mapped")
 
 
 def main():
