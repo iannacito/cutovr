@@ -2545,10 +2545,21 @@ def _hub_period_label(source_file: str) -> str:
     return ""
 
 
+_HUB_PERIOD_REPORT_TYPES = frozenset({"general_ledger"})
+
+
 def _hub_batch_label(job: dict) -> str:
-    """Build the primary display label for a Migration Nexus batch row."""
+    """Build the primary display label for a Migration Nexus batch row.
+
+    Only General Ledger includes a YYYY-MM period suffix derived from the
+    source filename (e.g. "General Ledger 2021-02"). All other report types
+    show the type name only — Trial Balance, Vendor List, Customer List,
+    COA, and Trust Listing are not period-labelled in the batch view.
+    """
     rt = job.get("report_type") or "general_ledger"
     type_label = _REPORT_TYPE_LABELS.get(rt, rt.replace("_", " ").title())
+    if rt not in _HUB_PERIOD_REPORT_TYPES:
+        return type_label
     src = job.get("source_file") or ""
     period = _hub_period_label(src)
     return f"{type_label} {period}" if period else type_label

@@ -78,7 +78,7 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>
         <span>Additional PCLaw exports</span>
-        <input type="file" name="ledger_files" accept=".csv" multiple required>
+        <input type="file" name="ledger_files" accept=".csv,.xls,.xlsx" multiple required>
         <small class="muted" style="font-size:.85rem;">Hold Ctrl or &#8984; to select multiple CSVs.</small>
       </label>
       <div class="actions-row" style="margin-top:var(--space-4);">

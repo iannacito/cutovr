@@ -51,7 +51,7 @@
                   data-testid="report-slot-replace-form">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <label class="visually-hidden" for="replace-{{ job.id }}">Replacement CSV</label>
-              <input id="replace-{{ job.id }}" type="file" name="ledger_file" accept=".csv" required>
+              <input id="replace-{{ job.id }}" type="file" name="ledger_file" accept=".csv,.xls,.xlsx" required>
               <button class="btn" type="submit" data-testid="report-slot-replace-submit">Replace file</button>
             </form>
 
