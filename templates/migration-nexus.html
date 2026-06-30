@@ -1,0 +1,480 @@
+{% extends "_base.html" %}
+{% block title %}Migration Nexus &mdash; {{ firm.name if firm else 'cutovr' }}{% endblock %}
+{% block content %}
+
+<style>
+  .hub-page          { max-width: 1100px; margin: 0 auto; padding: var(--space-8) var(--space-6); }
+  .hub-header        { display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-6); }
+  .hub-kpi-row       { display:grid; grid-template-columns:repeat(4,1fr); gap:var(--space-4); margin-bottom:var(--space-8); }
+  .hub-kpi           { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:var(--space-5); }
+  .hub-kpi__value    { font-size:2rem; font-weight:700; line-height:1; margin:var(--space-2) 0 var(--space-1); }
+  .hub-kpi__label    { font-size:.75rem; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-muted); }
+  .hub-kpi__sub      { font-size:.8rem; color:var(--ink-faint); }
+  .hub-section       { margin-bottom:var(--space-10); }
+  .hub-section__hd   { display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-4); }
+  .hub-section__title{ font-family:var(--font-sans); font-size:.9rem; font-weight:700; display:flex; align-items:center; gap:var(--space-2); }
+  .hub-count         { background:var(--bg-3); color:var(--ink-muted); font-size:.7rem; font-weight:700; border-radius:20px; padding:1px 8px; }
+  .hub-table         { width:100%; border-collapse:collapse; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; }
+  .hub-table th      { text-align:left; font-size:.72rem; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-muted); padding:var(--space-3) var(--space-4); border-bottom:1px solid var(--line); background:var(--bg-2); }
+  .hub-table td      { padding:var(--space-4); font-size:.875rem; border-bottom:1px solid var(--line); vertical-align:middle; }
+  .hub-table tr:last-child td { border-bottom:none; }
+  .hub-table tr:hover td      { background:var(--bg-2); }
+  .hub-cell-primary  { font-weight:600; }
+  .hub-cell-sub      { font-size:.78rem; color:var(--ink-muted); margin-top:2px; }
+  /* Progress dots */
+  .hub-dots          { display:flex; align-items:center; gap:0; }
+  .hub-dot           { width:22px; height:22px; border-radius:50%; font-size:.68rem; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .hub-dot--done     { background:var(--accent); color:#fff; }
+  .hub-dot--current  { background:var(--warning); color:#fff; box-shadow:0 0 0 3px var(--warning-soft); }
+  .hub-dot--pending  { background:var(--bg-3); color:var(--ink-faint); }
+  .hub-dot-line      { width:12px; height:2px; background:var(--bg-3); }
+  .hub-dot-line--done{ background:var(--accent); }
+  /* Status badges */
+  .hub-badge         { display:inline-flex; align-items:center; gap:4px; padding:3px 10px; border-radius:20px; font-size:.75rem; font-weight:600; white-space:nowrap; }
+  .hub-badge--green  { background:var(--success-soft); color:var(--success); }
+  .hub-badge--warning{ background:var(--warning-soft); color:var(--warning); }
+  .hub-badge--muted  { background:var(--bg-3);         color:var(--ink-muted); }
+  /* Setup cards */
+  .hub-setup-grid    { display:grid; grid-template-columns:repeat(4,1fr); gap:var(--space-4); }
+  .hub-setup-card    { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:var(--space-5); border-left:3px solid var(--line); }
+  .hub-setup-card--done { border-left-color:var(--accent); }
+  .hub-setup-card__title { font-size:.875rem; font-weight:700; margin-bottom:var(--space-2); }
+  .hub-setup-card__desc  { font-size:.8rem; color:var(--ink-muted); line-height:1.5; }
+  .hub-setup-card__status{ margin-top:var(--space-3); font-size:.78rem; font-weight:600; }
+  .hub-setup-card--done .hub-setup-card__status { color:var(--success); }
+  .hub-setup-card:not(.hub-setup-card--done) .hub-setup-card__status { color:var(--ink-faint); }
+  @media(max-width:800px){
+    .hub-kpi-row   { grid-template-columns:1fr 1fr; }
+    .hub-setup-grid{ grid-template-columns:1fr; }
+  }
+</style>
+
+{# ── helpers ── #}
+{% macro dots(checkpoint, steps_map) %}
+  {% set done = steps_map.get(checkpoint, 1) %}
+  {% for n in range(1, 7) %}
+    {% if n > 1 %}<div class="hub-dot-line {% if n - 1 <= done %}hub-dot-line--done{% endif %}"></div>{% endif %}
+    <div class="hub-dot
+      {% if n <= done %}hub-dot--done
+      {% elif n == done + 1 and done < 6 %}hub-dot--current
+      {% else %}hub-dot--pending{% endif %}"
+      title="Step {{ n }}">{{ n }}</div>
+  {% endfor %}
+{% endmacro %}
+
+{% macro dots2(checkpoint) %}
+  {# 2-step progress for entity list jobs: step 1=uploaded, step 2=completed #}
+  {% set done = 2 if checkpoint == 'completed' else 1 %}
+  {% for n in range(1, 3) %}
+    {% if n > 1 %}<div class="hub-dot-line {% if n - 1 <= done %}hub-dot-line--done{% endif %}"></div>{% endif %}
+    <div class="hub-dot
+      {% if n <= done %}hub-dot--done
+      {% elif n == done + 1 %}hub-dot--current
+      {% else %}hub-dot--pending{% endif %}"
+      title="{% if n == 1 %}Uploaded{% else %}Pushed to QBO{% endif %}">{{ n }}</div>
+  {% endfor %}
+{% endmacro %}
+
+{% macro dots3(checkpoint, coa_history) %}
+  {# 3-step progress for COA jobs:
+       Step 1 = Uploaded (always reached on upload)
+       Step 2 = Reviewed (coa_history non-empty means at least one apply attempt)
+       Step 3 = Posted to QBO (checkpoint == 'completed', set on zero-failure apply) #}
+  {% if checkpoint == 'completed' %}
+    {% set done = 3 %}
+  {% elif coa_history and coa_history | length > 0 %}
+    {% set done = 2 %}
+  {% else %}
+    {% set done = 1 %}
+  {% endif %}
+  {% for n in range(1, 4) %}
+    {% if n > 1 %}<div class="hub-dot-line {% if n - 1 <= done %}hub-dot-line--done{% endif %}"></div>{% endif %}
+    <div class="hub-dot
+      {% if n <= done %}hub-dot--done
+      {% elif n == done + 1 and done < 3 %}hub-dot--current
+      {% else %}hub-dot--pending{% endif %}"
+      title="{% if n == 1 %}Uploaded{% elif n == 2 %}Reviewed{% else %}Posted to QBO{% endif %}">{{ n }}</div>
+  {% endfor %}
+{% endmacro %}
+
+{% macro dots5_tb(ob_posted, has_mappings) %}
+  {# 5-step progress for Trial Balance (Opening) jobs:
+       Step 1 = Setup    (always done — job exists means cutover setup ran)
+       Step 2 = Upload   (always done — job exists)
+       Step 3 = Match    (account mappings saved for this realm)
+       Step 4 = Review   (advance on match; plan review is implicit)
+       Step 5 = Post     (opening_balance_history non-empty = JE in QBO) #}
+  {% if ob_posted %}
+    {% set done = 5 %}
+  {% elif has_mappings %}
+    {% set done = 3 %}
+  {% else %}
+    {% set done = 2 %}
+  {% endif %}
+  {% for n in range(1, 6) %}
+    {% if n > 1 %}<div class="hub-dot-line {% if n - 1 <= done %}hub-dot-line--done{% endif %}"></div>{% endif %}
+    <div class="hub-dot
+      {% if n <= done %}hub-dot--done
+      {% elif n == done + 1 and done < 5 %}hub-dot--current
+      {% else %}hub-dot--pending{% endif %}"
+      title="{% if n == 1 %}Setup{% elif n == 2 %}Upload{% elif n == 3 %}Match{% elif n == 4 %}Review{% else %}Post{% endif %}">{{ n }}</div>
+  {% endfor %}
+{% endmacro %}
+
+{% macro status_badge(checkpoint) %}
+  {% if checkpoint == 'completed' %}
+    <span class="hub-badge hub-badge--green">Posted</span>
+  {% elif checkpoint == 'auto_posting' %}
+    <span class="hub-badge hub-badge--muted" style="color:var(--accent)">Auto-posting&hellip;</span>
+  {% elif checkpoint == 'needs_attention' %}
+    <span class="hub-badge hub-badge--warning">Needs attention</span>
+  {% elif checkpoint == 'importing' %}
+    <span class="hub-badge hub-badge--muted">Posting&hellip;</span>
+  {% elif checkpoint == 'reviewed' %}
+    <span class="hub-badge hub-badge--muted">Ready</span>
+  {% elif checkpoint == 'matched' %}
+    <span class="hub-badge hub-badge--muted">Mapping</span>
+  {% elif checkpoint == 'parsed' %}
+    <span class="hub-badge hub-badge--muted">Validated</span>
+  {% else %}
+    <span class="hub-badge hub-badge--muted">Uploaded</span>
+  {% endif %}
+{% endmacro %}
+
+<div class="hub-page">
+
+  {# Header #}
+  <div class="hub-header">
+    <div>
+      <h1 style="font-size:1.4rem;font-weight:700;margin-bottom:4px;">Migration Nexus</h1>
+      <p class="muted" style="font-size:.875rem;">
+        {{ firm.name if firm else 'Your firm' }} &middot; All migration files
+      </p>
+    </div>
+    <button class="btn btn-primary"
+            onclick="document.getElementById('upload-file-modal').showModal()"
+            type="button">
+      Upload File
+    </button>
+  </div>
+
+  {# KPI row #}
+  <div class="hub-kpi-row">
+    <div class="hub-kpi">
+      <div class="hub-kpi__label">Files uploaded</div>
+      <div class="hub-kpi__value">{{ all_batch_count }}</div>
+      <div class="hub-kpi__sub">Total uploaded</div>
+    </div>
+    <div class="hub-kpi">
+      <div class="hub-kpi__label">Posted to QBO</div>
+      <div class="hub-kpi__value" style="color:var(--success)">{{ completed_batches|length }}</div>
+      <div class="hub-kpi__sub">Verified &amp; complete</div>
+    </div>
+    <div class="hub-kpi">
+      <div class="hub-kpi__label">In progress</div>
+      <div class="hub-kpi__value" style="color:var(--warning)">{{ active_batches|length }}</div>
+      <div class="hub-kpi__sub">Continue from stepper</div>
+    </div>
+    <div class="hub-kpi">
+      <div class="hub-kpi__label">Setup</div>
+      <div class="hub-kpi__value" style="color:var(--accent)">
+        {{ [coa_done, ob_done, vendor_done, client_done]|select|list|length }}/4
+      </div>
+      <div class="hub-kpi__sub">One-time items done</div>
+    </div>
+  </div>
+
+  {% if is_dev_mode %}
+  <div style="background:var(--warning-soft,#fef3c7);border:1px solid var(--warning,#d97706);
+              border-radius:var(--radius);padding:var(--space-4);margin-bottom:var(--space-6);
+              display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);">
+    <div>
+      <span style="font-weight:700;font-size:.875rem;color:var(--warning,#d97706);">
+        &#9888; Dev — Reset Migration
+      </span>
+      <span style="font-size:.8rem;color:var(--ink-muted);margin-left:var(--space-3);">
+        Reverts all QBO journal entries, then wipes all local job data. Use before starting a fresh run.
+      </span>
+    </div>
+    <form action="{{ url_for('dev_reset_migration') }}" method="post" style="margin:0;"
+          onsubmit="return confirm('RESET: deletes all QBO journal entries AND all local job data. Cannot be undone. Continue?');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-sm"
+              style="color:var(--error);border-color:var(--error);background:transparent;white-space:nowrap;">
+        Reset migration
+      </button>
+    </form>
+  </div>
+  {% endif %}
+
+  {# Active batches #}
+  <section class="hub-section">
+    <div class="hub-section__hd">
+      <div class="hub-section__title">
+        In Progress
+        <span class="hub-count">{{ active_batches|length }}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:var(--space-2);">
+        <button type="button"
+                title="Clear selection"
+                onclick="document.querySelectorAll('.hub-active-check').forEach(c=>c.checked=false);
+                         document.getElementById('bulk-active-select-all').checked=false;"
+                style="background:none;border:none;cursor:pointer;font-size:.95rem;
+                       color:var(--ink-muted);padding:2px var(--space-1);line-height:1;">
+          &#x2715;
+        </button>
+        <button type="submit" form="bulk-remove-form"
+                title="Bulk remove selected"
+                style="background:none;border:none;cursor:pointer;font-size:1.15rem;
+                       color:var(--error,#b91c1c);padding:2px var(--space-1);line-height:1;">
+          &#x1F5D1;
+        </button>
+      </div>
+    </div>
+    {% if active_batches %}
+    <form id="bulk-remove-form" action="{{ url_for('hub_bulk_remove') }}" method="post"
+          onsubmit="return confirm('Remove selected batches? This does not affect QBO.');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    </form>
+    <table class="hub-table">
+      <thead>
+        <tr>
+          <th style="width:2rem;">
+            <input type="checkbox" id="bulk-active-select-all"
+                   title="Select all"
+                   onchange="document.querySelectorAll('.hub-active-check').forEach(c=>c.checked=this.checked)">
+          </th>
+          <th>Batch / file</th>
+          <th>Step progress</th>
+          <th>Status</th>
+          <th>Last updated</th>
+          <th style="text-align:right">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for job in active_batches %}
+        <tr>
+          <td style="width:2rem;">
+            <input type="checkbox" name="job_ids" value="{{ job['id'] }}" class="hub-active-check" form="bulk-remove-form">
+          </td>
+          <td>
+            <div class="hub-cell-primary">{{ job.get('hub_label') or 'File' }}</div>
+            {% if job.get('report_type') == 'general_ledger' and job.get('period_label') %}
+            <div class="hub-cell-sub">{{ job['period_label'] }} &middot; Job #{{ job['id'][:8] }}</div>
+            {% endif %}
+          </td>
+          <td>
+            {% if job.get('report_type') == 'chart_of_accounts' %}
+              <div class="hub-dots">{{ dots3(job.get('checkpoint') or 'uploaded', job.get('coa_create_history') or []) }}</div>
+            {% elif job.get('report_type') == 'trial_balance' %}
+              <div class="hub-dots">{{ dots5_tb(job.get('tb_ob_posted', false), job.get('tb_has_mappings', false)) }}</div>
+            {% elif job.get('report_type') in ('vendor_list', 'customer_list') %}
+              <div class="hub-dots">{{ dots2(job.get('checkpoint') or 'uploaded') }}</div>
+            {% else %}
+              <div class="hub-dots">{{ dots(job.get('checkpoint') or 'uploaded', checkpoint_steps) }}</div>
+            {% endif %}
+          </td>
+          <td>{{ status_badge(job.get('checkpoint') or 'uploaded') }}</td>
+          <td class="muted" style="font-size:.8rem;">{{ job.get('updated_at', '—') }}</td>
+          <td style="text-align:right;display:flex;gap:var(--space-2);justify-content:flex-end;align-items:center;">
+            {% if job.get('report_type') in ('vendor_list', 'customer_list') %}
+              <form action="{{ url_for('push_entity_list', job_id=job['id']) }}" method="post"
+                    style="margin:0"
+                    onsubmit="return confirm('Push all names from this list to QuickBooks? Safe to re-run.');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-primary btn-sm">Push to QBO &rarr;</button>
+              </form>
+            {% elif job.get('report_type') == 'trial_balance' %}
+              <a href="{{ job.tb_next_url }}"
+                 class="btn btn-sm btn-primary">Post &rarr;</a>
+            {% elif job.get('hub_ready') %}
+              <a href="{{ url_for('send_to_qbo', job_id=job['id']) }}" class="btn btn-primary btn-sm">Import &rarr;</a>
+            {% else %}
+              <a href="{{ url_for('job_detail', job_id=job['id']) }}" class="btn btn-sm">Continue &rarr;</a>
+            {% endif %}
+            <form action="{{ url_for('hub_remove_job', job_id=job['id']) }}" method="post" style="margin:0"
+                  onsubmit="return confirm('Remove this batch locally? This does not affect QBO.');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-sm"
+                      style="color:var(--error);border-color:transparent;background:transparent;">
+                Remove
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted" style="font-size:.875rem;">No files in progress. Click "Upload File" to start.</p>
+    {% endif %}
+  </section>
+
+  {# Completed batches — collapsed archive #}
+  <details class="hub-section" style="border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);padding:var(--space-5);">
+    <summary style="cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:var(--space-2);">
+      <div class="hub-section__title" style="margin-bottom:0;">
+        Posted to QBO
+        <span class="hub-count" style="background:var(--success-soft);color:var(--success)">{{ completed_batches|length }}</span>
+        <span style="font-size:.75rem;font-weight:400;color:var(--ink-faint);margin-left:var(--space-2);">— archived</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:var(--space-2);">
+        <button type="button"
+                title="Clear selection"
+                onclick="event.stopPropagation();document.querySelectorAll('.hub-row-check').forEach(c=>c.checked=false);
+                         document.getElementById('bulk-select-all').checked=false;"
+                style="background:none;border:none;cursor:pointer;font-size:.95rem;
+                       color:var(--ink-muted);padding:2px var(--space-1);line-height:1;">
+          &#x2715;
+        </button>
+        <button type="submit" form="bulk-revert-form"
+                onclick="event.stopPropagation();"
+                title="Bulk revert"
+                style="background:none;border:none;cursor:pointer;font-size:1.15rem;
+                       color:var(--error,#b91c1c);padding:2px var(--space-1);line-height:1;">
+          &#x21BA;
+        </button>
+        <span style="font-size:.8rem;color:var(--ink-faint);margin-left:var(--space-2);">▸ expand</span>
+      </div>
+    </summary>
+    <div style="margin-top:var(--space-5);">
+    {% if completed_batches %}
+    <form id="bulk-revert-form" action="{{ url_for('hub_bulk_revert') }}" method="post"
+          onsubmit="return confirm('Revert selected batches? This deletes the posted JEs from QBO.');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    </form>
+    <table class="hub-table">
+      <thead>
+        <tr>
+          <th style="width:2rem;">
+            <input type="checkbox" id="bulk-select-all"
+                   title="Select all"
+                   onchange="document.querySelectorAll('.hub-row-check').forEach(c=>c.checked=this.checked)">
+          </th>
+          <th>Batch / file</th>
+          <th>Step progress</th>
+          <th>Status</th>
+          <th>Posted</th>
+          <th style="text-align:right">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for job in completed_batches %}
+        <tr>
+          <td style="width:2rem;">
+            <input type="checkbox" name="job_ids" value="{{ job['id'] }}" class="hub-row-check" form="bulk-revert-form">
+          </td>
+          <td>
+            <div class="hub-cell-primary">{{ job.get('hub_label') or 'File' }}</div>
+            {% if job.get('report_type') == 'general_ledger' and job.get('period_label') %}
+            <div class="hub-cell-sub">{{ job['period_label'] }} &middot; Job #{{ job['id'][:8] }}</div>
+            {% endif %}
+          </td>
+          <td>
+            <div class="hub-dots">
+              {% if job.get('report_type') == 'chart_of_accounts' %}
+                {{ dots3('completed', job.get('coa_create_history') or [{'x': 1}]) }}
+              {% elif job.get('report_type') == 'trial_balance' %}
+                {{ dots5_tb(true, true) }}
+              {% elif job.get('report_type') in ('vendor_list', 'customer_list') %}
+                {{ dots2('completed') }}
+              {% else %}
+                {{ dots('completed', checkpoint_steps) }}
+              {% endif %}
+            </div>
+          </td>
+          <td>{{ status_badge('completed') }}</td>
+          <td class="muted" style="font-size:.8rem;">{{ job.get('updated_at', '—') }}</td>
+          <td style="text-align:right;display:flex;gap:var(--space-2);justify-content:flex-end;align-items:center;">
+            <a href="{{ url_for('job_detail', job_id=job['id']) }}" class="btn btn-sm">View results</a>
+            <form action="{{ url_for('revert_import', job_id=job['id']) }}" method="post"
+                  style="display:inline"
+                  onsubmit="return confirm('Revert this batch? This deletes the posted JEs from QBO.');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="return_to" value="migration_hub">
+              <button class="btn btn-sm" type="submit"
+                      style="color:var(--error);border-color:transparent;background:transparent;">
+                Revert
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted" style="font-size:.875rem;">No completed batches yet.</p>
+    {% endif %}
+    </div>
+  </details>
+
+  {# One-time setup #}
+  <section class="hub-section">
+    <div class="hub-section__hd">
+      <div class="hub-section__title">One-time Setup</div>
+      <span style="font-size:.8rem;color:var(--ink-muted)">Only needed once per firm</span>
+    </div>
+    <div class="hub-setup-grid">
+      <div class="hub-setup-card {% if coa_done %}hub-setup-card--done{% endif %}">
+        <div class="hub-setup-card__title">Chart of Accounts</div>
+        <div class="hub-setup-card__desc">Map PC Law accounts to QBO. Used by every GL batch automatically.</div>
+        <div class="hub-setup-card__status">{% if coa_done %}&#10003; Complete{% else %}Not yet done{% endif %}</div>
+      </div>
+      <div class="hub-setup-card {% if vendor_done %}hub-setup-card--done{% endif %}">
+        <div class="hub-setup-card__title">Vendor List</div>
+        <div class="hub-setup-card__desc">Entity names for AP lines. Upload once — used by every GL batch.</div>
+        <div class="hub-setup-card__status">{% if vendor_done %}&#10003; Uploaded{% else %}Not yet uploaded{% endif %}</div>
+      </div>
+      <div class="hub-setup-card {% if client_done %}hub-setup-card--done{% endif %}">
+        <div class="hub-setup-card__title">Client List</div>
+        <div class="hub-setup-card__desc">Entity names for AR lines. Upload once — used by every GL batch.</div>
+        <div class="hub-setup-card__status">{% if client_done %}&#10003; Uploaded{% else %}Not yet uploaded{% endif %}</div>
+      </div>
+      <div class="hub-setup-card {% if ob_done %}hub-setup-card--done{% endif %}">
+        <div class="hub-setup-card__title">Opening Balances</div>
+        <div class="hub-setup-card__desc">Trial balance as of cut-over date posted as a single opening JE.</div>
+        <div class="hub-setup-card__status">{% if ob_done %}&#10003; Complete{% else %}Not yet done{% endif %}</div>
+      </div>
+    </div>
+  </section>
+
+  {# Upload File modal #}
+  <dialog id="upload-file-modal"
+          style="border:none;border-radius:var(--radius,8px);padding:0;
+                 box-shadow:0 8px 32px rgba(0,0,0,.18);max-width:540px;width:95vw;">
+    <div style="padding:var(--space-6,1.5rem);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-4,1rem);">
+        <p class="eyebrow" style="margin:0;">Upload File</p>
+        <button type="button" class="btn btn-link"
+                onclick="document.getElementById('upload-file-modal').close()"
+                aria-label="Close"
+                style="font-size:1.25rem;line-height:1;padding:0 var(--space-2);">&times;</button>
+      </div>
+
+      <div style="margin-top:var(--space-4,1rem);">
+        <p class="muted" style="margin-bottom:var(--space-3);">
+          Upload any PCLaw export — GL, COA, Trial Balance, Vendor List, Customer List,
+          or Trust Listing. Report type is detected automatically from the file.
+        </p>
+
+        <form action="{{ url_for('upload') }}" method="post" enctype="multipart/form-data">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="company_name" value="{{ firm.name if firm else '' }}">
+          <input type="hidden" name="return_to" value="migration_hub">
+          <label>
+            <span>File(s)
+              <small class="muted">(.csv, .xls, .xlsx — hold Ctrl / &#8984; to select multiple)</small>
+            </span>
+            <input type="file" name="ledger_file" accept=".csv,.xls,.xlsx" multiple required
+                   style="margin-top:var(--space-2);display:block;width:100%;">
+          </label>
+          <div style="margin-top:var(--space-4);">
+            <button class="btn btn-primary" type="submit">Upload file(s)</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </dialog>
+
+</div>
+{% endblock %}

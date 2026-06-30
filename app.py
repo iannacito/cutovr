@@ -2503,6 +2503,57 @@ def firm_imports():
     )
 
 
+# ── Migration Nexus helpers ──────────────────────────────────────────────────
+
+_HUB_PREFIX_RE = re.compile(r'^\d{14}_[A-Za-z0-9_-]+?_(.*)')
+
+_REPORT_TYPE_LABELS: dict[str, str] = {
+    "general_ledger":    "General Ledger",
+    "chart_of_accounts": "Chart of Accounts",
+    "trial_balance":     "Trial Balance (Opening)",
+    "trust_listing":     "Trust Listing",
+    "vendor_list":       "Vendor List",
+    "customer_list":     "Customer List",
+}
+
+
+def _hub_display_filename(src: str) -> str:
+    """Strip the {timestamp}_{jobid}_ upload prefix from a stored source filename."""
+    m = _HUB_PREFIX_RE.match(src or "")
+    return m.group(1) if m else (src or "")
+
+
+def _hub_period_label(source_file: str) -> str:
+    """Extract YYYY-MM numeric period from a source filename.
+
+    GLa04888_GL_-_2021-02.csv  ->  '2021-02'
+    report_202103_export.csv   ->  '2021-03'
+    Returns '' if no date found.
+    """
+    import re as _re
+    name = source_file or ""
+    m = _re.search(r'(\d{4})[-_](\d{1,2})(?!\d)', name)
+    if m:
+        year, month = int(m.group(1)), int(m.group(2))
+        if 1990 <= year <= 2100 and 1 <= month <= 12:
+            return f"{year}-{month:02d}"
+    m = _re.search(r'(\d{4})(\d{2})(?!\d)', name)
+    if m:
+        year, month = int(m.group(1)), int(m.group(2))
+        if 1990 <= year <= 2100 and 1 <= month <= 12:
+            return f"{year}-{month:02d}"
+    return ""
+
+
+def _hub_batch_label(job: dict) -> str:
+    """Build the primary display label for a Migration Nexus batch row."""
+    rt = job.get("report_type") or "general_ledger"
+    type_label = _REPORT_TYPE_LABELS.get(rt, rt.replace("_", " ").title())
+    src = job.get("source_file") or ""
+    period = _hub_period_label(src)
+    return f"{type_label} {period}" if period else type_label
+
+
 @app.route("/migration-hub")
 @login_required
 def migration_hub_page():
@@ -2549,6 +2600,189 @@ def migration_hub_page():
         setup_cards=[c.to_dict() for c in setup_cards],
         **_workflow_stepper_context(firm_id),
     )
+
+
+@app.route('/migration-nexus')
+@login_required
+def migration_hub():
+    """Per-firm migration batch tracker — all report types, active and completed."""
+    user = current_user()
+    firm_id = user["firm_id"]
+    firm = db.get_firm(firm_id) if firm_id else None
+
+    all_jobs = db.list_jobs_for_firm(firm_id, limit=50)
+
+    # Parse JSON blob fields for display
+    import json as _json
+    for _j in all_jobs:
+        for _raw_key, _parsed_key in [
+            ("opening_balance_history_json", "opening_balance_history"),
+            ("qbo_results_json",             "qbo_results"),
+        ]:
+            _raw = _j.get(_raw_key)
+            if _raw and _parsed_key not in _j:
+                try:
+                    _j[_parsed_key] = _json.loads(_raw)
+                except (ValueError, TypeError):
+                    pass
+
+    # Annotate every job with display helpers
+    for j in all_jobs:
+        j["display_filename"] = _hub_display_filename(j.get("source_file") or "")
+        j["hub_label"] = _hub_batch_label(j)
+        # Fall back to filename-derived period label for older GL jobs
+        if (j.get("report_type") or "general_ledger") == "general_ledger":
+            if not j.get("period_label"):
+                j["period_label"] = _hub_period_label(j.get("source_file") or "")
+
+    # Split: completed vs active; exclude unknown/parse-failure jobs
+    completed_batches = [
+        j for j in all_jobs
+        if j.get("checkpoint") == "completed"
+        and (j.get("report_type") or "general_ledger") != "unknown"
+    ]
+    active_batches = [
+        j for j in all_jobs
+        if j.get("checkpoint") != "completed"
+        and (j.get("report_type") or "general_ledger") != "unknown"
+    ]
+
+    # hub_ready: precoa readiness check not deployed yet — always False
+    for j in active_batches:
+        j["hub_ready"] = False
+
+    # One-time setup detection
+    coa_done = (
+        any(j.get("report_type") == "chart_of_accounts"
+            and j.get("checkpoint") == "completed" for j in all_jobs)
+        or any((j.get("report_type") or "general_ledger") == "general_ledger"
+               and j.get("checkpoint") == "completed" for j in all_jobs)
+    )
+    ob_done     = any(j.get("report_type") == "trial_balance"
+                      and bool(j.get("opening_balance_history")) for j in all_jobs)
+    vendor_done = any(j.get("report_type") == "vendor_list" for j in all_jobs)
+    client_done = any(j.get("report_type") == "customer_list" for j in all_jobs)
+
+    checkpoint_steps = {
+        "uploaded": 1, "parsed": 2, "matched": 3,
+        "reviewed": 4, "importing": 4, "completed": 6,
+        "needs_attention": 3,
+    }
+
+    # TB workflow routes not deployed yet — set placeholder
+    for job in all_jobs:
+        job["tb_next_url"] = None
+
+    return render_template(
+        'migration-nexus.html',
+        firm=firm,
+        active_batches=active_batches,
+        completed_batches=completed_batches,
+        hub_batches=all_jobs,
+        all_batch_count=len(all_jobs),
+        coa_done=coa_done,
+        ob_done=ob_done,
+        vendor_done=vendor_done,
+        client_done=client_done,
+        checkpoint_steps=checkpoint_steps,
+    )
+
+
+@app.route('/migration-nexus/remove/<job_id>', methods=['POST'])
+@login_required
+def hub_remove_job(job_id):
+    """Remove a batch from Migration Nexus (local data only; QBO entries untouched)."""
+    job, _user = _job_or_403(job_id)
+    try:
+        _purge_job_local(job_id, job)
+        _audit("hub_remove_job", target_type="job", target_id=job_id,
+               details=f"company={job.get('company')} removed via Migration Nexus")
+        flash("Batch removed from local history. Any QBO entries are unaffected.", "success")
+    except Exception as e:  # noqa: BLE001
+        flash(f"Could not remove batch: {e}", "error")
+    return redirect(url_for("migration_hub"))
+
+
+@app.route("/migration-nexus/bulk-remove", methods=["POST"])
+@login_required
+def hub_bulk_remove():
+    """Remove multiple in-progress batches in one action (local data only)."""
+    job_ids = request.form.getlist("job_ids")
+    if not job_ids:
+        flash("No batches selected.", "info")
+        return redirect(url_for("migration_hub"))
+    user = current_user()
+    removed, failed = 0, 0
+    for jid in job_ids:
+        job = db.hydrate_job(jid)
+        if not job or job.get("firm_id") != user["firm_id"]:
+            failed += 1
+            continue
+        try:
+            _purge_job_local(jid, job)
+            _audit("hub_bulk_remove", target_type="job", target_id=jid,
+                   details=f"company={job.get('company')} bulk-removed via Migration Nexus")
+            removed += 1
+        except Exception as e:  # noqa: BLE001
+            _log.warning("hub_bulk_remove: could not remove job %s: %s", jid, e)
+            failed += 1
+    if removed:
+        flash(f"{removed} batch{'es' if removed != 1 else ''} removed.", "success")
+    if failed:
+        flash(f"{failed} could not be removed.", "error")
+    return redirect(url_for("migration_hub"))
+
+
+@app.route("/migration-nexus/bulk-revert", methods=["POST"])
+@login_required
+def hub_bulk_revert():
+    """Revert multiple completed GL batches in one action."""
+    job_ids = request.form.getlist("job_ids")
+    if not job_ids:
+        flash("No batches selected.", "info")
+        return redirect(url_for("migration_hub"))
+    if not QBO_REAL_IMPORT:
+        flash("Demo mode: revert not executed. Set QBO_REAL_IMPORT=1.", "info")
+        return redirect(url_for("migration_hub"))
+    user = current_user()
+    reverted, failed = 0, 0
+    for jid in job_ids:
+        job = db.hydrate_job(jid)
+        if not job or job.get("firm_id") != user["firm_id"]:
+            failed += 1
+            continue
+        if not job.get("import_summary"):
+            continue
+        try:
+            qbo, qbo_conn = _get_qbo_client(jid, user)
+            if not qbo_conn:
+                failed += 1
+                continue
+            for result in (job.get("qbo_results") or []):
+                je_id = result.get("Id")
+                if not je_id:
+                    continue
+                try:
+                    je = qbo.get_journal_entry(je_id)
+                    if je:
+                        qbo.delete_journal_entry(je_id, je.get("SyncToken"))
+                except Exception:  # noqa: BLE001
+                    pass
+            job["import_summary"] = None
+            job["qbo_results"] = None
+            job["checkpoint"] = "reviewed"
+            job["status"] = "Reverted — ready to re-import"
+            _save_job(jid)
+            _audit("import_reverted", target_type="job", target_id=jid, details="bulk_revert")
+            reverted += 1
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("hub_bulk_revert: job %s failed: %s", jid, exc)
+            failed += 1
+    if failed:
+        flash(f"Reverted {reverted} batch(es). {failed} could not be reverted.", "warning")
+    else:
+        flash(f"Reverted {reverted} batch(es) from QuickBooks.", "success")
+    return redirect(url_for("migration_hub"))
 
 
 def _resolve_entity_hints(qbo, payloads, customer_index=None, vendor_index=None,
