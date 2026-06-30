@@ -2604,7 +2604,7 @@ def migration_hub_page():
 
 @app.route('/migration-nexus')
 @login_required
-def migration_hub():
+def migration_nexus():
     """Per-firm migration batch tracker — all report types, active and completed."""
     user = current_user()
     firm_id = user["firm_id"]
@@ -2700,7 +2700,7 @@ def hub_remove_job(job_id):
         flash("Batch removed from local history. Any QBO entries are unaffected.", "success")
     except Exception as e:  # noqa: BLE001
         flash(f"Could not remove batch: {e}", "error")
-    return redirect(url_for("migration_hub"))
+    return redirect(url_for("migration_nexus"))
 
 
 @app.route("/migration-nexus/bulk-remove", methods=["POST"])
@@ -2710,7 +2710,7 @@ def hub_bulk_remove():
     job_ids = request.form.getlist("job_ids")
     if not job_ids:
         flash("No batches selected.", "info")
-        return redirect(url_for("migration_hub"))
+        return redirect(url_for("migration_nexus"))
     user = current_user()
     removed, failed = 0, 0
     for jid in job_ids:
@@ -2730,7 +2730,7 @@ def hub_bulk_remove():
         flash(f"{removed} batch{'es' if removed != 1 else ''} removed.", "success")
     if failed:
         flash(f"{failed} could not be removed.", "error")
-    return redirect(url_for("migration_hub"))
+    return redirect(url_for("migration_nexus"))
 
 
 @app.route("/migration-nexus/bulk-revert", methods=["POST"])
@@ -2740,10 +2740,10 @@ def hub_bulk_revert():
     job_ids = request.form.getlist("job_ids")
     if not job_ids:
         flash("No batches selected.", "info")
-        return redirect(url_for("migration_hub"))
+        return redirect(url_for("migration_nexus"))
     if not QBO_REAL_IMPORT:
         flash("Demo mode: revert not executed. Set QBO_REAL_IMPORT=1.", "info")
-        return redirect(url_for("migration_hub"))
+        return redirect(url_for("migration_nexus"))
     user = current_user()
     reverted, failed = 0, 0
     for jid in job_ids:
@@ -2782,7 +2782,15 @@ def hub_bulk_revert():
         flash(f"Reverted {reverted} batch(es). {failed} could not be reverted.", "warning")
     else:
         flash(f"Reverted {reverted} batch(es) from QuickBooks.", "success")
-    return redirect(url_for("migration_hub"))
+    return redirect(url_for("migration_nexus"))
+
+
+@app.route("/jobs/<job_id>/push-entity-list", methods=["POST"])
+@login_required
+def push_entity_list(job_id):
+    """Stub — full QBO entity push not yet deployed; redirects to job detail."""
+    flash("Entity push is coming soon. Use the job detail page to continue.", "info")
+    return redirect(url_for("job_detail", job_id=job_id))
 
 
 def _resolve_entity_hints(qbo, payloads, customer_index=None, vendor_index=None,
