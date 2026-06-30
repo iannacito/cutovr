@@ -8633,6 +8633,7 @@ def account_mapping(job_id):
         mapping_summary=summary,
         create_missing_offer=create_missing_offer,
         account_mapping_categories=ACCOUNT_MAPPING_CATEGORIES,
+        coa_override_account_types=COA_OVERRIDE_ACCOUNT_TYPES,
         **_workflow_stepper_context(
             job["firm_id"], force_current_stage=customer_workflow.STAGE_MATCH,
             on_match_page=True,
@@ -9302,7 +9303,11 @@ def account_mapping_add_account(job_id):
 
     pclaw_number = (request.form.get("pclaw_number") or "").strip()
     pclaw_name = (request.form.get("pclaw_name") or "").strip()
+    # New two-dropdown system sends account_type + detail_type directly.
+    # Legacy single-dropdown sends a category key — kept for backward compat.
     category_key = (request.form.get("category") or "").strip()
+    account_type_direct = (request.form.get("account_type") or "").strip()
+    detail_type_direct = (request.form.get("detail_type") or "").strip()
 
     override_key = _override_key_for(pclaw_number, pclaw_name)
     if not override_key:
@@ -9313,10 +9318,14 @@ def account_mapping_add_account(job_id):
         )
         return redirect(url_for("account_mapping", job_id=job_id))
 
-    # Persist a per-row category override when the user picked one. The
-    # override is consumed by ``_build_create_missing_plan`` which feeds
-    # it to ``coa_apply.build_create_plan``.
-    if category_key:
+    # Resolve category: new two-dropdown (account_type direct) takes priority
+    # over the legacy 9-item category-key path.
+    if account_type_direct and account_type_direct in COA_OVERRIDE_ACCOUNT_TYPES:
+        category: Optional[dict] = {
+            "account_type": account_type_direct,
+            "detail_type": detail_type_direct or None,
+        }
+    elif category_key:
         category = _resolve_account_mapping_category(category_key)
         if not category:
             flash(
@@ -9325,6 +9334,13 @@ def account_mapping_add_account(job_id):
                 "error",
             )
             return redirect(url_for("account_mapping", job_id=job_id))
+    else:
+        category = None
+
+    # Persist a per-row category override when the user picked one. The
+    # override is consumed by ``_build_create_missing_plan`` which feeds
+    # it to ``coa_apply.build_create_plan``.
+    if category:
         overrides = _job_account_type_overrides(job)
         overrides[override_key] = {
             "account_type": category["account_type"],

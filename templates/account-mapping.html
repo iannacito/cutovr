@@ -482,28 +482,36 @@
                       </div>
                     {% elif r.needs_category %}
                       <div style="margin:.35rem 0 0;">
-                        <label for="row-category-{{ r.idx }}"
-                               style="display:block;margin:0 0 .25rem;font-size:.8rem;">
+                        <label style="display:block;margin:0 0 .25rem;font-size:.8rem;">
                           What kind of account is this?
                         </label>
-                        <select id="row-category-{{ r.idx }}"
-                                name="category"
-                                form="add-form-{{ r.idx }}"
-                                data-testid="row-category-select-{{ r.idx }}"
-                                style="margin:0 .35rem .35rem 0;max-width:18rem;"
-                                required>
-                          <option value="">&mdash; pick a category &mdash;</option>
-                          {% for cat in account_mapping_categories %}
-                            <option value="{{ cat[0] }}">{{ cat[1] }}</option>
-                          {% endfor %}
-                        </select>
+                        <div style="display:flex;flex-wrap:wrap;gap:.35rem;align-items:flex-end;margin-bottom:.35rem;">
+                          <select id="row-acct-type-{{ r.idx }}"
+                                  name="account_type"
+                                  form="add-form-{{ r.idx }}"
+                                  data-testid="row-category-select-{{ r.idx }}"
+                                  data-detail-target="row-detail-type-{{ r.idx }}"
+                                  style="max-width:18rem;"
+                                  required>
+                            <option value="">&mdash; accept auto-match or pick a type &mdash;</option>
+                            {% for at in coa_override_account_types %}
+                              <option value="{{ at }}">{{ at }}</option>
+                            {% endfor %}
+                          </select>
+                          <select id="row-detail-type-{{ r.idx }}"
+                                  name="detail_type"
+                                  form="add-form-{{ r.idx }}"
+                                  style="max-width:18rem;">
+                            <option value="">&mdash; default for type &mdash;</option>
+                          </select>
+                        </div>
                         <button class="btn btn-sm" type="submit"
                                 form="add-form-{{ r.idx }}"
                                 data-testid="row-add-button-{{ r.idx }}">
-                          Add to QuickBooks
+                          Add to QuickBooks (with selected category)
                         </button>
                         <p class="muted"
-                           style="margin:.25rem 0 0;font-size:.75rem;max-width:36ch;">
+                           style="margin:.25rem 0 0;font-size:.75rem;max-width:44ch;">
                           We couldn&rsquo;t tell what kind of account this is.
                           Pick the closest match &mdash; you can always
                           rename or recategorise it in QuickBooks later.
@@ -596,4 +604,50 @@
   </div>
   {% endif %}
 </section>
+
+<script>
+(function () {
+  'use strict';
+
+  var ACCT_DETAIL_TYPES = {
+    "Bank": ["Checking","Savings","MoneyMarket","CashOnHand","TrustAccounts"],
+    "Accounts Receivable": ["AccountsReceivable"],
+    "Other Current Asset": ["AllowanceForBadDebts","DevelopmentCosts","EmployeeCashAdvances","OtherCurrentAssets","PrepaidExpenses","Retainage","UndepositedFunds"],
+    "Fixed Asset": ["AccumulatedDepreciation","Buildings","DepletableAssets","FurnitureAndFixtures","Land","LeaseholdImprovements","MachineryAndEquipment","OtherFixedAssets","Vehicles"],
+    "Other Asset": ["LeaseBuyout","OtherLongTermAssets","SecurityDeposits"],
+    "Accounts Payable": ["AccountsPayable"],
+    "Credit Card": ["CreditCard"],
+    "Other Current Liability": ["DirectDepositPayable","InsurancePayable","LineOfCredit","LoanPayable","OtherCurrentLiabilities","PayrollClearing","SalesTaxPayable","TrustAccountsLiabilities"],
+    "Long Term Liability": ["NotesPayable","OtherLongTermLiabilities"],
+    "Equity": ["AccumulatedAdjustment","CommonStock","EstimatedTaxes","HealthInsurancePremium","HealthSavingsAccountContribution","OpeningBalanceEquity","OwnersEquity","PaidInCapitalOrSurplus","PartnerContributions","PartnerDistributions","PartnerEquity","PersonalExpense","PersonalIncome","PreferredStock","RetainedEarnings"],
+    "Income": ["NonProfitIncome","OtherPrimaryIncome","SalesOfProductIncome","ServiceFeeIncome","UnappliedCashPaymentIncome"],
+    "Other Income": ["DividendIncome","InterestEarned","OtherInvestmentIncome","OtherMiscellaneousIncome","TaxExemptInterest"],
+    "Cost of Goods Sold": ["CostOfLabor","EquipmentRentalCOGS","GoodsCostOfGoodsSold","OtherCostsOfServicesCOGS","ShippingFreightAndDeliveryCogs"],
+    "Expense": ["AdvertisingPromotional","BadDebts","BankCharges","CommissionsAndFees","Entertainment","EntertainmentMeals","EquipmentRental","FilingFees","Insurance","InterestPaid","LegalProfessionalFees","Meals","OfficeExpenses","OtherBusinessExpenses","PenaltiesAndSettlements","Rent","RepairMaintenance","ShippingFreightAndDelivery","Supplies","Taxes","Travel","TravelMeals","Utilities"],
+    "Other Expense": ["Depreciation","ExchangeGainOrLoss","OtherMiscellaneousExpense","PenaltyForEarlyWithdrawal"]
+  };
+
+  function populateAcctDetailTypes(typeSelect) {
+    var detailId = typeSelect.getAttribute('data-detail-target');
+    if (!detailId) return;
+    var detailSelect = document.getElementById(detailId);
+    if (!detailSelect) return;
+    var chosen = typeSelect.value;
+    var options = ACCT_DETAIL_TYPES[chosen] || [];
+    detailSelect.innerHTML = '<option value="">— default for type —</option>';
+    options.forEach(function (sub) {
+      var opt = document.createElement('option');
+      opt.value = sub;
+      opt.textContent = sub.replace(/([A-Z])/g, ' $1').trim();
+      detailSelect.appendChild(opt);
+    });
+    detailSelect.disabled = options.length === 0;
+  }
+
+  document.querySelectorAll('select[name="account_type"][data-detail-target]').forEach(function (sel) {
+    sel.addEventListener('change', function () { populateAcctDetailTypes(sel); });
+    if (sel.value) populateAcctDetailTypes(sel);
+  });
+}());
+</script>
 {% endblock %}
