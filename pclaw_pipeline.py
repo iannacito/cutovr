@@ -20,6 +20,71 @@ from csv_decode import open_csv_text
 
 GL_REQUIRED_COLUMNS = ["transaction_id", "date", "account_number", "account_name", "debit", "credit"]
 
+# Maps each pipeline column name to all known raw PCLaw header variants.
+# Keys are the normalized (lowercase alphanumeric) form of each synonym.
+_GL_PIPELINE_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "transaction_id": (
+        "transaction_id", "entry number", "entry no", "entry_number",
+        "trx no", "trx_no", "trans no", "trans_no", "trans id",
+        "reference number", "ref no", "ref_no",
+    ),
+    "date": (
+        "date", "txndate", "transaction date", "posting date",
+        "post date", "gl date", "entry date", "trans date",
+        "doc date", "journal date",
+    ),
+    "account_number": (
+        "account_number", "account nickname", "acct nickname",
+        "account no", "acct no", "acct#", "account#",
+        "account number", "acct number", "gl account",
+    ),
+    "account_name": (
+        "account_name", "account name", "acct name",
+        "account description", "gl account name",
+    ),
+    "debit": (
+        "debit", "debit amount", "dr", "dr amount", "debits",
+    ),
+    "credit": (
+        "credit", "credit amount", "cr", "cr amount", "credits",
+    ),
+    "description": (
+        "description", "explanation", "memo", "notes",
+        "narrative", "details", "line description",
+    ),
+    "vendor_name": (
+        "vendor_name", "pd. to/rcvd. from", "pd to rcvd from",
+        "paid to", "received from", "payee", "vendor",
+        "vendor name", "paid to received from",
+    ),
+    "memo": (
+        "memo", "source journal", "source_journal",
+        "journal", "reference description",
+    ),
+}
+
+
+def _norm_gl_header(name: str) -> str:
+    """Lowercase + alphanumeric only — same logic as pclaw_parser._norm_header."""
+    return "".join(ch for ch in str(name).lower() if ch.isalnum())
+
+
+def _resolve_gl_columns(fieldnames: list[str]) -> dict[str, str]:
+    """Return mapping of pipeline_column -> original_header for resolvable columns.
+
+    Tries each synonym (normalized) against normalized fieldnames.
+    Returns only columns that matched — caller checks for missing ones.
+    """
+    by_norm = {_norm_gl_header(f): f for f in fieldnames}
+    resolved: dict[str, str] = {}
+    for logical, synonyms in _GL_PIPELINE_SYNONYMS.items():
+        for syn in synonyms:
+            key = _norm_gl_header(syn)
+            if key in by_norm:
+                resolved[logical] = by_norm[key]
+                break
+    return resolved
+
 
 def money(value):
     if value is None or value == "":
@@ -61,22 +126,48 @@ def load_general_ledger_csv(path):
     text, _enc = open_csv_text(path)
     with StringIO(text) as f:
         reader = csv.DictReader(f)
-        missing = [c for c in GL_REQUIRED_COLUMNS if c not in (reader.fieldnames or [])]
+        fieldnames = list(reader.fieldnames or [])
+
+        # Fast path: file already uses the pipeline's exact column names.
+        missing_exact = [c for c in GL_REQUIRED_COLUMNS if c not in fieldnames]
+        if not missing_exact:
+            return list(reader)
+
+        # Synonym path: try to resolve raw PCLaw headers to pipeline names.
+        col_map = _resolve_gl_columns(fieldnames)
+        missing = [c for c in GL_REQUIRED_COLUMNS if c not in col_map]
         if missing:
             raise ValueError(
                 "PCLaw GL CSV is missing required columns: "
                 + ", ".join(missing)
-                + ". This pipeline expects the richer GL format with a transaction_id "
-                "column (see test_data/02_general_ledger.csv)."
+                + ". Expected (or equivalent): "
+                "transaction_id (Entry Number), date (Date), "
+                "account_number (Account Nickname), account_name (Account Name), "
+                "debit (Debit Amount), credit (Credit Amount)."
             )
-        return list(reader)
+
+        # Rename raw headers to pipeline names so downstream code works unchanged.
+        # col_map = {"transaction_id": "Entry Number", "date": "Date", ...}
+        rename = {v: k for k, v in col_map.items()}  # "Entry Number" → "transaction_id"
+        rows = []
+        for row in reader:
+            rows.append({rename.get(k, k): v for k, v in row.items()})
+        return rows
 
 
 def is_gl_format(fieldnames):
-    """Cheap check used by the route to decide which parser to use."""
+    """Cheap check used by the route to decide which parser to use.
+
+    Accepts both exact pipeline column names and raw PCLaw synonyms.
+    """
     if not fieldnames:
         return False
-    return all(c in fieldnames for c in GL_REQUIRED_COLUMNS)
+    # Exact match (already-normalized files).
+    if all(c in fieldnames for c in GL_REQUIRED_COLUMNS):
+        return True
+    # Synonym match (raw PCLaw exports).
+    resolved = _resolve_gl_columns(list(fieldnames))
+    return all(c in resolved for c in GL_REQUIRED_COLUMNS)
 
 
 def group_rows_by_transaction(rows):

@@ -219,9 +219,25 @@ def is_subtotal_row(row: dict) -> bool:
 
 
 def is_droppable_row(row: dict) -> bool:
-    """True when a row contributes nothing to the import
-    (blank, zero-activity, or PCLaw section subtotal)."""
-    return is_blank_row(row) or is_zero_activity_row(row) or is_subtotal_row(row)
+    """True when a row contributes nothing to the import.
+
+    Covers:
+    * blank rows (no fields at all — trailing Excel rows)
+    * zero-activity account-listing rows (account with 0.00/0.00, no date)
+    * PCLaw section-subtotal rows (non-zero amount, no transaction_id)
+    * beginning-balance / opening-balance rows — PCLaw GL exports always
+      include one "Opening Balance" row per account. These are one-sided
+      (debit OR credit only) and belong in the Starting Balances step, not
+      in the general ledger. Including them in the balance totals makes
+      every PCLaw export appear unbalanced. Silently strip them here so
+      the actual transaction rows are what the balance gate sees.
+    """
+    return (
+        is_blank_row(row)
+        or is_zero_activity_row(row)
+        or is_subtotal_row(row)
+        or is_beginning_balance_token(row.get("date"))
+    )
 
 
 @dataclass

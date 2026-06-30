@@ -4106,12 +4106,27 @@ def _process_uploaded_csv(
     try:
         with temp_path.open("r", newline="", encoding="utf-8-sig") as _f:
             _reader = _csv.DictReader(_f)
-            _fieldnames = list(_reader.fieldnames or [])
-            _is_gl = is_gl_format(_fieldnames)
-            _gl_rows = list(_reader) if _is_gl else []
-            _row_count = len(_gl_rows) if _is_gl else sum(
-                1 for _ in _csv.DictReader(temp_path.open("r", newline="", encoding="utf-8-sig"))
-            )
+            _fieldnames_raw = list(_reader.fieldnames or [])
+        _is_gl = is_gl_format(_fieldnames_raw)
+        if _is_gl:
+            try:
+                # load_general_ledger_csv normalizes raw PCLaw headers to
+                # pipeline names (Account Nickname → account_number, etc.)
+                # so snapshots, preflight, and the import gate all see the
+                # same stable column set.
+                _gl_rows = load_general_ledger_csv(temp_path)
+                _fieldnames = list(_gl_rows[0].keys()) if _gl_rows else list(GL_REQUIRED_COLUMNS)
+            except ValueError:
+                # Synonym resolution failed — treat as non-GL.
+                _is_gl = False
+                _gl_rows = []
+                _fieldnames = _fieldnames_raw
+        else:
+            _gl_rows = []
+            _fieldnames = _fieldnames_raw
+        _row_count = len(_gl_rows) if _is_gl else sum(
+            1 for _ in _csv.DictReader(temp_path.open("r", newline="", encoding="utf-8-sig"))
+        )
 
         detected = detect_report_type(_fieldnames)
         if user_picked_report_type:
@@ -8034,12 +8049,14 @@ def _load_pclaw_accounts_for_mapping(job, job_id, user):
             )
             return None
         try:
-            with temp_csv.open("r", newline="", encoding="utf-8-sig") as f:
-                reader = _csv.DictReader(f)
-                if not is_gl_format(reader.fieldnames or []):
-                    return []
-                gl_rows = list(reader)
-        except (UnicodeDecodeError, _csv.Error) as e:
+            # load_general_ledger_csv handles both normalized and raw PCLaw
+            # headers, remapping "Account Nickname" → account_number etc.
+            # Raises ValueError if the required columns can't be resolved.
+            gl_rows = load_general_ledger_csv(temp_csv)
+        except ValueError:
+            # Not a GL-format file (missing required columns, raw or normalized).
+            return []
+        except (UnicodeDecodeError, OSError) as e:
             _audit(
                 "account_mapping_csv_error",
                 target_type="job", target_id=job_id, details=str(e),
@@ -8116,15 +8133,15 @@ def _load_job_gl_rows_durable(job, job_id):
             )
             return None
         try:
-            with temp_csv.open("r", newline="", encoding="utf-8-sig") as f:
-                reader = _csv.DictReader(f)
-                if not is_gl_format(reader.fieldnames or []):
-                    # CSV is parseable but not the rich GL format. The
-                    # caller's non-GL fallback (single test JE) can still
-                    # run — we just don't have rows worth caching.
-                    return []
-                gl_rows = list(reader)
-        except (UnicodeDecodeError, _csv.Error) as e:
+            # Use load_general_ledger_csv so raw PCLaw column names are
+            # normalized to pipeline names before the snapshot is returned.
+            # Raises ValueError if the file is not recognisable GL format.
+            gl_rows = load_general_ledger_csv(temp_csv)
+        except ValueError:
+            # Not GL format (or synonym resolution failed) — the caller's
+            # non-GL fallback (single test JE) can still run.
+            return []
+        except (UnicodeDecodeError, OSError) as e:
             _audit(
                 "import_csv_error",
                 target_type="job", target_id=job_id, details=str(e),
@@ -8306,10 +8323,35 @@ def account_mapping(job_id):
     job, user = _job_or_403(job_id)
     qbo_conn = _get_qbo_connection(job_id)
     if not qbo_conn:
-        # No QBO connection at all — send the user to connect, not to a
-        # confusing error page on the job detail.
+        # No connection on this specific job. Check if the firm has any QBO
+        # connection from another job (e.g. user uploaded GL files before
+        # connecting QBO). If yes, inherit it so the user doesn't hit a
+        # confusing "Connect QuickBooks" wall when QBO is already connected.
+        _firm_conns = db.list_qbo_connections_for_firm(user["firm_id"])
+        if _firm_conns:
+            # list_qbo_connections_for_firm is a summary query — get full row
+            # (with encrypted tokens) from the most recent connection's job_id.
+            _source = db.get_qbo_connection(_firm_conns[0]["job_id"])
+            if _source and _source.get("access_token_enc") and _source.get("refresh_token_enc"):
+                db.upsert_qbo_connection(
+                    job_id=job_id,
+                    firm_id=user["firm_id"],
+                    realm_id=_source["realm_id"],
+                    access_token_enc=_source["access_token_enc"],
+                    refresh_token_enc=_source["refresh_token_enc"],
+                    company_name=_source.get("company_name"),
+                    legal_name=_source.get("legal_name"),
+                    country=_source.get("country"),
+                    expires_at=_source.get("expires_at"),
+                    company_info_error=_source.get("company_info_error"),
+                )
+                # Evict in-memory cache so the next _get_qbo_connection() reads the DB.
+                qbo_connections.pop(job_id, None)
+                qbo_conn = _get_qbo_connection(job_id)
+    if not qbo_conn:
+        # Firm has no QBO connection at all.
         flash(
-            "Connect QuickBooks to this job before matching accounts.",
+            "Connect QuickBooks to this firm before matching accounts.",
             "error",
         )
         return redirect(url_for("connect_qbo", job_id=job_id))
