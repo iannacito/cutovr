@@ -26,6 +26,8 @@ import demo_mode
 import entity_resolution
 import job_checkpoints
 import migration_hub
+
+import precoa
 import operator_panel
 import excel_convert
 import io as _io
@@ -1991,18 +1993,15 @@ def uploaded_reports():
 @app.route("/send-to-qbo")
 @login_required
 def send_to_qbo_entry():
-    """Step 5 entry: the dedicated 'Send to QuickBooks' page.
+    """Firm-level Step 5 entry — redirects to the job-scoped send-to-qbo.
 
-    Renders a single-purpose page focused on the Send-to-QuickBooks
-    action. Stepper + Back-to-Step-4 link + a clear primary CTA that
-    posts the prepared journal entries from the firm's general-ledger
-    job to its connected QuickBooks Online company. Deliberately does
-    NOT show the dashboard workspace card or any "Open the Checklist"
-    link — the page is one step per page, with direct next/back nav.
+    Backward-compat entry for flat links (stepper CTAs, old emails, the
+    migration checklist) that don't carry a job_id. Redirects to
+    /jobs/<job_id>/send-to-qbo so every GL batch has a stable, bookmarkable
+    URL and the stepper shows the correct job.
 
-    If the firm hasn't reached Step 5 yet (no GL job, or no QBO
-    connection), redirect with a clear flash so the page is never
-    rendered in an unreachable state.
+    Honours an explicit ?job_id= query param so nexus CTAs can pass the
+    target job without changing the URL pattern.
     """
     user = current_user()
     firm_id = user["firm_id"]
@@ -2013,26 +2012,44 @@ def send_to_qbo_entry():
             "Step 5 sends the prepared journal entries to QuickBooks, "
             "so we need a general-ledger upload before there's anything "
             "to send.",
-            "error",
+            "info",
         )
         return redirect(url_for("dashboard"))
+    # Honour an explicit job_id param (from nexus "Import →" or preview-import
+    # Step 5 button) so we land on the correct batch when multiple GL uploads
+    # exist. Fall back to the most-recently-uploaded GL job.
+    requested = request.args.get("job_id", "").strip()
+    if requested:
+        target = next((j for j in gl_jobs if j.get("id") == requested), None)
+    else:
+        target = None
+    target = target or gl_jobs[0]
+    return redirect(url_for("send_to_qbo", job_id=target["id"]))
 
-    # Bug 26 fix: prefer the GL job that has already been imported.
-    # If the user uploads a new GL after a successful import, gl_jobs[0]
-    # would be the new (preflight-failed) job. Priority:
-    #   imported job  >  job with QBO connection  >  most recently uploaded
-    primary = gl_jobs[0]
-    _pref_imported: "dict | None" = None
-    _pref_qbo: "dict | None" = None
-    for _row in gl_jobs[:20]:
-        _h = db.hydrate_job(_row["id"]) or _row
-        if _h.get("import_summary") and _pref_imported is None:
-            _pref_imported = _h
-        if _get_qbo_connection(_row["id"]) and _pref_qbo is None:
-            _pref_qbo = _row
-        if _pref_imported is not None and _pref_qbo is not None:
-            break
-    primary = _pref_imported or _pref_qbo or gl_jobs[0]
+
+@app.route("/jobs/<job_id>/send-to-qbo")
+@login_required
+def send_to_qbo(job_id: str):
+    """Step 5: Send to QuickBooks — scoped to a specific GL batch.
+
+    Every GL batch in Migration Nexus links here with its own job_id so
+    there is no ambiguity about which month's entries are being sent.
+    The stepper advances correctly per-batch rather than for the firm's
+    'primary' GL job.
+    """
+    user = current_user()
+    firm_id = user["firm_id"]
+
+    # Load the specific job from the URL — no heuristic selection needed.
+    primary, _u = _job_or_403(job_id)
+    if not primary:
+        flash("Job not found.", "error")
+        return redirect(url_for("dashboard"))
+    if primary.get("firm_id") != firm_id:
+        abort(403)
+    if primary.get("report_type") not in (None, REPORT_GENERAL_LEDGER):
+        flash("This is not a general ledger job.", "error")
+        return redirect(url_for("job_detail", job_id=job_id))
 
     qbo_conn = _get_qbo_connection(primary["id"]) or {}
     if not qbo_conn:
@@ -2044,14 +2061,6 @@ def send_to_qbo_entry():
         )
         return redirect(url_for("connect_qbo", job_id=primary["id"]))
 
-    # If a prior import attempt detected missing QuickBooks accounts,
-    # Step 5 is not reachable yet. The original bug rendered Step 5
-    # with a raw "These accounts are not in QuickBooks yet" banner
-    # while the stepper still showed Match/Review as complete. Redirect
-    # back to Step 3 with a single, lawyer-friendly blocker so the
-    # customer sees a concrete next action ("Create missing
-    # QuickBooks accounts") instead of an error on a step they
-    # cannot actually finish.
     match_blocked, blocked_job_id = _firm_match_blocked_state(firm_id)
     if match_blocked and blocked_job_id:
         blocked_job = db.hydrate_job(blocked_job_id) or {}
@@ -2072,12 +2081,6 @@ def send_to_qbo_entry():
         flash(head + detail, "error")
         return redirect(url_for("account_mapping", job_id=blocked_job_id))
 
-    # Preflight gate: validation must have caught nothing actionable.
-    # Cesar's 2026-05-29 QA found Send-to-QuickBooks shown for a GL whose
-    # preflight still flagged single-sided beginning-balance rows. Trust
-    # the preflight summary attached to the job at upload time — if it
-    # found problem rows or beginning balances or an unbalanced TB,
-    # send is not safe.
     primary_preflight = primary.get("preflight") or {}
     if primary_preflight and not primary_preflight.get("ready", True):
         _log_validation_context(
@@ -2110,8 +2113,6 @@ def send_to_qbo_entry():
         _job_for_balance = db.hydrate_job(primary["id"]) or {}
         _already_imported = bool(_job_for_balance.get("import_summary"))
         if not _already_imported and primary_preflight.get("line_count") and not primary_preflight.get("balanced", True):
-            # Fallback: preview may have resolved balance after subtotal-row fix.
-            # Trust preview["balanced"] if it's been explicitly set to True.
             _preview = _job_for_balance.get("preview") or {}
             if not _preview.get("balanced", False):
                 flash(
@@ -2121,12 +2122,8 @@ def send_to_qbo_entry():
                     "error",
                 )
                 return redirect(url_for("preview_import", job_id=primary["id"]))
-            # preview["balanced"] is True — synthetic rows and subtotal filtering
-            # resolve the balance; preflight data is stale. Proceed.
 
     cutover, items, _next = _build_firm_checklist(firm_id)
-    # Bug 26 fix: when import is already complete, force the stepper to
-    # STAGE_RECONCILE — mirrors what _build_reconcile_view() already does.
     _step5_already_imported = bool(
         (db.hydrate_job(primary["id"]) or {}).get("import_summary")
     )
@@ -2151,6 +2148,23 @@ def send_to_qbo_entry():
         workflow_completed=customer_workflow.completed_count(stages),
         workflow_terms=customer_workflow.FRIENDLY_TERMS,
     )
+
+
+@app.route("/jobs/<job_id>/post-ob", methods=["GET", "POST"])
+@login_required
+def post_ob(job_id: str):
+    """Step OB-post: stub redirect until full OB post workflow is synced.
+
+    Full implementation (account mapping for TB accounts, QBO JE creation,
+    revert) lives in migrator/backend/app.py and will be synced in a
+    dedicated patch. For now, redirect to the opening-balance preview so
+    the Trial Balance CTA in Migration Nexus resolves to a valid page.
+    """
+    job, _user = _job_or_403(job_id)
+    if not job:
+        flash("Job not found.", "error")
+        return redirect(url_for("dashboard"))
+    return redirect(url_for("opening_balance_preview", job_id=job_id))
 
 
 def _build_reconcile_view(firm_id):
@@ -2658,9 +2672,14 @@ def migration_nexus():
         and (j.get("report_type") or "general_ledger") != "unknown"
     ]
 
-    # hub_ready: precoa readiness check not deployed yet — always False
+    # hub_ready: GL-only signal — shows "Import →" shortcut in Migration Nexus
+    # when the batch is matched, the firm has at least one completed GL (COA
+    # accounts exist in QBO), and vendors + clients have been uploaded.
     for j in active_batches:
-        j["hub_ready"] = False
+        if (j.get("report_type") or "general_ledger") == "general_ledger":
+            j["hub_ready"] = precoa.is_ready_to_import(j["id"], firm_id, db)
+        else:
+            j["hub_ready"] = False
 
     # One-time setup detection
     coa_done = (
@@ -2680,9 +2699,13 @@ def migration_nexus():
         "needs_attention": 3,
     }
 
-    # TB workflow routes not deployed yet — set placeholder
+    # TB routing: point to the post-ob entry for all Trial Balance jobs.
+    # Non-TB jobs get None (template skips the TB branch entirely).
     for job in all_jobs:
-        job["tb_next_url"] = None
+        if (job.get("report_type") or "") == "trial_balance":
+            job["tb_next_url"] = url_for("post_ob", job_id=job["id"])
+        else:
+            job["tb_next_url"] = None
 
     return render_template(
         'migration-nexus.html',
