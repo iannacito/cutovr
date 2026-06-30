@@ -457,7 +457,7 @@
           or Trust Listing. Report type is detected automatically from the file.
         </p>
 
-        <form action="{{ url_for('upload') }}" method="post" enctype="multipart/form-data">
+        <form action="{{ url_for('upload_bulk') }}" method="post" enctype="multipart/form-data">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="company_name" value="{{ firm.name if firm else '' }}">
           <input type="hidden" name="return_to" value="migration_hub">
@@ -465,7 +465,7 @@
             <span>File(s)
               <small class="muted">(.csv, .xls, .xlsx — hold Ctrl / &#8984; to select multiple)</small>
             </span>
-            <input type="file" name="ledger_file" accept=".csv,.xls,.xlsx" multiple required
+            <input type="file" name="ledger_files" accept=".csv,.xls,.xlsx" multiple required
                    style="margin-top:var(--space-2);display:block;width:100%;">
           </label>
           <div style="margin-top:var(--space-4);">
