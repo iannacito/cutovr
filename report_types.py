@@ -348,7 +348,9 @@ def _score_vendor_list(idx: dict[str, str]) -> int:
     score = 0
     # A vendor-identifying column is the strong signal.
     if any(_norm_header(h) in idx for h in (
-        "vendor_id", "vendor_no", "vendor_number", "vendor_name", "vendor", "payee",
+        "vendor_id", "vendor_no", "vendor_number",
+        "vendor_name", "vendor_name_address", "vendor_name_and_address",
+        "vendor", "payee",
     )):
         score += 3
     if any(_norm_header(h) in idx for h in (

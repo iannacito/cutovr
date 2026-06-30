@@ -4404,7 +4404,7 @@ def upload():
 # Even at 25 MB per file the worst case is bounded by MAX_CONTENT_LENGTH
 # on the whole request, but a fixed file-count cap protects against
 # pathological inputs (e.g. 500 empty CSVs).
-_BULK_MAX_FILES = 12
+_BULK_MAX_FILES = 100
 
 
 def _classify_and_process_files(files, *, company, user_email, user):
