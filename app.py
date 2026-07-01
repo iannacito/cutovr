@@ -61,6 +61,12 @@ from migration_quality import (
     build_reconciliation_report,
     render_reconciliation_csv,
 )
+from initialpost import (
+    build_initial_state,
+    start_sequence,
+    get_state_json,
+    retry_step as initialpost_retry_step,
+)
 from report_types import (
     REPORT_GENERAL_LEDGER,
     REPORT_CHART_OF_ACCOUNTS,
@@ -1990,6 +1996,66 @@ def uploaded_reports():
     )
 
 
+@app.route("/initialpost/start/<job_id>", methods=["POST"])
+@login_required
+def initialpost_start(job_id):
+    """Start (or refresh) the pre-GL V/C sequence for a GL job.
+
+    Called by JS when the user clicks "Send to QuickBooks".
+    Returns JSON with current step statuses.
+    """
+    job, user = _job_or_403(job_id)
+    firm_id     = user["firm_id"]
+    real_import = QBO_REAL_IMPORT
+
+    all_jobs = db.list_jobs_for_firm(firm_id, limit=200) or []
+    state = start_sequence(
+        firm_id     = firm_id,
+        gl_job_id   = job_id,
+        jobs        = all_jobs,
+        push_fn     = _init_push_entities,
+        save_fn     = db.save_job_state,
+        real_import = real_import,
+    )
+    return jsonify(state)
+
+
+@app.route("/initialpost/state/<job_id>")
+@login_required
+def initialpost_state(job_id):
+    """Polling endpoint — returns current sequence state as JSON."""
+    _job, user = _job_or_403(job_id)
+    firm_id    = user["firm_id"]
+
+    state = get_state_json(firm_id, job_id)
+    if state is None:
+        all_jobs = db.list_jobs_for_firm(firm_id, limit=200) or []
+        raw   = build_initial_state(firm_id, job_id, all_jobs)
+        state = {"overall": raw["overall"], "steps": list(raw["steps"].values())}
+    return jsonify(state)
+
+
+@app.route("/initialpost/retry/<job_id>/<step_key>", methods=["POST"])
+@login_required
+def initialpost_retry(job_id, step_key):
+    """Retry a single failed step and restart the sequence."""
+    job, user = _job_or_403(job_id)
+    firm_id     = user["firm_id"]
+    real_import = QBO_REAL_IMPORT
+
+    all_jobs = db.list_jobs_for_firm(firm_id, limit=200) or []
+    state = initialpost_retry_step(
+        firm_id     = firm_id,
+        gl_job_id   = job_id,
+        step_key    = step_key,
+        jobs        = all_jobs,
+        push_fn     = _init_push_entities,
+        save_fn     = db.save_job_state,
+        real_import = real_import,
+    )
+    return jsonify(state)
+
+
 @app.route("/send-to-qbo")
 @login_required
 def send_to_qbo_entry():
@@ -2141,12 +2207,26 @@ def send_to_qbo(job_id: str):
     )
     current = customer_workflow.current_stage(stages)
     job = db.hydrate_job(primary["id"]) or primary
+    _already_imported = bool((job or {}).get("import_summary"))
+
+    # Build pre-GL sequence state for the card (only when not already done)
+    _init_state = None
+    if not _already_imported:
+        _all_jobs = db.list_jobs_for_firm(firm_id, limit=200) or []
+        _raw = build_initial_state(firm_id, job_id, _all_jobs)
+        _init_state = {"overall": _raw["overall"], "steps": list(_raw["steps"].values())}
+
+    _qbo_is_sandbox = os.environ.get("QBO_ENVIRONMENT", "sandbox") == "sandbox"
+
     return render_template(
         "send-to-qbo.html",
         job=job,
         qbo_connection=qbo_conn,
         qbo_real_import=QBO_REAL_IMPORT,
-        already_imported=bool((job or {}).get("import_summary")),
+        qbo_is_sandbox=_qbo_is_sandbox,
+        already_imported=_already_imported,
+        init_state=_init_state,
+        pregl_coa_ob_bypass=False,
         workflow_stages=[s.to_dict() for s in stages],
         workflow_current=current.to_dict() if current else None,
         workflow_progress=customer_workflow.progress_percent(stages),
@@ -5582,6 +5662,92 @@ def _firm_latest_jobs_by_type(firm_id: int, report_type: str, limit: int = 20) -
         db.list_jobs_for_firm(firm_id, limit=limit) or []
     )
     return [j for j in all_jobs if (j.get("report_type") or "general_ledger") == report_type]
+
+
+def _init_push_entities(
+    job: dict,
+    report_type: str,
+    real_import: bool,
+    progress_fn=None,
+) -> tuple[int, int, int]:
+    """Push vendor or customer names to QBO. Used by initialpost background thread.
+
+    Uses in-memory parsed rows stored on the job dict (parsed_vendor_list /
+    parsed_customer_list). Returns (pushed, skipped, errors).
+    progress_fn(pushed, total) is called after each successful push so the
+    Step 5 pre-GL card can show a live count/total label.
+    """
+    import time as _t
+    parsed_key = "parsed_vendor_list" if report_type == REPORT_VENDOR_LIST else "parsed_customer_list"
+    name_key   = "vendor_name"         if report_type == REPORT_VENDOR_LIST else "customer_name"
+
+    job_id  = job["id"]
+    firm_id = job.get("firm_id")
+
+    # Load from DB — in-memory jobs cache may not have the parsed rows
+    hydrated = db.hydrate_job(job_id) or job
+    rows = hydrated.get(parsed_key) or []
+    if not rows:
+        _log.warning("_init_push_entities: no parsed rows for %s job %s", report_type, job_id)
+        return 0, 0, 0
+
+    if not real_import:
+        # Demo mode: count valid names, call progress to show something
+        total = sum(1 for r in rows if (r.get(name_key) or "").strip())
+        if progress_fn:
+            progress_fn(total, total)
+        return total, 0, 0
+
+    # Inherit QBO connection if this job has none
+    qbo_conn = _get_qbo_connection(job_id)
+    if not qbo_conn:
+        _firm_conns = db.list_qbo_connections_for_firm(firm_id)
+        if _firm_conns:
+            _src = db.get_qbo_connection(_firm_conns[0]["job_id"])
+            if _src and _src.get("access_token_enc"):
+                db.upsert_qbo_connection(
+                    job_id=job_id, firm_id=firm_id,
+                    realm_id=_src["realm_id"],
+                    access_token_enc=_src["access_token_enc"],
+                    refresh_token_enc=_src["refresh_token_enc"],
+                    company_name=_src.get("company_name"),
+                    legal_name=_src.get("legal_name"),
+                    country=_src.get("country"),
+                    expires_at=_src.get("expires_at"),
+                    company_info_error=_src.get("company_info_error"),
+                )
+                qbo_connections.pop(job_id, None)
+
+    try:
+        qbo, _conn = _get_qbo_client(job_id, {"firm_id": firm_id})
+    except QBOAuthExpired:
+        raise RuntimeError("QBO token expired — reconnect from the QuickBooks page.")
+
+    is_vendor = report_type == REPORT_VENDOR_LIST
+    valid_rows = [r for r in rows if (r.get(name_key) or "").strip()]
+    total      = len(valid_rows)
+    pushed = skipped = errors = 0
+
+    for i, row in enumerate(rows):
+        name = (row.get(name_key) or "").strip()
+        if not name:
+            skipped += 1
+            continue
+        try:
+            if is_vendor:
+                qbo.get_or_create_vendor(name)
+            else:
+                qbo.get_or_create_customer(name)
+            pushed += 1
+            if progress_fn:
+                progress_fn(pushed, total)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("_init_push_entities %s %r: %s", report_type, name, exc)
+            errors += 1
+        if (i + 1) % 25 == 0:
+            _t.sleep(0.5)
+
+    return pushed, skipped, errors
 
 
 def _firm_latest_parsed_list(firm_id: int, report_type: str, parsed_key: str) -> list[dict]:

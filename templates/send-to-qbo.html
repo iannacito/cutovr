@@ -51,6 +51,69 @@
     </div>
   {% endif %}
 
+  {# ── Pre-GL Initialization Card ── only show when V/C steps are still pending #}
+  {% if init_state is defined and init_state and not already_imported and init_state.overall not in ('done',) %}
+  <section class="card" id="init-seq-card"
+           style="padding:var(--space-5);margin-bottom:var(--space-5);">
+
+    <div style="display:flex;justify-content:space-between;
+                align-items:center;margin-bottom:var(--space-3);">
+      <p class="eyebrow" style="margin:0;">Pre-GL Checklist</p>
+      <button type="button" id="init-toggle"
+              onclick="initToggle()"
+              style="background:none;border:none;cursor:pointer;
+                     font-size:.85rem;color:var(--primary,#1d4ed8);padding:0;">
+        <span id="init-toggle-icon">−</span> Details
+      </button>
+    </div>
+
+    <div id="init-seq-body">
+      <ol id="init-steps-list"
+          style="list-style:none;margin:0;padding:0;
+                 display:flex;flex-direction:column;gap:var(--space-2);">
+        {% for step in init_state.steps %}
+        <li data-step="{{ step.key }}"
+            style="display:flex;align-items:baseline;
+                   gap:var(--space-3);font-size:.875rem;">
+          <div style="min-width:150px;">
+            <span style="font-weight:500;">{{ step.label }}</span>
+            <div style="height:3px;background:var(--line,#e5e7eb);border-radius:2px;
+                        margin-top:3px;overflow:hidden;">
+              <div class="init-pct-bar" data-key="{{ step.key }}"
+                   style="height:100%;background:var(--primary,#1d4ed8);
+                          transition:width .4s ease;
+                          width:{{ step.pct }}%;"></div>
+            </div>
+          </div>
+          <span class="init-status-label" data-key="{{ step.key }}">
+            {% if step.status == 'completed' %}
+              <span style="color:var(--success,#16a34a);">✓ Done</span>
+            {% elif step.status == 'skipped' %}
+              <span style="color:var(--text-muted);">Skipped</span>
+            {% elif step.status == 'pending' %}
+              <span style="color:var(--text-muted);">Pending</span>
+            {% else %}
+              <span style="color:var(--primary,#1d4ed8);">{{ step.status|title }}</span>
+            {% endif %}
+          </span>
+          {% if step.msg %}
+          <span class="muted" style="font-size:.78rem;">{{ step.msg }}</span>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ol>
+
+      <p id="init-action-msg"
+         style="margin-top:var(--space-3);font-size:.875rem;
+                color:var(--text-muted);min-height:1.25rem;">
+        {% if init_state.overall == 'ready_for_gl' %}
+          ✓ Ready — click "Send to QuickBooks" to post the GL.
+        {% endif %}
+      </p>
+    </div>
+  </section>
+  {% endif %}
+
   {% if not already_imported %}
     <section class="card" data-testid="send-to-qbo-card"
              style="padding:var(--space-6);margin-bottom:var(--space-6);">
@@ -81,7 +144,7 @@
         {% endif %}
       </details>
 
-      <form id="send-to-qbo-form"
+      <form id="gl-send-form"
             action="{{ url_for('import_to_qbo', job_id=job.id) }}" method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         {% if not qbo_is_sandbox and qbo_real_import %}
@@ -135,7 +198,7 @@
       </style>
       <script>
         (function () {
-          var form = document.getElementById("send-to-qbo-form");
+          var form = document.getElementById("gl-send-form");
           var btn = document.getElementById("send-to-qbo-btn");
           var panel = document.getElementById("send-to-qbo-progress");
           if (!form || !btn || !panel) { return; }
@@ -170,4 +233,155 @@
     </a>
   </div>
 </section>
+
+{% block extra_js %}
+<script>
+(function () {
+  var JOB_ID    = {{ job.id | tojson }};
+  var CSRF      = {{ csrf_token() | tojson }};
+  var glForm    = document.getElementById('gl-send-form');
+  var card      = document.getElementById('init-seq-card');
+  var actionMsg = document.getElementById('init-action-msg');
+  var pollTimer = null;
+
+  var LABEL = {
+    pending:      '<span style="color:var(--text-muted)">Pending</span>',
+    initializing: '<span style="color:var(--primary,#1d4ed8)">Initializing…</span>',
+    in_progress:  '<span style="color:var(--primary,#1d4ed8)">In progress</span>',
+    completed:    '<span style="color:var(--success,#16a34a)">✓ Done</span>',
+    skipped:      '<span style="color:var(--text-muted)">Skipped</span>',
+    failed:       '<span style="color:var(--error,#dc2626)">Failed</span>',
+  };
+
+  function updateUI(data) {
+    data.steps.forEach(function (s) {
+      var el  = document.querySelector('.init-status-label[data-key="' + s.key + '"]');
+      var bar = document.querySelector('.init-pct-bar[data-key="' + s.key + '"]');
+      if (bar) { bar.style.width = (s.pct || 0) + '%'; }
+      if (!el) return;
+      var html = (LABEL[s.status] || s.status);
+      if (s.status === 'failed') {
+        html += ' <button onclick="retryStep(\'' + s.key + '\')" '
+          + 'style="margin-left:6px;font-size:.78rem;cursor:pointer;'
+          + 'background:none;border:1px solid var(--line);'
+          + 'border-radius:4px;padding:1px 6px;">Retry</button>';
+      }
+      if (s.msg) {
+        html += ' <span class="muted" style="font-size:.78rem;">' + s.msg + '</span>';
+      }
+      el.innerHTML = html;
+    });
+
+    if (actionMsg) {
+      if (data.overall === 'ready_for_gl') {
+        actionMsg.textContent = '✓ Ready — click "Send to QuickBooks" to post the GL.';
+      } else if (data.overall === 'running') {
+        actionMsg.textContent = 'Running…';
+      } else if (data.overall === 'failed') {
+        actionMsg.textContent = 'A step failed. Use Retry to continue.';
+      } else {
+        actionMsg.textContent = '';
+      }
+    }
+  }
+
+  var _pollErrors = 0;
+
+  function poll() {
+    fetch('/initialpost/state/' + JOB_ID)
+      .then(function (r) {
+        if (!r.ok) { throw new Error('Server error ' + r.status); }
+        return r.json();
+      })
+      .then(function (data) {
+        _pollErrors = 0;
+        updateUI(data);
+        if (data.overall === 'ready_for_gl') {
+          clearInterval(pollTimer);
+          if (glForm) { glForm.submit(); }
+        } else if (['failed', 'done'].indexOf(data.overall) >= 0) {
+          clearInterval(pollTimer);
+        }
+      })
+      .catch(function (err) {
+        _pollErrors += 1;
+        if (_pollErrors >= 5) {
+          clearInterval(pollTimer);
+          if (actionMsg) {
+            actionMsg.textContent = 'Lost connection. Refresh to check status.';
+          }
+        }
+      });
+  }
+
+  function retryStep(stepKey) {
+    fetch('/initialpost/retry/' + JOB_ID + '/' + stepKey, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      body: 'csrf_token=' + encodeURIComponent(CSRF),
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      updateUI(data);
+      if (data.overall === 'running') {
+        clearInterval(pollTimer);
+        pollTimer = setInterval(poll, 1500);
+      }
+    });
+  }
+
+  // Intercept GL form submit — run pre-GL sequence first
+  if (glForm && card) {
+    var formSubmitted = false;
+
+    function submitHandler(e) {
+      e.preventDefault();
+      if (formSubmitted) { return; }
+      formSubmitted = true;
+
+      card.style.display = 'block';
+      if (actionMsg) actionMsg.textContent = 'Checking pre-GL steps…';
+
+      fetch('/initialpost/start/' + JOB_ID, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'csrf_token=' + encodeURIComponent(CSRF),
+      })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        updateUI(data);
+        if (data.overall === 'ready_for_gl') {
+          glForm.removeEventListener('submit', submitHandler);
+          glForm.submit();
+        } else if (data.overall === 'failed') {
+          formSubmitted = false;
+        } else {
+          pollTimer = setInterval(poll, 1500);
+        }
+      })
+      .catch(function (err) {
+        formSubmitted = false;
+        if (actionMsg) {
+          actionMsg.textContent = 'Error starting pre-GL check: ' + err.message + '. Try again.';
+        }
+      });
+    }
+
+    glForm.addEventListener('submit', submitHandler);
+  }
+
+  function initToggle() {
+    var body = document.getElementById('init-seq-body');
+    var icon = document.getElementById('init-toggle-icon');
+    if (!body) return;
+    var visible = body.style.display !== 'none';
+    body.style.display = visible ? 'none' : 'block';
+    icon.textContent   = visible ? '+' : '−';
+  }
+  window.initToggle = initToggle;
+  window.retryStep  = retryStep;
+})();
+</script>
+{% endblock %}
+
 {% endblock %}
