@@ -10432,6 +10432,7 @@ def revert_import(job_id):
     if failed_count == 0:
         job["import_summary"] = None
         job["qbo_results"] = None
+        job["checkpoint"] = "reviewed"   # reset so job can be re-imported
         job["status"] = "Reverted — ready to re-import"
         # Delete from import history if the method exists
         try:
@@ -10466,7 +10467,46 @@ def revert_import(job_id):
             "warning",
         )
 
-    return redirect(url_for("reconcile_balances"))
+    # Full revert: return user to Step 5 to re-import immediately.
+    # Partial revert: show job detail so they can see failed entries and retry.
+    if failed_count == 0:
+        return redirect(url_for("send_to_qbo", job_id=job_id))
+    return redirect(url_for("job_detail", job_id=job_id))
+
+
+@app.route("/jobs/<job_id>/force-clear-import-state", methods=["POST"])
+@login_required
+def force_clear_import_state(job_id):
+    """Force-clear local import state for a partially-reverted job.
+
+    Used when revert_import left some JEs in QBO (partial revert) but
+    the user wants to clear local state and re-import. Warns that QBO
+    may still hold entries from the previous import — user should run
+    force-revert from the operator panel first if they want a clean slate.
+    """
+    job, user = _job_or_403(job_id)
+    status = job.get("status", "")
+    if "Revert partial" not in status:
+        flash("Nothing to force-clear: job is not in a partial-revert state.", "info")
+        return redirect(url_for("job_detail", job_id=job_id))
+    job["import_summary"] = None
+    job["qbo_results"] = None
+    job["checkpoint"] = "reviewed"
+    job["status"] = "Import state cleared — some QBO entries may remain"
+    _save_job(job_id)
+    _audit(
+        "force_clear_import_state",
+        target_type="job",
+        target_id=job_id,
+        details=f"user {user['email']} force-cleared partial revert state",
+    )
+    flash(
+        "Import state cleared. Note: QuickBooks may still hold some entries "
+        "from the previous import. Use the Force Revert tool from the operator "
+        "panel to clean those up, or proceed with re-import carefully.",
+        "warning",
+    )
+    return redirect(url_for("send_to_qbo", job_id=job_id))
 
 
 @app.route("/jobs/<job_id>/force-revert-migrated-jes", methods=["POST"])

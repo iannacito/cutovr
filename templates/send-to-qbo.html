@@ -22,6 +22,28 @@
         Your transactions are in <strong>{{ qbo_connection.company_name or 'your QuickBooks Online company' }}</strong>.
         You&rsquo;re ready for the final balance check.
       </p>
+      {% if job.status and 'Revert partial' in job.status %}
+      <div style="margin-top:var(--space-4);padding:var(--space-3) var(--space-4);
+                  border-radius:var(--radius);background:var(--warning-soft,#fef3c7);
+                  border:1px solid var(--warning,#d97706);">
+        <p style="margin:0 0 var(--space-2);font-weight:600;
+                  color:var(--warning-dark,#92400e);font-size:.875rem;">
+          &#9888; Revert Incomplete
+        </p>
+        <p style="margin:0 0 var(--space-3);font-size:.875rem;color:var(--ink-muted);">
+          {{ job.status }} &mdash; some journal entries may still exist in QuickBooks.
+          Clear the local import state below to allow re-import.
+        </p>
+        <form action="{{ url_for('force_clear_import_state', job_id=job.id) }}" method="post"
+              onsubmit="return confirm('Clear import state? QuickBooks may still hold some entries from the previous import. Proceed?');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="btn btn-sm" type="submit"
+                  style="color:var(--warning-dark,#92400e);border-color:var(--warning,#d97706);">
+            Clear import state &amp; re-import
+          </button>
+        </form>
+      </div>
+      {% endif %}
       <div class="actions-row workflow-cta-row" style="margin-top:var(--space-4);">
         <a class="btn btn-link" href="{{ url_for('job_detail', job_id=job.id) }}">Open the job</a>
         <a class="btn btn-primary btn-lg" href="{{ url_for('reconcile_balances') }}"
