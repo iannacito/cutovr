@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, abort
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, abort, Response
 from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
 from werkzeug.datastructures import FileStorage
@@ -3450,6 +3450,81 @@ def partners_page():
             _seo_breadcrumb("For partners", path),
         ],
     )
+
+
+# ---------------------------------------------------------------------------
+# sitemap.xml / robots.txt
+#
+# SITEMAP_PATHS is the curated allow-list of public, indexable pages. It is
+# deliberately explicit rather than derived from the URL map so that internal
+# operator/demo/migration/auth routes can never leak into the sitemap by
+# accident. robots.txt disallows those same internal prefixes and points
+# crawlers at the sitemap on the canonical host (branding.PUBLIC_APP_URL).
+# ---------------------------------------------------------------------------
+
+# Public, indexable pages, in rough priority order (homepage first, then the
+# SEO content pages, then the supporting public pages). Keep in sync with the
+# routes above; every entry must be a public GET route.
+SITEMAP_PATHS = [
+    "/",
+    "/pclaw-to-quickbooks-online-migration",
+    "/pc-law-to-quickbooks-migration",
+    "/law-firm-accounting-migration",
+    "/trust-accounting-migration",
+    "/partners",
+    "/pricing",
+    "/onboarding",
+    "/about",
+    "/security",
+    "/support",
+    "/privacy",
+    "/terms",
+]
+
+# Internal / non-marketing path prefixes kept out of search results. These are
+# operator tools, the authenticated migration app, auth, and OAuth/webhook
+# endpoints — none overlap the public SEO paths above.
+ROBOTS_DISALLOW = [
+    "/operator",
+    "/demo",
+    "/login",
+    "/logout",
+    "/quickbooks",
+    "/migration",
+    "/integrations",
+    "/jobs",
+    "/intake",
+    "/cutover",
+    "/firm",
+    "/dashboard",
+    "/disconnect",
+    "/healthz",
+]
+
+
+@app.route("/sitemap.xml")
+def sitemap_xml():
+    """XML sitemap of the public marketing/SEO pages on the canonical host."""
+    base = branding.PUBLIC_APP_URL
+    urls = "".join(
+        f"  <url><loc>{base}{path}</loc></url>\n" for path in SITEMAP_PATHS
+    )
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        f"{urls}"
+        "</urlset>\n"
+    )
+    return Response(body, mimetype="application/xml")
+
+
+@app.route("/robots.txt")
+def robots_txt():
+    """Allow normal crawling, block internal app routes, link the sitemap."""
+    lines = ["User-agent: *", "Allow: /"]
+    lines += [f"Disallow: {path}" for path in ROBOTS_DISALLOW]
+    lines += ["", f"Sitemap: {branding.PUBLIC_APP_URL}/sitemap.xml", ""]
+    return Response("\n".join(lines), mimetype="text/plain")
 
 
 # Per-IP rate limiter for the public quote-request form, so the same
