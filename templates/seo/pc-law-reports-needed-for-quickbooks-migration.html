@@ -1,0 +1,157 @@
+{% extends "_base.html" %}
+{% import "_seo_macros.html" as seo %}
+{% block title %}PC Law reports needed for QuickBooks migration | {{ app_name }}{% endblock %}
+{% block meta_description %}Learn which PC Law reports law firms should prepare before a QuickBooks migration, including chart of accounts, trial balance, general ledger, trust records, and customer/vendor lists.{% endblock %}
+{% block og_type %}article{% endblock %}
+{% block content %}
+
+<section class="page page--prose seo-page" data-testid="seo-article-page">
+  <nav class="eyebrow" aria-label="Breadcrumb">
+    <a href="{{ url_for('index') }}">Home</a> &rsaquo; Resources &rsaquo; PC Law reports for a QuickBooks migration
+  </nav>
+  <h1 class="display">The PC Law reports you need before a QuickBooks migration</h1>
+  <p class="landing-hero__lede">
+    Before your firm moves off PC Law, a handful of standard reports do most
+    of the heavy lifting. Pulling the right ones early makes the whole
+    migration faster, calmer, and easier to check.
+  </p>
+  <p>
+    You do not need to be an accountant to gather these. PC Law can already
+    produce every report below &mdash; the goal of this page is simply to tell
+    you, in plain terms, which ones matter and why. If you would rather not
+    figure it out alone, we go through the exact list with you on a
+    <a {{ seo.discovery_attrs() }} data-testid="article-intro-cta">discovery call</a>.
+  </p>
+  <div style="margin:var(--space-5) 0;">{{ seo.discovery_button(testid='article-book-top') }}</div>
+
+  <h2>Why the right reports matter</h2>
+  <p>
+    A migration is only as good as the records it starts from. The reports
+    below are how your existing books are read, matched to QuickBooks, and
+    checked afterward. Good, complete exports mean:
+  </p>
+  <ul class="secure-list">
+    <li><strong>Fewer surprises.</strong> Balances and history can be verified against what PC Law shows today.</li>
+    <li><strong>A cleaner cutover.</strong> The date you switch is anchored to figures that actually tie out.</li>
+    <li><strong>Less back-and-forth.</strong> Having the reports ready up front avoids repeated requests mid-migration.</li>
+  </ul>
+
+  <h2>Quick checklist of reports</h2>
+  <p class="muted">A one-glance list of what to have ready. Each is explained below.</p>
+  <div class="grid-two">
+    <article class="card"><h3>Chart of Accounts</h3><p>The full account list your books are built on.</p></article>
+    <article class="card"><h3>Trial Balance</h3><p>Beginning and ending, for the periods being moved.</p></article>
+    <article class="card"><h3>General Ledger</h3><p>Transaction detail, ideally broken out by month.</p></article>
+    <article class="card"><h3>Vendor &amp; Customer lists</h3><p>Plus an A/R listing so receivables can be matched.</p></article>
+    <article class="card"><h3>Trust listing &amp; ledger</h3><p>Where your firm holds client trust funds.</p></article>
+    <article class="card"><h3>A/R and A/P detail</h3><p>Open receivables and payables, if applicable.</p></article>
+  </div>
+
+  <h2>Chart of Accounts</h2>
+  <p>
+    The Chart of Accounts is the master list of every account your firm uses
+    &mdash; bank accounts, income, expenses, liabilities, and trust. It is the
+    backbone of the migration: every balance and transaction is posted against
+    one of these accounts. Export the complete list, including account numbers
+    if your firm uses them. During the migration your accounts are matched to
+    QuickBooks with a side-by-side preview before anything is created, so
+    nothing is renamed or merged without you seeing it first.
+  </p>
+
+  <h2>Trial Balance, beginning and ending</h2>
+  <p>
+    A Trial Balance is a snapshot of every account&rsquo;s balance at a point
+    in time. Two are useful:
+  </p>
+  <ul class="secure-list">
+    <li><strong>Beginning trial balance</strong> &mdash; the balances as of the start of the history you want to carry over. These seed the opening balances in QuickBooks.</li>
+    <li><strong>Ending trial balance</strong> &mdash; the balances as of your planned cutover date. This is the target the migrated books are reconciled against, so the two systems agree.</li>
+  </ul>
+  <p>
+    Together they bracket the period being moved and give a clear before and
+    after to check against.
+  </p>
+
+  <h2>General Ledgers, preferably monthly</h2>
+  <p>
+    The General Ledger is the detailed record of transactions behind those
+    balances. Exporting it <strong>by month</strong> rather than as one large
+    file makes it far easier to review, spot gaps, and reconcile period by
+    period. General Ledger detail is prepared and reviewed, then posted to
+    QuickBooks as journal entries &mdash; not dumped in blind. If you can only
+    export a single date range, that still works; monthly is simply cleaner.
+  </p>
+
+  <h2>Vendor List and Customer List / A/R Listing</h2>
+  <p>
+    Your Vendor List and Customer (client) List bring the names and details
+    your books reference into QuickBooks so payables and receivables land
+    against the right party. An <strong>Accounts Receivable listing</strong>
+    &mdash; who owes what, by client or matter &mdash; lets open invoices be
+    matched rather than lost. Vendors and customers are created in QuickBooks
+    as the related A/P and A/R lines post.
+  </p>
+
+  <h2>Trust Listing and Trust Ledger, where applicable</h2>
+  <p>
+    If your firm holds client funds in trust, these records need extra care. A
+    <strong>Trust Listing</strong> shows the balance held for each client or
+    matter; a <strong>Trust Ledger</strong> shows the movement in and out over
+    time. Client trust funds are a liability, not firm revenue, and they must
+    reconcile to the penny. Because of that, trust records are reconciled with
+    care rather than bulk-posted. There is more on this in our
+    <a href="{{ url_for('trust_accounting_migration') }}">trust accounting migration</a>
+    overview.
+  </p>
+
+  <h2>Accounts Receivable and Accounts Payable, if applicable</h2>
+  <p>
+    Beyond the summary listings, detailed <strong>A/R</strong> (money owed to
+    the firm) and <strong>A/P</strong> (money the firm owes) reports capture
+    the open items that should carry across so your first days in QuickBooks
+    reflect reality. If your firm keeps books on a pure cash basis with no open
+    invoices or bills, these may not apply &mdash; part of scoping is deciding
+    what is relevant to you.
+  </p>
+
+  <h2>Cutover date and migration scope</h2>
+  <p>
+    Two decisions shape which reports you ultimately need:
+  </p>
+  <ul class="secure-list">
+    <li><strong>The cutover date</strong> &mdash; the day you stop recording in PC Law and start in QuickBooks. Your ending trial balance and final ledgers are pulled as of this date.</li>
+    <li><strong>The scope of history</strong> &mdash; how far back you want detail to travel. Some firms bring several years; others carry opening balances plus the current year. More history means more reports over a longer range.</li>
+  </ul>
+  <p>
+    Settling these early tells you exactly how much to export. Our
+    <a href="{{ url_for('pclaw_to_qbo_migration_guide') }}">complete PCLaw to QuickBooks Online migration guide</a>
+    walks through how the cutover and scope fit into the wider move.
+  </p>
+
+  <h2>What to do if you are not sure which reports you need</h2>
+  <p>
+    That is genuinely common, and it is not a problem. You do not have to get
+    the list perfect on your own. The simplest path is to
+    <a href="{{ url_for('pc_law_to_qb_migration') }}">book a discovery call</a>:
+    we look at how your firm keeps its books, confirm exactly which PC Law
+    reports apply to your situation, and prepare the migration from there. If
+    it is easier, you can also
+    <a href="{{ url_for('quote_request') }}">send your migration details</a>
+    and we will follow up.
+  </p>
+
+  <p class="note" data-testid="article-disclaimer" style="margin-top:var(--space-5);">
+    Report requirements vary by firm and by the scope of your migration. This
+    page is general guidance to help you prepare, not legal, accounting, or
+    compliance advice &mdash; your accountant or compliance advisor should
+    confirm what your firm needs.
+  </p>
+</section>
+
+{{ seo.related_pages(current='article') }}
+
+{{ seo.cta_block('Not sure which reports apply to your firm?',
+   'Book a discovery call. We&rsquo;ll confirm the exact PC Law reports you need and prepare the migration.',
+   testid='article-cta') }}
+
+{% endblock %}
