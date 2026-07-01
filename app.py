@@ -14,6 +14,7 @@ load_dotenv()
 import hashlib
 import json
 import logging
+_log = logging.getLogger("app")
 import re
 import requests
 import encryption
