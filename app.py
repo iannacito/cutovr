@@ -2726,7 +2726,7 @@ def migration_nexus():
     firm_id = user["firm_id"]
     firm = db.get_firm(firm_id) if firm_id else None
 
-    all_jobs = db.list_jobs_for_firm(firm_id, limit=50)
+    all_jobs = list({j["id"]: j for j in db.list_jobs_for_firm(firm_id, limit=200)}.values())
 
     # Parse JSON blob fields for display
     import json as _json
@@ -2794,9 +2794,20 @@ def migration_nexus():
     # Non-TB jobs get None (template skips the TB branch entirely).
     for job in all_jobs:
         if (job.get("report_type") or "") == "trial_balance":
-            job["tb_next_url"] = url_for("post_ob", job_id=job["id"])
+            _ob_posted    = bool(job.get("opening_balance_history"))
+            _realm        = (qbo_connections.get(job["id"]) or {}).get("realm_id")
+            _has_mappings = bool(db.list_account_mappings(firm_id, _realm)) if _realm else False
+            job["tb_ob_posted"]    = _ob_posted
+            job["tb_has_mappings"] = _has_mappings
+            # Route to account-mapping first if no mappings yet, otherwise OB post
+            if _has_mappings or _ob_posted:
+                job["tb_next_url"] = url_for("post_ob", job_id=job["id"])
+            else:
+                job["tb_next_url"] = url_for("ob_account_mapping", job_id=job["id"])
         else:
             job["tb_next_url"] = None
+            job["tb_ob_posted"]    = False
+            job["tb_has_mappings"] = False
 
     return render_template(
         'migration-nexus.html',
@@ -2810,6 +2821,7 @@ def migration_nexus():
         vendor_done=vendor_done,
         client_done=client_done,
         checkpoint_steps=checkpoint_steps,
+        is_dev_mode=os.environ.get("APP_ENV") == "development",
     )
 
 
