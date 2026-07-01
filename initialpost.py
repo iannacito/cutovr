@@ -222,8 +222,13 @@ def _run_auto_steps(firm_id, gl_job_id, jobs, push_fn, save_fn, real_import):
                 progress_fn=_make_progress(firm_id, gl_job_id, key),
             )
             save_fn(job["id"], {"status": "completed", "checkpoint": "completed"})
-            msg = f"{pushed} pushed"
-            if errors:
+            if pushed:
+                msg = f"{pushed} synced"
+            elif errors:
+                msg = f"{errors} failed"
+            else:
+                msg = "Already in QBO"
+            if errors and pushed:
                 msg += f", {errors} failed"
             if skipped:
                 msg += f", {skipped} skipped"

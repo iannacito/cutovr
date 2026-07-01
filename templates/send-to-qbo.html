@@ -118,9 +118,6 @@
               <span style="color:var(--primary,#1d4ed8);">{{ step.status|title }}</span>
             {% endif %}
           </span>
-          {% if step.msg %}
-          <span class="muted" style="font-size:.78rem;">{{ step.msg }}</span>
-          {% endif %}
         </li>
         {% endfor %}
       </ol>
@@ -225,11 +222,10 @@
           var panel = document.getElementById("send-to-qbo-progress");
           if (!form || !btn || !panel) { return; }
           form.addEventListener("submit", function (ev) {
-            // When the pre-GL card is present, the pre-GL JS manages submit
-            // interception. It will show the loading panel itself right before
-            // glForm.submit() fires (only after vendors/customers pass).
-            // Showing the panel here would cause it to appear while pre-GL
-            // steps are still running or have failed.
+            // When the pre-GL card is present, the pre-GL JS owns this submit.
+            // It shows the panel itself right before glForm.submit() fires
+            // (only after V/C pass). Showing it here would expose the panel
+            // during a failure before V/C completes.
             if (document.getElementById('init-seq-card')) { return; }
             {% if not qbo_is_sandbox and qbo_real_import %}
               var confirmCompany = {{ (qbo_connection.company_name or 'your QuickBooks Online company')|tojson }};
@@ -328,10 +324,12 @@
         updateUI(data);
         if (data.overall === 'ready_for_gl') {
           clearInterval(pollTimer);
-          glPanel.style.display = 'block';
-          glBtn.disabled = true;
-          glBtn.textContent = 'Sending your data to QuickBooks…';
-          if (glForm) { glForm.submit(); }
+          if (glForm) {
+            glForm.removeEventListener('submit', submitHandler);
+            if (glPanel) { glPanel.style.display = 'block'; }
+            if (glBtn)   { glBtn.disabled = true; glBtn.textContent = 'Sending your data to QuickBooks…'; }
+            glForm.submit();
+          }
         } else if (['failed', 'done'].indexOf(data.overall) >= 0) {
           clearInterval(pollTimer);
         }
@@ -384,10 +382,9 @@
       .then(function (data) {
         updateUI(data);
         if (data.overall === 'ready_for_gl') {
-          glPanel.style.display = 'block';
-          glBtn.disabled = true;
-          glBtn.textContent = 'Sending your data to QuickBooks…';
           glForm.removeEventListener('submit', submitHandler);
+          if (glPanel) { glPanel.style.display = 'block'; }
+          if (glBtn)   { glBtn.disabled = true; glBtn.textContent = 'Sending your data to QuickBooks…'; }
           glForm.submit();
         } else if (data.overall === 'failed') {
           formSubmitted = false;
