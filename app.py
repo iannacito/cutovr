@@ -2114,7 +2114,12 @@ def send_to_qbo(job_id: str):
         _already_imported = bool(_job_for_balance.get("import_summary"))
         if not _already_imported and primary_preflight.get("line_count") and not primary_preflight.get("balanced", True):
             _preview = _job_for_balance.get("preview") or {}
-            if not _preview.get("balanced", False):
+            # auto_balance_rows are synthetic entries saved by the preview page
+            # to balance single-sided entries. They are merged into the GL at
+            # import time (line ~7191), so the file *will* be balanced when
+            # posted. Skip the balance block if they are already in place.
+            _has_auto_balance = bool(_job_for_balance.get("auto_balance_rows"))
+            if not _preview.get("balanced", False) and not _has_auto_balance:
                 flash(
                     "Your general-ledger file is not balanced (debits don't "
                     "equal credits). Fix the source CSV and re-upload from "
