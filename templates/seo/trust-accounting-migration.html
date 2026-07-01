@@ -4,7 +4,7 @@
 {% block meta_description %}{{ app_name }} helps law firms approach trust-related migration records with a careful, reviewed process for balances, ledgers, and cutover planning.{% endblock %}
 {% block content %}
 
-<section class="page page--prose" data-testid="seo-trust-page">
+<section class="page page--prose seo-page" data-testid="seo-trust-page">
   <nav class="eyebrow" aria-label="Breadcrumb">
     <a href="{{ url_for('index') }}">Home</a> &rsaquo; Trust accounting migration
   </nav>
@@ -29,7 +29,7 @@
   <div style="margin:var(--space-5) 0;">{{ seo.discovery_button(testid='trust-book-top') }}</div>
 
   <h2>What we look at with trust-related records</h2>
-  <div class="grid-two" style="margin-top:var(--space-4);">
+  <div class="grid-two">
     <article class="card"><h3>Trust listings</h3><p>Client-by-client trust balances, reconciled against your trust liability and trust bank totals.</p></article>
     <article class="card"><h3>Trust ledger detail</h3><p>The underlying activity that supports each balance, kept traceable through the move.</p></article>
     <article class="card"><h3>Trial balance reports</h3><p>Used to check that trust liability and trust bank figures agree before and after.</p></article>
