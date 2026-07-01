@@ -2712,7 +2712,7 @@ def migration_hub_page():
     )
 
 
-@app.route('/migration-nexus')
+@app.route('/migration-nexus', strict_slashes=False)
 @login_required
 def migration_nexus():
     """Per-firm migration batch tracker — all report types, active and completed."""

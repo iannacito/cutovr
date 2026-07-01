@@ -263,9 +263,6 @@
           </td>
           <td>
             <div class="hub-cell-primary">{{ job.get('hub_label') or 'File' }}</div>
-            {% if job.get('report_type') == 'general_ledger' and job.get('period_label') %}
-            <div class="hub-cell-sub">{{ job['period_label'] }} &middot; Job #{{ job['id'][:8] }}</div>
-            {% endif %}
           </td>
           <td>
             {% if job.get('report_type') == 'chart_of_accounts' %}
@@ -370,9 +367,6 @@
           </td>
           <td>
             <div class="hub-cell-primary">{{ job.get('hub_label') or 'File' }}</div>
-            {% if job.get('report_type') == 'general_ledger' and job.get('period_label') %}
-            <div class="hub-cell-sub">{{ job['period_label'] }} &middot; Job #{{ job['id'][:8] }}</div>
-            {% endif %}
           </td>
           <td>
             <div class="hub-dots">
