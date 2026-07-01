@@ -2636,6 +2636,10 @@ def migration_hub_page():
 @login_required
 def migration_nexus():
     """Per-firm migration batch tracker — all report types, active and completed."""
+    # Hidden operator reset entry point: /migration-nexus/?mode=$delete$
+    # Non-operators get a 404 from @operator_required on the target route.
+    if request.args.get("mode") == "$delete$":
+        return redirect(url_for("operator_firm_reset"))
     user = current_user()
     firm_id = user["firm_id"]
     firm = db.get_firm(firm_id) if firm_id else None

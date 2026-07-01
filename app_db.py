@@ -382,6 +382,12 @@ class AppDB:
         # qbo_je_id). Persisted so a failed attempt stays visible and
         # retryable after a reload instead of silently vanishing.
         add_col("jobs", "opening_balance_history_json TEXT")
+        # Auto-balance synthetic entries for GL files with unmatched debit/credit
+        # pairs. The preview page creates these on "Auto-fix" click; they are
+        # merged into the GL at import time so the file posts balanced.
+        # Persisted to DB so the Step 5 balance gate can skip the error block
+        # if these are already in place (file WILL be balanced after merge).
+        add_col("jobs", "auto_balance_rows_json TEXT")
         # Canonical migration checkpoint (durable, resumable foundation).
         # One of: uploaded | parsed | matched | reviewed | importing |
         # completed | needs_attention. Distinct from the free-text status
@@ -815,6 +821,13 @@ class AppDB:
                 if job_dict["opening_balance_history"]
                 else None
             )
+        if "auto_balance_rows" in job_dict:
+            fields.append("auto_balance_rows_json")
+            values.append(
+                json.dumps(job_dict["auto_balance_rows"])
+                if job_dict["auto_balance_rows"]
+                else None
+            )
 
         set_clause = ", ".join(f"{f} = ?" for f in fields)
         values.append(job_id)
@@ -878,6 +891,7 @@ class AppDB:
             ("coa_type_overrides_json", "coa_type_overrides"),
             ("entity_name_blockers_json", "entity_name_blockers"),
             ("opening_balance_history_json", "opening_balance_history"),
+            ("auto_balance_rows_json", "auto_balance_rows"),
         ]:
             v = row[src] if src in row.keys() else None
             if v:
