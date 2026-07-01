@@ -248,6 +248,7 @@ def _stage_cta(
     url_for: Optional[Callable[..., str]],
     has_jobs: bool,
     ready_to_advance: bool = False,
+    import_job_id: Optional[str] = None,
 ) -> tuple:
     """Return (cta_label, cta_url) for the *current* stage.
 
@@ -298,11 +299,14 @@ def _stage_cta(
         return ("Proceed to Step 4: Review import",
                 u("import_job_entry", "/import-job"))
     if stage_key == STAGE_IMPORT:
-        # The customer is *on* Step 5 — point the stepper CTA at the
-        # actual send action rather than telling them to "Proceed to
-        # Step 5" while they are already there. The send-to-qbo page
-        # renders its own confirmation form; the stepper CTA simply
-        # focuses that page (anchor to the send card).
+        # Use job-scoped URL when a specific GL job is in context so the
+        # stepper CTA goes to the correct batch, not the firm-level primary.
+        if import_job_id and url_for is not None:
+            try:
+                return ("Send to QuickBooks",
+                        url_for("send_to_qbo", job_id=import_job_id) + "#send-to-qbo-card")
+            except Exception:
+                pass
         return ("Send to QuickBooks",
                 u("send_to_qbo_entry", "/send-to-qbo") + "#send-to-qbo-card")
     if stage_key == STAGE_RECONCILE:
@@ -361,6 +365,7 @@ def _stage_back_link(
 def _stage_nav_url(
     stage_key: str,
     url_for: Optional[Callable[..., str]],
+    import_job_id: Optional[str] = None,
 ) -> str:
     """Canonical entry URL for a stage's rail bubble.
 
@@ -383,7 +388,11 @@ def _stage_nav_url(
                                   or u("dashboard", "/dashboard")),
         STAGE_MATCH:     lambda: u("match_accounts_entry", "/match-accounts"),
         STAGE_REVIEW:    lambda: u("import_job_entry", "/import-job"),
-        STAGE_IMPORT:    lambda: u("send_to_qbo_entry", "/send-to-qbo"),
+        STAGE_IMPORT:    lambda: (
+            url_for("send_to_qbo", job_id=import_job_id)
+            if import_job_id and url_for is not None
+            else u("send_to_qbo_entry", "/send-to-qbo")
+        ),
         STAGE_RECONCILE: lambda: u("reconcile_balances", "/reconcile-balances"),
     }
     factory = table.get(stage_key)
@@ -401,6 +410,7 @@ def build_customer_stages(
     review_blocker: Optional[str] = None,
     review_job_id: Optional[str] = None,
     on_match_page: bool = False,
+    import_job_id: Optional[str] = None,
 ) -> List[WorkflowStage]:
     """Project the detailed checklist into the 6-stage customer stepper.
 
@@ -534,6 +544,7 @@ def build_customer_stages(
             stage.cta_label, stage.cta_url = _stage_cta(
                 stage.key, url_for, has_jobs=has_jobs,
                 ready_to_advance=ready_to_advance,
+                import_job_id=import_job_id,
             )
             stage.back_label, stage.back_url = _stage_back_link(
                 stage.key, url_for,
@@ -544,7 +555,7 @@ def build_customer_stages(
         # (re-focus) are clickable; upcoming steps deliberately are not,
         # so the rail can never skip a lawyer ahead past unfinished work.
         if stage.status in (STAGE_STATUS_COMPLETE, STAGE_STATUS_CURRENT):
-            stage.nav_url = _stage_nav_url(stage.key, url_for)
+            stage.nav_url = _stage_nav_url(stage.key, url_for, import_job_id=import_job_id)
 
     # When the Match stage is blocked by missing-account detection,
     # override its CTA to send the user straight into the
@@ -604,9 +615,13 @@ def build_customer_stages(
                     return fallback
             if review_blocker == "ready":
                 stage.cta_label = "Step 5: Send to QuickBooks"
-                stage.cta_url = _u(
-                    "send_to_qbo_entry", "/send-to-qbo"
-                )
+                if import_job_id and url_for is not None:
+                    try:
+                        stage.cta_url = url_for("send_to_qbo", job_id=import_job_id)
+                    except Exception:
+                        stage.cta_url = _u("send_to_qbo_entry", "/send-to-qbo")
+                else:
+                    stage.cta_url = _u("send_to_qbo_entry", "/send-to-qbo")
             elif review_blocker == "unmatched":
                 if review_job_id:
                     stage.cta_url = _u(

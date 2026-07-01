@@ -2204,6 +2204,7 @@ def send_to_qbo(job_id: str):
         force_current_stage=(
             customer_workflow.STAGE_RECONCILE if _step5_already_imported else None
         ),
+        import_job_id=job_id,
     )
     current = customer_workflow.current_stage(stages)
     job = db.hydrate_job(primary["id"]) or primary
@@ -5148,7 +5149,14 @@ def job_detail(job_id):
         report_type=report_type,
         report_label=REPORT_LABELS.get(report_type, REPORT_LABELS[REPORT_GENERAL_LEDGER]),
         qbo_behavior=REPORT_QBO_BEHAVIOR.get(report_type, "importable"),
-        **_workflow_stepper_context(_user["firm_id"]),
+        **_workflow_stepper_context(
+            _user["firm_id"],
+            import_job_id=(
+                job_id
+                if (job.get("report_type") or "") == "general_ledger"
+                else None
+            ),
+        ),
     )
 
 
@@ -10807,6 +10815,7 @@ def _workflow_stepper_context(
     review_blocker=None,
     review_job_id=None,
     on_match_page=False,
+    import_job_id=None,
 ):
     """Compute the 6-stage customer-facing workflow stepper for a firm.
 
@@ -10836,6 +10845,7 @@ def _workflow_stepper_context(
         review_blocker=review_blocker,
         review_job_id=review_job_id,
         on_match_page=on_match_page,
+        import_job_id=import_job_id,
     )
     current = customer_workflow.current_stage(stages)
     return {
