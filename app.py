@@ -3164,7 +3164,10 @@ def index():
     """Public landing page for prospects; authenticated users go to dashboard."""
     if current_user():
         return redirect(url_for("dashboard"))
-    return render_template("landing.html")
+    return render_template(
+        "landing.html",
+        structured_data=[_seo_organization()],
+    )
 
 
 @app.route("/privacy")
@@ -3266,6 +3269,187 @@ def about_page():
     positioned vs. consultant-led migrations. No fabricated testimonials.
     """
     return render_template("about.html")
+
+
+# ---------------------------------------------------------------------------
+# Public SEO content pages
+#
+# A small, deliberately clean set of marketing/education pages that help law
+# firms and legal-software vendors discover Cutovr in organic search. Copy is
+# lawyer-friendly (no accounting jargon walls) and every page's primary CTA is
+# "Book a discovery call" via the shared discovery_call_href. Each page ships
+# page-specific title/meta (in the template) plus JSON-LD structured data
+# (built below) for Organization, Service, FAQ, and Breadcrumb where suitable.
+# ---------------------------------------------------------------------------
+
+def _seo_url(path):
+    """Absolute URL on the canonical public host for a given app path."""
+    return f"{branding.PUBLIC_APP_URL}{path}"
+
+
+def _seo_organization():
+    """Organization schema, shared across SEO pages."""
+    return {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "name": branding.COMPANY_NAME,
+        "url": branding.PUBLIC_APP_URL,
+        "description": (
+            "Done-for-you PC Law / PCLaw to QuickBooks migration for law firms."
+        ),
+    }
+
+
+def _seo_service(name, description, path):
+    """Service schema for a single SEO service page."""
+    return {
+        "@context": "https://schema.org",
+        "@type": "Service",
+        "name": name,
+        "description": description,
+        "serviceType": "Legal accounting data migration",
+        "areaServed": "US",
+        "url": _seo_url(path),
+        "provider": {"@type": "Organization", "name": branding.COMPANY_NAME,
+                     "url": branding.PUBLIC_APP_URL},
+    }
+
+
+def _seo_breadcrumb(name, path):
+    """Two-level breadcrumb (Home > current page)."""
+    return {
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+            {"@type": "ListItem", "position": 1, "name": "Home",
+             "item": branding.PUBLIC_APP_URL + "/"},
+            {"@type": "ListItem", "position": 2, "name": name,
+             "item": _seo_url(path)},
+        ],
+    }
+
+
+def _seo_faq(pairs):
+    """FAQPage schema from a list of (question, answer) tuples."""
+    return {
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "mainEntity": [
+            {"@type": "Question", "name": q,
+             "acceptedAnswer": {"@type": "Answer", "text": a}}
+            for q, a in pairs
+        ],
+    }
+
+
+@app.route("/pclaw-to-quickbooks-online-migration")
+def pclaw_to_qbo_migration_guide():
+    """Pillar page: the complete PCLaw -> QuickBooks Online migration guide."""
+    path = "/pclaw-to-quickbooks-online-migration"
+    faq = _seo_faq([
+        ("Can our historical trust activity come across?",
+         "Trust records are handled with extra care and reconciled rather than "
+         "bulk-posted. What can move depends on the reports your firm has; we "
+         "review this on the discovery call."),
+        ("Does QuickBooks Online do trust accounting like PCLaw?",
+         "QuickBooks Online is a general accounting platform, not a legal-specific "
+         "trust system. Trust balances can be represented and reconciled, but your "
+         "accountant or compliance advisor should confirm the setup meets your "
+         "obligations."),
+        ("What happens if something posts incorrectly?",
+         "Imports are designed to be reviewable and reversible. If a batch looks "
+         "wrong, it can be reversed as auditable offsetting activity in QuickBooks."),
+        ("How much does a migration cost?",
+         "Every migration is a little different, so we scope it and give you a "
+         "clear quote on the discovery call, before any work begins."),
+        ("What reports do we need?",
+         "Typically a General Ledger, Chart of Accounts, Trial Balance, and any "
+         "trust listings, plus A/R and A/P detail. We confirm exactly what is "
+         "needed for your firm on the call."),
+    ])
+    return render_template(
+        "seo/pclaw-to-quickbooks-online-migration.html",
+        structured_data=[
+            _seo_organization(),
+            _seo_breadcrumb("PCLaw to QuickBooks Online migration", path),
+            faq,
+        ],
+    )
+
+
+@app.route("/pc-law-to-quickbooks-migration")
+def pc_law_to_qb_migration():
+    """Commercial service page for firms searching the exact migration."""
+    path = "/pc-law-to-quickbooks-migration"
+    return render_template(
+        "seo/pc-law-to-quickbooks-migration.html",
+        structured_data=[
+            _seo_service(
+                "PC Law to QuickBooks migration",
+                "Done-for-you migration of PC Law accounting data into "
+                "QuickBooks for law firms, with structured review and "
+                "reconciliation.",
+                path,
+            ),
+            _seo_breadcrumb("PC Law to QuickBooks migration", path),
+        ],
+    )
+
+
+@app.route("/law-firm-accounting-migration")
+def law_firm_accounting_migration():
+    """Broader service page for legal / cloud accounting migration searches."""
+    path = "/law-firm-accounting-migration"
+    return render_template(
+        "seo/law-firm-accounting-migration.html",
+        structured_data=[
+            _seo_service(
+                "Law firm accounting migration",
+                "Guided, reviewed migration of legacy law firm accounting data "
+                "into modern cloud workflows.",
+                path,
+            ),
+            _seo_breadcrumb("Law firm accounting migration", path),
+        ],
+    )
+
+
+@app.route("/trust-accounting-migration")
+def trust_accounting_migration():
+    """Trust-focused educational page; builds credibility, careful disclaimer."""
+    path = "/trust-accounting-migration"
+    return render_template(
+        "seo/trust-accounting-migration.html",
+        structured_data=[
+            _seo_service(
+                "Trust accounting migration",
+                "A careful, reviewed process for trust-related migration "
+                "records: balances, ledgers, and cutover planning for law firms.",
+                path,
+            ),
+            _seo_breadcrumb("Trust accounting migration", path),
+        ],
+    )
+
+
+@app.route("/partners")
+def partners_page():
+    """Vendor / implementation-team page positioning Cutovr as a partner."""
+    path = "/partners"
+    return render_template(
+        "seo/partners.html",
+        structured_data=[
+            _seo_organization(),
+            _seo_service(
+                "Legal software migration partner",
+                "Cutovr handles law firm accounting migration workflows for "
+                "legal software vendors and implementation teams to reduce "
+                "onboarding friction.",
+                path,
+            ),
+            _seo_breadcrumb("For partners", path),
+        ],
+    )
 
 
 # Per-IP rate limiter for the public quote-request form, so the same

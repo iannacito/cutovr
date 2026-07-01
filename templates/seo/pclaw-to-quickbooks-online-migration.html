@@ -1,0 +1,162 @@
+{% extends "_base.html" %}
+{% import "_seo_macros.html" as seo %}
+{% block title %}PCLaw to QuickBooks Online Migration: The Complete Guide (2026){% endblock %}
+{% block meta_description %}Everything a law firm needs to know before moving from PCLaw to QuickBooks Online &mdash; trust accounting, data mapping, timelines, and how to avoid costly mistakes.{% endblock %}
+{% block content %}
+
+<section class="page page--prose" data-testid="seo-pillar-page">
+  <nav class="eyebrow" aria-label="Breadcrumb">
+    <a href="{{ url_for('index') }}">Home</a> &rsaquo; PCLaw to QuickBooks Online migration
+  </nav>
+  <h1 class="display">The Complete Guide to Migrating from PCLaw to QuickBooks Online</h1>
+  <p class="landing-hero__lede">
+    If your firm still runs its books on PCLaw, you have probably asked the
+    same question many firms are asking: where do we move our books, and how
+    do we do it without breaking anything?
+  </p>
+  <p>
+    For most businesses, switching accounting software is merely inconvenient.
+    For a law firm, it is higher stakes. Your books may include client trust
+    accounts, matter-level receivables, vendor records, opening balances, and
+    years of transaction history that all need to stay understandable after
+    the move. This guide explains what has to happen for a clean move from
+    PCLaw (also written &ldquo;PC Law&rdquo;) to QuickBooks Online, what data
+    actually needs to move, why legal accounting migrations are different, and
+    what to ask before choosing a migration partner.
+  </p>
+  <div style="margin:var(--space-5) 0;">{{ seo.discovery_button(testid='pillar-book-top') }}</div>
+
+  <h2>Why firms leave PCLaw</h2>
+  <p>
+    Firms rarely leave PCLaw on a whim. The move is usually driven by a few
+    quiet, accumulating pressures rather than a single event:
+  </p>
+  <ul class="secure-list">
+    <li><strong>Support and roadmap uncertainty.</strong> Firms want long-term confidence that their accounting platform will keep pace.</li>
+    <li><strong>Desktop and staffing friction.</strong> Desktop-bound software is harder to staff, back up, and access remotely.</li>
+    <li><strong>Cloud access and remote bookkeeping.</strong> Modern firms want their bookkeeper, accountant, and admins working from the same live data.</li>
+    <li><strong>A wider tool ecosystem.</strong> QuickBooks Online connects to the apps, banks, and reporting tools firms increasingly rely on.</li>
+  </ul>
+  <p>
+    None of this means you need to panic. It means you should plan the move
+    deliberately rather than rushing an export the week you decide to switch.
+  </p>
+
+  <h2>Why law firm migrations differ from a normal accounting switch</h2>
+  <p>
+    A typical small business moves a chart of accounts and some history and is
+    done. A law firm carries obligations that a generic import ignores:
+  </p>
+  <ul class="secure-list">
+    <li><strong>Trust / retainer liability.</strong> Client trust funds are not firm revenue. They sit against a liability and must reconcile to the penny.</li>
+    <li><strong>Matter-level accounting.</strong> Receivables and activity are tracked by client and matter, not just by customer.</li>
+    <li><strong>Historical trust activity.</strong> Past trust movement often needs to remain visible and traceable after the switch.</li>
+    <li><strong>Opening balances that must tie out.</strong> Trial balance figures become the starting point QuickBooks reconciles against later.</li>
+  </ul>
+  <p>
+    This is why a migration is more than an import tool running a file. The
+    accounting realities of a law firm&rsquo;s books have to be respected on
+    the way across.
+  </p>
+
+  <h2>What actually moves</h2>
+  <div class="grid-two" style="margin-top:var(--space-4);">
+    <article class="card"><h3>Transaction history</h3><p>Your General Ledger, prepared and reviewed before it posts to QuickBooks as journal entries.</p></article>
+    <article class="card"><h3>Chart of accounts</h3><p>Matched against your QuickBooks accounts, with a side-by-side preview before anything is created.</p></article>
+    <article class="card"><h3>Starting balances</h3><p>Parsed from your trial balance to seed opening balances and to check the books later.</p></article>
+    <article class="card"><h3>Trust listings</h3><p>Reconciled against trust liability and trust bank totals. Handled with extra care, never posted automatically.</p></article>
+    <article class="card"><h3>Client &amp; matter A/R</h3><p>Customers are created in QuickBooks as receivable lines post.</p></article>
+    <article class="card"><h3>Vendor A/P</h3><p>Vendors are created in QuickBooks as payable lines post.</p></article>
+    <article class="card"><h3>Bank balances</h3><p>Operating and trust bank totals are spot-checked during reconciliation.</p></article>
+    <article class="card"><h3>Final reconciliation</h3><p>A side-by-side balance check at switchover so every dollar is accounted for.</p></article>
+  </div>
+
+  <h2>Consultant-led vs. done-for-you</h2>
+  <p class="muted">
+    A consultant can be the right choice for genuinely unusual books. For most
+    firms, the key difference is time and operational burden &mdash; how much of
+    the work lands on your team.
+  </p>
+  <div class="landing-compare" data-testid="pillar-compare">
+    <article class="landing-compare__col landing-compare__col--old">
+      <p class="kicker">Consultant-led</p>
+      <ul>
+        <li>Weeks of meetings, file exchanges, and review cycles.</li>
+        <li>Hand-built spreadsheets and one-off scripts.</li>
+        <li>Your team coordinates; the clock keeps billing.</li>
+        <li>Fixing a bad post means more billable hours.</li>
+      </ul>
+    </article>
+    <article class="landing-compare__col landing-compare__col--new">
+      <p class="kicker">Done-for-you with Cutovr</p>
+      <ul>
+        <li>One discovery call scopes the whole migration.</li>
+        <li>Our team does the work &mdash; your firm doesn&rsquo;t run an import.</li>
+        <li>Every step is reviewed by people before it posts.</li>
+        <li>Imports post as auditable entries that can be reversed.</li>
+      </ul>
+    </article>
+  </div>
+
+  <h2>Reversibility and traceability: the risk nobody talks about</h2>
+  <p>
+    The migration risk firms rarely discuss is what happens when something is
+    wrong. A migration you cannot unwind is a migration you have to get
+    perfect on the first attempt. That is a lot to ask of a legal accounting
+    move. The safer posture is to treat reversibility and traceability as
+    requirements, not luxuries:
+  </p>
+  <ul class="secure-list">
+    <li><strong>Reviewable before it posts.</strong> Nothing should land in QuickBooks silently &mdash; you should see it first.</li>
+    <li><strong>Traceable after it posts.</strong> Each entry should carry enough context to tie it back to its PCLaw source.</li>
+    <li><strong>Reversible when needed.</strong> Ask exactly how a bad batch gets undone, and what QuickBooks shows afterward.</li>
+  </ul>
+  <p class="muted">
+    Confirm the precise mechanics with any partner before you rely on them.
+    The point is to insist the capability exists and to understand how it works.
+  </p>
+
+  <h2>A realistic timeline</h2>
+  <ol class="landing-steps">
+    <li class="landing-step"><span class="landing-step__num">01</span><div><h3>Discovery call</h3><p>We review what you&rsquo;re moving and the reports you have.</p></div></li>
+    <li class="landing-step"><span class="landing-step__num">02</span><div><h3>Quote &amp; scoping</h3><p>You get a clear quote before any work begins.</p></div></li>
+    <li class="landing-step"><span class="landing-step__num">03</span><div><h3>Migration &amp; matching</h3><p>We prepare, match, and post your data with review at each step.</p></div></li>
+    <li class="landing-step"><span class="landing-step__num">04</span><div><h3>Reconciliation &amp; switchover</h3><p>A final side-by-side balance check confirms everything landed cleanly.</p></div></li>
+  </ol>
+  <p class="muted">
+    Every firm&rsquo;s books are a little different, so we scope the timeline
+    on the call rather than promising a fixed number of days up front.
+  </p>
+
+  <h2>Questions to ask before choosing a migration partner</h2>
+  <ul class="secure-list">
+    <li>How is our data encrypted and who can access it?</li>
+    <li>Do we review entries before they post to QuickBooks?</li>
+    <li>How are mistakes reversed, and what does QuickBooks show afterward?</li>
+    <li>Is there a final reconciliation so every balance ties out?</li>
+    <li>Do we stay in control of the QuickBooks connection and can we disconnect any time?</li>
+    <li>Will we get a clear quote before work begins?</li>
+  </ul>
+
+  <h2>Frequently asked questions</h2>
+  <div class="stack" data-testid="pillar-faq">
+    <article class="card"><h3>Can our historical trust activity come across?</h3><p>Trust records are handled with extra care and reconciled rather than bulk-posted. What can move depends on the reports your firm has; we review this on the discovery call. See the <a href="{{ url_for('trust_accounting_migration') }}">trust accounting migration page</a> for how we approach these records.</p></article>
+    <article class="card"><h3>Does QuickBooks Online do trust accounting like PCLaw?</h3><p>QuickBooks Online is a general accounting platform, not a legal-specific trust system. Trust balances can be represented and reconciled, but your accountant or compliance advisor should confirm the setup meets your obligations.</p></article>
+    <article class="card"><h3>What happens if something posts incorrectly?</h3><p>Imports are designed to be reviewable and reversible. If a batch looks wrong, it can be reversed as auditable offsetting activity in QuickBooks. Confirm the exact mechanics with us before relying on them.</p></article>
+    <article class="card"><h3>How much does a migration cost?</h3><p>Every migration is a little different, so we scope it and give you a clear quote on the discovery call &mdash; before any work begins.</p></article>
+    <article class="card"><h3>What reports do we need?</h3><p>Typically a General Ledger, Chart of Accounts, Trial Balance, and any trust listings, plus A/R and A/P detail. We&rsquo;ll confirm exactly what&rsquo;s needed for your firm on the call.</p></article>
+  </div>
+
+  <p style="margin-top:var(--space-5);">
+    Related: <a href="{{ url_for('pc_law_to_qb_migration') }}">PC Law to QuickBooks migration service</a>,
+    <a href="{{ url_for('law_firm_accounting_migration') }}">law firm accounting migration</a>,
+    <a href="{{ url_for('trust_accounting_migration') }}">trust accounting migration</a>, and
+    <a href="{{ url_for('partners_page') }}">for partners</a>.
+  </p>
+</section>
+
+{{ seo.cta_block('Ready to see what your migration actually looks like?',
+   'Book a discovery call. We&rsquo;ll review your reports and trust accounting, then give you a clear quote with no guesswork.',
+   testid='pillar-cta') }}
+
+{% endblock %}

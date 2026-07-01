@@ -1,0 +1,55 @@
+{% extends "_base.html" %}
+{% import "_seo_macros.html" as seo %}
+{% block title %}Law firm accounting migration services | {{ app_name }}{% endblock %}
+{% block meta_description %}{{ app_name }} helps law firms move legacy accounting data into modern cloud workflows with a guided, reviewed migration process.{% endblock %}
+{% block content %}
+
+<section class="page page--prose" data-testid="seo-broader-page">
+  <nav class="eyebrow" aria-label="Breadcrumb">
+    <a href="{{ url_for('index') }}">Home</a> &rsaquo; Law firm accounting migration
+  </nav>
+  <h1 class="display">Law firm accounting migration <em>without the operational headache.</em></h1>
+  <p class="landing-hero__lede">
+    Whether you&rsquo;re leaving a desktop legacy system or consolidating onto
+    cloud accounting, moving a law firm&rsquo;s books takes more than a generic
+    import. We handle the move with structured review at every step.
+  </p>
+  <div style="margin:var(--space-5) 0;">{{ seo.discovery_button(testid='broader-book-top') }}</div>
+
+  <h2>Built for legal accounting, not generic books</h2>
+  <p>
+    Legal accounting carries obligations most migrations ignore: trust-related
+    balances, matter-level receivables, opening balances that must tie out, and
+    history that has to stay understandable. We move legacy data into modern,
+    cloud-based workflows while respecting those realities.
+  </p>
+  <div class="grid-three landing-trust">
+    <article class="card"><h3>Legacy systems, handled</h3><p>Coming off a desktop or older platform? We prepare the reports you have and map them cleanly.</p></article>
+    <article class="card"><h3>Cloud-ready workflows</h3><p>Land your books in QuickBooks Online so your team, bookkeeper, and accountant share live data.</p></article>
+    <article class="card"><h3>Opening balances that tie out</h3><p>Trial balance figures seed your starting point and get checked at reconciliation.</p></article>
+  </div>
+
+  <h2>Structured review, start to finish</h2>
+  <ol class="landing-steps">
+    <li class="landing-step"><span class="landing-step__num">01</span><div><h3>Discovery call</h3><p>We review your current system and the reports you can export.</p></div></li>
+    <li class="landing-step"><span class="landing-step__num">02</span><div><h3>Scope &amp; quote</h3><p>A clear quote before any work begins.</p></div></li>
+    <li class="landing-step"><span class="landing-step__num">03</span><div><h3>Migration &amp; review</h3><p>Data is prepared, matched, and posted with review at each step &mdash; nothing lands silently.</p></div></li>
+    <li class="landing-step"><span class="landing-step__num">04</span><div><h3>Reconciliation</h3><p>A final balance check so every dollar is accounted for.</p></div></li>
+  </ol>
+
+  <p style="margin-top:var(--space-5);">
+    Specifically moving off PC Law? See the
+    <a href="{{ url_for('pc_law_to_qb_migration') }}">PC Law to QuickBooks migration service</a>
+    or the <a href="{{ url_for('pclaw_to_qbo_migration_guide') }}">complete migration guide</a>.
+    Handling client funds? Read about
+    <a href="{{ url_for('trust_accounting_migration') }}">trust accounting migration</a>.
+  </p>
+</section>
+
+{{ seo.related_pages(current='broader') }}
+
+{{ seo.cta_block('Modernize your firm&rsquo;s books with confidence.',
+   'Book a discovery call. We&rsquo;ll review your migration and give you a clear quote.',
+   testid='broader-cta') }}
+
+{% endblock %}
