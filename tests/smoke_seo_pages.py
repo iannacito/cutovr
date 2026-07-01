@@ -136,6 +136,16 @@ def t6_no_public_pricing():
     print("T6 OK: no public pricing amounts on any SEO page")
 
 
+def t7_readability_layout_hook():
+    # The `seo-page` class carries the long-form spacing/readability styles.
+    # Guard it so the layout hook can't silently disappear from a page.
+    for path in PAGES:
+        body = _get(path).get_data(as_text=True)
+        assert "page--prose seo-page" in body, \
+            f"{path} missing the 'seo-page' readability layout class"
+    print("T7 OK: every SEO page carries the seo-page readability layout class")
+
+
 if __name__ == "__main__":
     try:
         t1_pages_render_with_title_and_h1()
@@ -144,6 +154,7 @@ if __name__ == "__main__":
         t4_trust_disclaimer()
         t5_brand_safety()
         t6_no_public_pricing()
+        t7_readability_layout_hook()
         print("\nALL SEO-PAGE SMOKE TESTS PASSED")
     finally:
         for path in (APP_DB, HIST_DB):

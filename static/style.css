@@ -853,6 +853,53 @@ details.quiet > *:not(summary) { margin-top: var(--space-3); }
   line-height: 1.6;
 }
 
+/* SEO content pages — long-form prose rhythm --------------------------
+   Scoped to .seo-page (added alongside .page--prose on the SEO routes)
+   so the other prose pages — about, privacy, terms, guides — are left
+   untouched. The goal is calmer vertical rhythm: clear separation
+   between major sections, roomier paragraphs, and lists/cards/tables
+   that don't crowd the surrounding copy. */
+.seo-page > h1 { margin-bottom: var(--space-5); }
+.seo-page > .landing-hero__lede { margin-bottom: var(--space-6); }
+.seo-page > p {
+  margin-bottom: var(--space-4);
+  line-height: 1.75;
+}
+/* Strong breathing room above each new section heading. */
+.seo-page > h2 {
+  margin-top: var(--space-16);
+  margin-bottom: var(--space-5);
+}
+/* A lede/intro line that directly follows a section heading stays close
+   to it, then the block below gets its own spacing. */
+.seo-page > h2 + p.muted { margin-top: calc(-1 * var(--space-2)); }
+.seo-page > ul.secure-list {
+  margin: var(--space-5) 0;
+  gap: var(--space-3);
+}
+.seo-page > ul.secure-list li { line-height: 1.65; }
+/* Card grids, step lists, and the comparison block sit apart from the
+   copy that introduces them. */
+.seo-page > .grid-two,
+.seo-page > .grid-three,
+.seo-page > .landing-steps,
+.seo-page > .landing-compare {
+  margin-top: var(--space-8);
+  margin-bottom: var(--space-4);
+}
+/* Even card padding — drop the trailing paragraph margin inside cards. */
+.seo-page .card > p:last-child { margin-bottom: 0; }
+/* FAQ / stacked cards get a touch more air between items. */
+.seo-page > .stack { margin-top: var(--space-6); gap: var(--space-5); }
+
+@media (max-width: 600px) {
+  .seo-page > h2 { margin-top: var(--space-12); }
+  .seo-page > .grid-two,
+  .seo-page > .grid-three,
+  .seo-page > .landing-steps,
+  .seo-page > .landing-compare { margin-top: var(--space-6); }
+}
+
 /* Final CTA ------------------------------------------------------------ */
 .landing-cta {
   background: var(--ink);

@@ -4,7 +4,7 @@
 {% block meta_description %}{{ app_name }} helps legal software vendors and implementation teams reduce onboarding friction by handling law firm accounting migration workflows.{% endblock %}
 {% block content %}
 
-<section class="page page--prose" data-testid="seo-partners-page">
+<section class="page page--prose seo-page" data-testid="seo-partners-page">
   <nav class="eyebrow" aria-label="Breadcrumb">
     <a href="{{ url_for('index') }}">Home</a> &rsaquo; For partners
   </nav>
@@ -17,7 +17,7 @@
   <div style="margin:var(--space-5) 0;">{{ seo.discovery_button(label='Book a partner discovery call', testid='partners-book-top') }}</div>
 
   <h2>Who we work with</h2>
-  <div class="grid-two" style="margin-top:var(--space-4);">
+  <div class="grid-two">
     <article class="card"><h3>Legal software vendors</h3><p>Practice-management and legal tech platforms whose onboarding touches accounting data.</p></article>
     <article class="card"><h3>Implementation teams</h3><p>Onboarding and professional-services teams who want migration off their plate.</p></article>
     <article class="card"><h3>Clio-adjacent workflows</h3><p>Legal software adoption projects where accounting data needs to move alongside the new platform.</p></article>
