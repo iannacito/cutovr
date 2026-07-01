@@ -296,9 +296,16 @@
             <form action="{{ url_for('hub_remove_job', job_id=job['id']) }}" method="post" style="margin:0"
                   onsubmit="return confirm('Remove this batch locally? This does not affect QBO.');">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button type="submit" class="btn btn-sm"
-                      style="color:var(--error);border-color:transparent;background:transparent;">
-                Remove
+              <button type="submit" class="btn btn-sm" title="Remove batch locally (does not affect QBO)"
+                      style="color:var(--error);border-color:transparent;background:transparent;padding:4px 6px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+                     fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="3 6 5 6 21 6"></polyline>
+                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
+                  <path d="M10 11v6"></path><path d="M14 11v6"></path>
+                  <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path>
+                </svg>
               </button>
             </form>
           </td>
@@ -390,9 +397,16 @@
                   onsubmit="return confirm('Revert this batch? This deletes the posted JEs from QBO.');">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="return_to" value="migration_hub">
-              <button class="btn btn-sm" type="submit"
-                      style="color:var(--error);border-color:transparent;background:transparent;">
-                Revert
+              <button class="btn btn-sm" type="submit" title="Revert — deletes JEs from QBO"
+                      style="color:var(--error);border-color:transparent;background:transparent;padding:4px 6px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+                     fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="3 6 5 6 21 6"></polyline>
+                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
+                  <path d="M10 11v6"></path><path d="M14 11v6"></path>
+                  <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path>
+                </svg>
               </button>
             </form>
           </td>
@@ -467,7 +481,7 @@
                    style="margin-top:var(--space-2);display:block;width:100%;">
           </label>
           <div style="margin-top:var(--space-4);">
-            <button class="btn btn-primary" type="submit">Upload file(s)</button>
+            <button class="btn btn-primary" type="submit" id="upload-submit-btn">Upload file(s)</button>
           </div>
         </form>
       </div>
@@ -520,6 +534,16 @@
     });
   });
 }());
+
+// Upload form: disable submit button after first click to prevent double-submit
+var uploadForm = document.querySelector('form[action*="upload_bulk"]');
+var uploadBtn  = document.getElementById('upload-submit-btn');
+if (uploadForm && uploadBtn) {
+  uploadForm.addEventListener('submit', function () {
+    uploadBtn.disabled = true;
+    uploadBtn.textContent = 'Uploading…';
+  });
+}
 </script>
 
 {% endblock %}
