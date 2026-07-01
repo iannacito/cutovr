@@ -225,6 +225,12 @@
           var panel = document.getElementById("send-to-qbo-progress");
           if (!form || !btn || !panel) { return; }
           form.addEventListener("submit", function (ev) {
+            // When the pre-GL card is present, the pre-GL JS manages submit
+            // interception. It will show the loading panel itself right before
+            // glForm.submit() fires (only after vendors/customers pass).
+            // Showing the panel here would cause it to appear while pre-GL
+            // steps are still running or have failed.
+            if (document.getElementById('init-seq-card')) { return; }
             {% if not qbo_is_sandbox and qbo_real_import %}
               var confirmCompany = {{ (qbo_connection.company_name or 'your QuickBooks Online company')|tojson }};
               if (!window.confirm("Post records to QuickBooks Online company " + confirmCompany + "?")) {
@@ -264,6 +270,8 @@
   var glForm    = document.getElementById('gl-send-form');
   var card      = document.getElementById('init-seq-card');
   var actionMsg = document.getElementById('init-action-msg');
+  var glPanel   = document.getElementById('send-to-qbo-progress');
+  var glBtn     = document.getElementById('send-to-qbo-btn');
   var pollTimer = null;
 
   var LABEL = {
@@ -320,6 +328,9 @@
         updateUI(data);
         if (data.overall === 'ready_for_gl') {
           clearInterval(pollTimer);
+          glPanel.style.display = 'block';
+          glBtn.disabled = true;
+          glBtn.textContent = 'Sending your data to QuickBooks…';
           if (glForm) { glForm.submit(); }
         } else if (['failed', 'done'].indexOf(data.overall) >= 0) {
           clearInterval(pollTimer);
@@ -373,6 +384,9 @@
       .then(function (data) {
         updateUI(data);
         if (data.overall === 'ready_for_gl') {
+          glPanel.style.display = 'block';
+          glBtn.disabled = true;
+          glBtn.textContent = 'Sending your data to QuickBooks…';
           glForm.removeEventListener('submit', submitHandler);
           glForm.submit();
         } else if (data.overall === 'failed') {
