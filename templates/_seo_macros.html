@@ -1,0 +1,73 @@
+{# Shared building blocks for the SEO content pages. Keeps the primary
+   "Book a discovery call" CTA and internal-link cards consistent across
+   the pillar, service, trust, and partner pages without duplicating markup.
+
+   discovery_call_href / discovery_call_is_external come from the global
+   context processor in app.py (Calendly link, or the in-app request form
+   fallback), so every CTA below stays on the branded booking flow. #}
+
+{% macro discovery_attrs() -%}
+href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_blank" rel="noopener"{% endif %}
+{%- endmacro %}
+
+{% macro discovery_button(label='Book a discovery call', testid='seo-book-discovery', size='btn-lg') -%}
+<a class="btn btn-primary {{ size }}" {{ discovery_attrs() }} data-testid="{{ testid }}">{{ label }}</a>
+{%- endmacro %}
+
+{% macro cta_block(title, lede, testid='seo-cta') -%}
+<section class="landing-cta" data-testid="{{ testid }}">
+  <div class="landing-cta__inner">
+    <p class="eyebrow">Ready when you are</p>
+    <h2 class="display landing-cta__title">{{ title }}</h2>
+    <p class="landing-cta__lede">{{ lede }}</p>
+    <div class="landing-cta__buttons">
+      {{ discovery_button(testid=testid ~ '-book') }}
+      <a class="btn btn-link btn-lg" href="{{ url_for('quote_request') }}">Send migration details</a>
+    </div>
+    <p class="note landing-cta__footnote">
+      Questions before you book? <a href="{{ url_for('support') }}">Contact support</a>.
+    </p>
+  </div>
+</section>
+{%- endmacro %}
+
+{% macro related_pages(current='') -%}
+<section class="landing-section" data-testid="seo-related-pages" aria-label="Related pages">
+  <div class="landing-section__inner">
+    <p class="eyebrow">Keep reading</p>
+    <h2 class="h-serif landing-section__title">Explore the rest of the guide.</h2>
+    <div class="grid-three landing-trust">
+      {% if current != 'pillar' %}
+      <article class="card">
+        <h3><a href="{{ url_for('pclaw_to_qbo_migration_guide') }}">The complete PCLaw &rarr; QuickBooks guide</a></h3>
+        <p class="muted">What moves, why legal migrations differ, timelines, and the questions to ask.</p>
+      </article>
+      {% endif %}
+      {% if current != 'service' %}
+      <article class="card">
+        <h3><a href="{{ url_for('pc_law_to_qb_migration') }}">PC Law to QuickBooks migration</a></h3>
+        <p class="muted">The done-for-you service for firms ready to move off PC Law.</p>
+      </article>
+      {% endif %}
+      {% if current != 'broader' %}
+      <article class="card">
+        <h3><a href="{{ url_for('law_firm_accounting_migration') }}">Law firm accounting migration</a></h3>
+        <p class="muted">Moving legacy legal accounting data into modern cloud workflows.</p>
+      </article>
+      {% endif %}
+      {% if current != 'trust' %}
+      <article class="card">
+        <h3><a href="{{ url_for('trust_accounting_migration') }}">Trust accounting migration</a></h3>
+        <p class="muted">How trust-related records are handled with extra care and review.</p>
+      </article>
+      {% endif %}
+      {% if current != 'partners' %}
+      <article class="card">
+        <h3><a href="{{ url_for('partners_page') }}">For partners &amp; vendors</a></h3>
+        <p class="muted">A migration partner for legal software vendors and implementation teams.</p>
+      </article>
+      {% endif %}
+    </div>
+  </div>
+</section>
+{%- endmacro %}

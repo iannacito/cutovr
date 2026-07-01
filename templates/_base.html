@@ -10,6 +10,8 @@
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='icon-512.svg') }}">
   <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}">
   <meta name="theme-color" content="#1f3b5b">
+  <link rel="canonical" href="{% block canonical %}{{ public_app_url }}{{ request.path }}{% endblock %}">
+  {% block head_extra %}{% endblock %}
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -172,6 +174,11 @@
     </section>
   </div>
 
+  {% if structured_data %}
+    {% for obj in structured_data %}
+      <script type="application/ld+json">{{ obj | tojson }}</script>
+    {% endfor %}
+  {% endif %}
   <script src="{{ url_for('static', filename='password-toggle.js') }}" defer></script>
   <script src="{{ url_for('static', filename='support-assistant.js') }}" defer></script>
 </body>

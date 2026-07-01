@@ -1,0 +1,74 @@
+{% extends "_base.html" %}
+{% import "_seo_macros.html" as seo %}
+{% block title %}Trust accounting migration for law firms | {{ app_name }}{% endblock %}
+{% block meta_description %}{{ app_name }} helps law firms approach trust-related migration records with a careful, reviewed process for balances, ledgers, and cutover planning.{% endblock %}
+{% block content %}
+
+<section class="page page--prose" data-testid="seo-trust-page">
+  <nav class="eyebrow" aria-label="Breadcrumb">
+    <a href="{{ url_for('index') }}">Home</a> &rsaquo; Trust accounting migration
+  </nav>
+  <h1 class="display">Trust-related migration records <em>deserve extra care.</em></h1>
+  <p class="landing-hero__lede">
+    Client trust funds are not firm money, and the records that track them
+    carry obligations a generic import can&rsquo;t see. When trust-related data
+    is part of a migration, it gets a careful, reviewed process &mdash; never a
+    silent bulk post.
+  </p>
+
+  <div class="card card--inset" data-testid="trust-disclaimer" style="margin:var(--space-5) 0;border-left:3px solid var(--color-accent, #1f3b5b);">
+    <p style="margin:0;">
+      <strong>Please note:</strong> {{ app_name }} is a migration service, not
+      your compliance authority. Your firm should rely on its own accountant,
+      bookkeeper, and compliance or bar-association advisor to determine your
+      trust accounting obligations and to confirm that any migrated setup meets
+      them. Nothing on this page is legal, accounting, or compliance advice.
+    </p>
+  </div>
+
+  <div style="margin:var(--space-5) 0;">{{ seo.discovery_button(testid='trust-book-top') }}</div>
+
+  <h2>What we look at with trust-related records</h2>
+  <div class="grid-two" style="margin-top:var(--space-4);">
+    <article class="card"><h3>Trust listings</h3><p>Client-by-client trust balances, reconciled against your trust liability and trust bank totals.</p></article>
+    <article class="card"><h3>Trust ledger detail</h3><p>The underlying activity that supports each balance, kept traceable through the move.</p></article>
+    <article class="card"><h3>Trial balance reports</h3><p>Used to check that trust liability and trust bank figures agree before and after.</p></article>
+    <article class="card"><h3>Client &amp; matter records</h3><p>So trust balances stay tied to the right client and matter in QuickBooks.</p></article>
+  </div>
+
+  <h2>Why professional review matters</h2>
+  <p>
+    QuickBooks Online is a general accounting platform, not a legal-specific
+    trust system. Trust balances can be represented and reconciled within it,
+    but how they should be structured depends on your jurisdiction and your
+    firm&rsquo;s policies. That is a judgment for your accountant or compliance
+    advisor &mdash; not something a migration should decide for you.
+  </p>
+  <ul class="secure-list">
+    <li><strong>Reconciled, not assumed.</strong> Trust figures are checked against liability and bank totals rather than posted on faith.</li>
+    <li><strong>Reviewed before it posts.</strong> Trust-related entries are surfaced for review; nothing lands silently.</li>
+    <li><strong>Traceable afterward.</strong> Entries carry context so your reviewer can follow them back to the source.</li>
+  </ul>
+
+  <h2>Cutover planning</h2>
+  <p>
+    We plan trust-related steps around your switchover date so balances agree
+    at the moment you go live, and so your compliance reviewer can sign off on
+    the result. We scope this with you on the discovery call rather than
+    assuming a one-size-fits-all approach.
+  </p>
+
+  <p style="margin-top:var(--space-5);">
+    For the wider picture, read the
+    <a href="{{ url_for('pclaw_to_qbo_migration_guide') }}">complete PCLaw to QuickBooks Online migration guide</a>
+    or the <a href="{{ url_for('pc_law_to_qb_migration') }}">PC Law to QuickBooks migration service</a>.
+  </p>
+</section>
+
+{{ seo.related_pages(current='trust') }}
+
+{{ seo.cta_block('Talk through your trust-related records with us.',
+   'Book a discovery call. We&rsquo;ll review your reports and plan a careful cutover &mdash; then quote it.',
+   testid='trust-cta') }}
+
+{% endblock %}

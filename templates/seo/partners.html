@@ -1,0 +1,61 @@
+{% extends "_base.html" %}
+{% import "_seo_macros.html" as seo %}
+{% block title %}Legal software migration partner for vendors | {{ app_name }}{% endblock %}
+{% block meta_description %}{{ app_name }} helps legal software vendors and implementation teams reduce onboarding friction by handling law firm accounting migration workflows.{% endblock %}
+{% block content %}
+
+<section class="page page--prose" data-testid="seo-partners-page">
+  <nav class="eyebrow" aria-label="Breadcrumb">
+    <a href="{{ url_for('index') }}">Home</a> &rsaquo; For partners
+  </nav>
+  <h1 class="display">A migration partner for <em>legal software vendors.</em></h1>
+  <p class="landing-hero__lede">
+    Deals stall when a firm&rsquo;s old accounting data is hard to move. We
+    handle the legal accounting migration so your onboarding doesn&rsquo;t get
+    stuck on legacy books.
+  </p>
+  <div style="margin:var(--space-5) 0;">{{ seo.discovery_button(label='Book a partner discovery call', testid='partners-book-top') }}</div>
+
+  <h2>Who we work with</h2>
+  <div class="grid-two" style="margin-top:var(--space-4);">
+    <article class="card"><h3>Legal software vendors</h3><p>Practice-management and legal tech platforms whose onboarding touches accounting data.</p></article>
+    <article class="card"><h3>Implementation teams</h3><p>Onboarding and professional-services teams who want migration off their plate.</p></article>
+    <article class="card"><h3>Clio-adjacent workflows</h3><p>Legal software adoption projects where accounting data needs to move alongside the new platform.</p></article>
+    <article class="card"><h3>Accounting consultants</h3><p>Bookkeepers and consultants who&rsquo;d rather refer the heavy migration work than run it.</p></article>
+  </div>
+
+  <h2>The problem we solve for you</h2>
+  <p>
+    When a law firm adopts new legal software, the accounting data from a
+    legacy system is often the slowest, riskiest part of onboarding. It stalls
+    go-lives, absorbs your team&rsquo;s time, and creates support tickets that
+    have nothing to do with your product. We take that workstream off your
+    plate with a guided, reviewed migration.
+  </p>
+  <div class="grid-three landing-trust">
+    <article class="card"><h3>Faster onboarding</h3><p>Legacy accounting data stops being the bottleneck to a customer going live.</p></article>
+    <article class="card"><h3>Less support load</h3><p>Migration questions route to a specialist instead of your implementation team.</p></article>
+    <article class="card"><h3>Reviewed &amp; reversible</h3><p>Every step is reviewed before it posts, and imports can be reversed &mdash; so your customers stay confident.</p></article>
+  </div>
+
+  <h2>How partnering works</h2>
+  <ol class="landing-steps">
+    <li class="landing-step"><span class="landing-step__num">01</span><div><h3>Partner discovery call</h3><p>We learn how your onboarding works and where accounting data slows it down.</p></div></li>
+    <li class="landing-step"><span class="landing-step__num">02</span><div><h3>A clean referral path</h3><p>We agree how firms reach us so the handoff is smooth for your team and theirs.</p></div></li>
+    <li class="landing-step"><span class="landing-step__num">03</span><div><h3>We handle the migration</h3><p>Your customers get a reviewed, reversible migration; you get faster go-lives.</p></div></li>
+  </ol>
+
+  <p style="margin-top:var(--space-5);">
+    Want the firm-facing detail? See
+    <a href="{{ url_for('law_firm_accounting_migration') }}">law firm accounting migration</a>
+    and the <a href="{{ url_for('pclaw_to_qbo_migration_guide') }}">complete migration guide</a>.
+  </p>
+</section>
+
+{{ seo.related_pages(current='partners') }}
+
+{{ seo.cta_block('Let&rsquo;s make legacy accounting data a non-issue.',
+   'Book a partner discovery call and we&rsquo;ll map out how ' ~ app_name ~ ' can support your onboarding.',
+   testid='partners-cta') }}
+
+{% endblock %}

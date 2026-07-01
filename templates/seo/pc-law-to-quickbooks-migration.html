@@ -1,0 +1,57 @@
+{% extends "_base.html" %}
+{% import "_seo_macros.html" as seo %}
+{% block title %}PC Law to QuickBooks migration for law firms | {{ app_name }}{% endblock %}
+{% block meta_description %}{{ app_name }} helps law firms move PC Law accounting data into QuickBooks with a done-for-you process for reports, balances, ledgers, and review.{% endblock %}
+{% block content %}
+
+<section class="page page--prose" data-testid="seo-service-page">
+  <nav class="eyebrow" aria-label="Breadcrumb">
+    <a href="{{ url_for('index') }}">Home</a> &rsaquo; PC Law to QuickBooks migration
+  </nav>
+  <h1 class="display">PC Law to QuickBooks migration, <em>handled for your firm.</em></h1>
+  <p class="landing-hero__lede">
+    Moving off PC Law shouldn&rsquo;t mean weeks of meetings and spreadsheets.
+    We prepare, match, post, and reconcile your accounting data into
+    QuickBooks &mdash; and you review it, not run it.
+  </p>
+  <div style="margin:var(--space-5) 0;">{{ seo.discovery_button(testid='service-book-top') }}</div>
+
+  <h2>What we move</h2>
+  <p class="muted">A firm&rsquo;s books are more than one file. We handle the records that actually have to come across.</p>
+  <div class="grid-two" style="margin-top:var(--space-4);">
+    <article class="card"><h3>Chart of accounts</h3><p>Matched to your QuickBooks accounts with a side-by-side preview before anything is created.</p></article>
+    <article class="card"><h3>Trial balances</h3><p>Parsed and totaled to seed opening balances and to verify the books later.</p></article>
+    <article class="card"><h3>General ledgers</h3><p>Reviewed, then posted as journal entries &mdash; not dumped in blind.</p></article>
+    <article class="card"><h3>Vendor &amp; customer lists</h3><p>Vendors and clients are created in QuickBooks as A/P and A/R lines post.</p></article>
+    <article class="card"><h3>Trust-related records</h3><p>Where applicable, trust listings are reconciled with extra care. See <a href="{{ url_for('trust_accounting_migration') }}">trust accounting migration</a>.</p></article>
+    <article class="card"><h3>Final reconciliation</h3><p>A balance check at switchover so every dollar is accounted for.</p></article>
+  </div>
+
+  <h2>How the engagement works</h2>
+  <ol class="landing-steps">
+    <li class="landing-step"><span class="landing-step__num">01</span><div><h3>Book a discovery call</h3><p>Share a few details so our team can prepare.</p></div></li>
+    <li class="landing-step"><span class="landing-step__num">02</span><div><h3>We scope &amp; quote it</h3><p>You get a clear quote before any work begins.</p></div></li>
+    <li class="landing-step"><span class="landing-step__num">03</span><div><h3>We handle the migration</h3><p>Prepared, matched, posted, and reviewed &mdash; step by step.</p></div></li>
+    <li class="landing-step"><span class="landing-step__num">04</span><div><h3>You confirm the result</h3><p>A final reconciliation confirms your books tie out.</p></div></li>
+  </ol>
+
+  <h2>Why firms choose done-for-you</h2>
+  <div class="grid-three landing-trust">
+    <article class="card"><h3>Reviewed before it posts</h3><p>Nothing lands in QuickBooks silently. Every step previews first.</p></article>
+    <article class="card"><h3>Auditable &amp; reversible</h3><p>Imports post as auditable entries and can be reversed if something looks wrong.</p></article>
+    <article class="card"><h3>You stay in control</h3><p>You hold the QuickBooks connection and can disconnect at any time.</p></article>
+  </div>
+
+  <p style="margin-top:var(--space-5);">
+    Want the full background first? Read the
+    <a href="{{ url_for('pclaw_to_qbo_migration_guide') }}">complete PCLaw to QuickBooks Online migration guide</a>.
+  </p>
+</section>
+
+{{ seo.related_pages(current='service') }}
+
+{{ seo.cta_block('Move off PC Law without the operational headache.',
+   'Book a discovery call. We&rsquo;ll review what you&rsquo;re moving and quote it on the call.',
+   testid='service-cta') }}
+
+{% endblock %}

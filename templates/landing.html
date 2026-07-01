@@ -1,5 +1,6 @@
 {% extends "_base.html" %}
 {% block title %}{{ app_name }} &mdash; PCLaw to QuickBooks migration, handled for you{% endblock %}
+{% block meta_description %}{{ app_name }} is the done-for-you PC Law / PCLaw to QuickBooks migration service for law firms. Book a discovery call &mdash; we scope, migrate, and reconcile your books so your firm doesn&rsquo;t have to.{% endblock %}
 {% block content %}
 
 {# Reusable discovery-call CTA. discovery_call_href resolves to the in-app
@@ -293,6 +294,41 @@ href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_bla
       <a class="btn btn-primary btn-lg" {{ discovery_attrs() }}
          data-testid="landing-pricing-book-discovery">Book a discovery call</a>
       <a class="btn btn-link btn-lg" href="{{ url_for('pricing') }}">How pricing works &rarr;</a>
+    </div>
+  </div>
+</section>
+
+<!-- Guides & resources (internal links to SEO pages) ----------------- -->
+<section class="landing-section" id="guides" data-testid="landing-guides"
+         aria-label="Guides and resources">
+  <div class="landing-section__inner">
+    <p class="eyebrow">Guides &amp; resources</p>
+    <h2 class="h-serif landing-section__title">Learn how the migration works.</h2>
+    <p class="muted landing-section__lede">
+      Plain-English guides for firms moving off PC Law &mdash; and for the
+      vendors and teams who help them.
+    </p>
+    <div class="grid-three landing-trust" style="margin-top:var(--space-5);">
+      <article class="card">
+        <h3><a href="{{ url_for('pclaw_to_qbo_migration_guide') }}">PCLaw &rarr; QuickBooks: the complete guide</a></h3>
+        <p class="muted">What moves, why legal migrations differ, realistic timelines, and the questions to ask.</p>
+      </article>
+      <article class="card">
+        <h3><a href="{{ url_for('pc_law_to_qb_migration') }}">PC Law to QuickBooks migration</a></h3>
+        <p class="muted">The done-for-you service for firms ready to move their books across.</p>
+      </article>
+      <article class="card">
+        <h3><a href="{{ url_for('trust_accounting_migration') }}">Trust accounting migration</a></h3>
+        <p class="muted">How trust-related records are handled with extra care and review.</p>
+      </article>
+      <article class="card">
+        <h3><a href="{{ url_for('law_firm_accounting_migration') }}">Law firm accounting migration</a></h3>
+        <p class="muted">Moving legacy legal accounting data into modern cloud workflows.</p>
+      </article>
+      <article class="card">
+        <h3><a href="{{ url_for('partners_page') }}">For partners &amp; vendors</a></h3>
+        <p class="muted">A migration partner for legal software vendors and implementation teams.</p>
+      </article>
     </div>
   </div>
 </section>
