@@ -3315,6 +3315,21 @@ def _seo_service(name, description, path):
     }
 
 
+def _seo_article(headline, description, path):
+    """BlogPosting schema for an educational resource article."""
+    return {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": headline,
+        "description": description,
+        "url": _seo_url(path),
+        "author": {"@type": "Organization", "name": branding.COMPANY_NAME,
+                   "url": branding.PUBLIC_APP_URL},
+        "publisher": {"@type": "Organization", "name": branding.COMPANY_NAME,
+                      "url": branding.PUBLIC_APP_URL},
+    }
+
+
 def _seo_breadcrumb(name, path):
     """Two-level breadcrumb (Home > current page)."""
     return {
@@ -3453,6 +3468,36 @@ def partners_page():
 
 
 # ---------------------------------------------------------------------------
+# Public resource / article pages
+#
+# Supporting long-form articles that target high-intent, informational
+# searches (e.g. "what PC Law reports do I need before migrating"). They live
+# under /resources/ and reuse the SEO page layout, CTA, and JSON-LD
+# conventions. Each links back into the pillar/service pages and the discovery
+# call, and carries a light disclaimer that requirements vary by firm.
+# ---------------------------------------------------------------------------
+
+@app.route("/resources/pc-law-reports-needed-for-quickbooks-migration")
+def pc_law_reports_for_migration():
+    """Resource article: the PC Law reports to prepare before a QBO migration."""
+    path = "/resources/pc-law-reports-needed-for-quickbooks-migration"
+    headline = "The PC Law reports you need before a QuickBooks migration"
+    description = (
+        "Which PC Law reports law firms should prepare before a QuickBooks "
+        "migration, including chart of accounts, trial balance, general "
+        "ledger, trust records, and customer/vendor lists."
+    )
+    return render_template(
+        "seo/pc-law-reports-needed-for-quickbooks-migration.html",
+        structured_data=[
+            _seo_article(headline, description, path),
+            _seo_breadcrumb("PC Law reports needed for QuickBooks migration",
+                            path),
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
 # sitemap.xml / robots.txt
 #
 # SITEMAP_PATHS is the curated allow-list of public, indexable pages. It is
@@ -3472,6 +3517,7 @@ SITEMAP_PATHS = [
     "/law-firm-accounting-migration",
     "/trust-accounting-migration",
     "/partners",
+    "/resources/pc-law-reports-needed-for-quickbooks-migration",
     "/pricing",
     "/onboarding",
     "/about",

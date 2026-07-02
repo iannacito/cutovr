@@ -15,6 +15,9 @@ Covers:
   T5 Brand-safety guards: no "trusted by Clio" claims and no fabricated
      SOC 2 / encryption-standard / compliance-certification claims.
   T6 No public pricing amounts leak onto any SEO page.
+  T8 The PC Law reports resource article links back to the pillar, service, and
+     trust pages plus the discovery CTA, carries a "requirements vary" /
+     "not advice" disclaimer, and the homepage links to the article.
 """
 
 import os
@@ -58,7 +61,15 @@ PAGES = {
         "Legal software migration partner for vendors",
         "A migration partner for",
     ),
+    "/resources/pc-law-reports-needed-for-quickbooks-migration": (
+        "PC Law reports needed for QuickBooks migration | Cutovr",
+        "The PC Law reports you need before a QuickBooks migration",
+    ),
 }
+
+# The resource article route; kept as a name so the tests below can be
+# specific about the article's own internal links, disclaimer, and CTA.
+ARTICLE_PATH = "/resources/pc-law-reports-needed-for-quickbooks-migration"
 
 
 def _get(path):
@@ -146,6 +157,34 @@ def t7_readability_layout_hook():
     print("T7 OK: every SEO page carries the seo-page readability layout class")
 
 
+def t8_reports_article():
+    body = _get(ARTICLE_PATH).get_data(as_text=True)
+    # Internal links back into the pillar / service / trust pages.
+    for target in (
+        "/pclaw-to-quickbooks-online-migration",
+        "/pc-law-to-quickbooks-migration",
+        "/trust-accounting-migration",
+    ):
+        assert f'href="{target}"' in body, f"article missing link to {target}"
+    # Discovery CTA falls back to the in-app request form when unset.
+    assert "/pricing/quote-request" in body, "article missing discovery/quote CTA"
+    assert "Book a discovery call" in body, "article missing discovery-call button"
+    # BlogPosting article schema present alongside the breadcrumb.
+    assert '"@type": "BlogPosting"' in body, "article missing BlogPosting JSON-LD"
+    # "Requirements vary" / not-advice disclaimer.
+    assert 'data-testid="article-disclaimer"' in body, "article missing disclaimer block"
+    lowered = re.sub(r"\s+", " ", body.lower())
+    assert "vary by firm" in lowered, "article disclaimer should note requirements vary by firm"
+    assert "not legal, accounting, or compliance advice" in lowered, \
+        "article disclaimer should state it is not professional advice"
+    # No public pricing on the article.
+    assert not re.search(r"\$\s*\d", body), "article must not show pricing amounts"
+    # Homepage links to the article.
+    home = _get("/").get_data(as_text=True)
+    assert f'href="{ARTICLE_PATH}"' in home, "homepage should link to the reports article"
+    print("T8 OK: reports article links back, has BlogPosting schema, disclaimer, no pricing")
+
+
 if __name__ == "__main__":
     try:
         t1_pages_render_with_title_and_h1()
@@ -155,6 +194,7 @@ if __name__ == "__main__":
         t5_brand_safety()
         t6_no_public_pricing()
         t7_readability_layout_hook()
+        t8_reports_article()
         print("\nALL SEO-PAGE SMOKE TESTS PASSED")
     finally:
         for path in (APP_DB, HIST_DB):

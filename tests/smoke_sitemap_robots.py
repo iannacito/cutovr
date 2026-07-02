@@ -44,6 +44,7 @@ PUBLIC_PAGES = [
     "/law-firm-accounting-migration",
     "/trust-accounting-migration",
     "/partners",
+    "/resources/pc-law-reports-needed-for-quickbooks-migration",
     "/about",
     "/security",
     "/support",
