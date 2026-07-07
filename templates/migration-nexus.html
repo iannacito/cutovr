@@ -392,12 +392,11 @@
           <td class="muted" style="font-size:.8rem;">{{ job.get('updated_at', '—') }}</td>
           <td style="text-align:right;display:flex;gap:var(--space-2);justify-content:flex-end;align-items:center;">
             <a href="{{ url_for('job_detail', job_id=job['id']) }}" class="btn btn-sm">View results</a>
-            <form action="{{ url_for('revert_import', job_id=job['id']) }}" method="post"
+            <form action="{{ url_for('hub_remove_job', job_id=job['id']) }}" method="post"
                   style="display:inline"
-                  onsubmit="return confirm('Revert this batch? This deletes the posted JEs from QBO.');">
+                  onsubmit="return confirm('Remove this batch locally? This does not affect QBO.');">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <input type="hidden" name="return_to" value="migration_hub">
-              <button class="btn btn-sm" type="submit" title="Revert — deletes JEs from QBO"
+              <button class="btn btn-sm" type="submit" title="Remove locally (does not affect QBO)"
                       style="color:var(--error);border-color:transparent;background:transparent;padding:4px 6px;">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
                      fill="none" stroke="currentColor" stroke-width="2"
