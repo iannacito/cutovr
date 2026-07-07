@@ -2773,11 +2773,19 @@ def migration_nexus():
             j["hub_ready"] = False
 
     # One-time setup detection
+    # Account-mapping workflow: any GL job at matched/reviewed/completed means
+    # the mapping step ran and QBO accounts exist — treat as COA done.
+    _gl_mapping_done = any(
+        (j.get("report_type") or "general_ledger") == "general_ledger"
+        and j.get("checkpoint") in ("matched", "reviewed", "completed")
+        for j in all_jobs
+    )
     coa_done = (
         any(j.get("report_type") == "chart_of_accounts"
             and j.get("checkpoint") == "completed" for j in all_jobs)
         or any((j.get("report_type") or "general_ledger") == "general_ledger"
                and j.get("checkpoint") == "completed" for j in all_jobs)
+        or _gl_mapping_done
     )
     ob_done     = any(j.get("report_type") == "trial_balance"
                       and bool(j.get("opening_balance_history")) for j in all_jobs)
