@@ -434,12 +434,20 @@
       <div class="hub-setup-card {% if vendor_done %}hub-setup-card--done{% endif %}">
         <div class="hub-setup-card__title">Vendor List</div>
         <div class="hub-setup-card__desc">Entity names for AP lines. Upload once — used by every GL batch.</div>
-        <div class="hub-setup-card__status">{% if vendor_done %}&#10003; Uploaded{% else %}Not yet uploaded{% endif %}</div>
+        <div class="hub-setup-card__status">
+          {% if vendor_pushed %}&#10003; Pushed to QBO
+          {% elif vendor_done %}&#10003; Uploaded (push pending)
+          {% else %}Not yet uploaded{% endif %}
+        </div>
       </div>
       <div class="hub-setup-card {% if client_done %}hub-setup-card--done{% endif %}">
         <div class="hub-setup-card__title">Client List</div>
         <div class="hub-setup-card__desc">Entity names for AR lines. Upload once — used by every GL batch.</div>
-        <div class="hub-setup-card__status">{% if client_done %}&#10003; Uploaded{% else %}Not yet uploaded{% endif %}</div>
+        <div class="hub-setup-card__status">
+          {% if client_pushed %}&#10003; Pushed to QBO
+          {% elif client_done %}&#10003; Uploaded (push pending)
+          {% else %}Not yet uploaded{% endif %}
+        </div>
       </div>
       <div class="hub-setup-card {% if ob_done %}hub-setup-card--done{% endif %}">
         <div class="hub-setup-card__title">Opening Balances</div>

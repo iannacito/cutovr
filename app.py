@@ -2781,8 +2781,18 @@ def migration_nexus():
     )
     ob_done     = any(j.get("report_type") == "trial_balance"
                       and bool(j.get("opening_balance_history")) for j in all_jobs)
-    vendor_done = any(j.get("report_type") == "vendor_list" for j in all_jobs)
-    client_done = any(j.get("report_type") == "customer_list" for j in all_jobs)
+    vendor_done   = any(j.get("report_type") == "vendor_list" for j in all_jobs)
+    vendor_pushed = any(
+        j.get("report_type") == "vendor_list"
+        and j.get("checkpoint") == "completed"
+        for j in all_jobs
+    )
+    client_done   = any(j.get("report_type") == "customer_list" for j in all_jobs)
+    client_pushed = any(
+        j.get("report_type") == "customer_list"
+        and j.get("checkpoint") == "completed"
+        for j in all_jobs
+    )
 
     checkpoint_steps = {
         "uploaded": 1, "parsed": 2, "matched": 3,
@@ -2818,7 +2828,9 @@ def migration_nexus():
         coa_done=coa_done,
         ob_done=ob_done,
         vendor_done=vendor_done,
+        vendor_pushed=vendor_pushed,
         client_done=client_done,
+        client_pushed=client_pushed,
         checkpoint_steps=checkpoint_steps,
         is_dev_mode=os.environ.get("APP_ENV") == "development",
     )
