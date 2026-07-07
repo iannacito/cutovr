@@ -4502,6 +4502,26 @@ def _process_uploaded_csv(
         _existing_for_dup = []
     duplicate_job = find_duplicate_upload(file_sha256, _existing_for_dup)
 
+    # Previously: warn but still create a second job.
+    # Now: return the existing job so no duplicate row appears in Migration Nexus.
+    if duplicate_job is not None:
+        prior_name = (
+            duplicate_job.get("source_file") or duplicate_job.get("id") or "an earlier upload"
+        )
+        return {
+            "ok": True,
+            "job_id": duplicate_job["id"],
+            "report_type": duplicate_job.get("report_type"),
+            "detected": duplicate_job.get("report_type"),
+            "filename": safe_name,
+            "message": (
+                "This file matches one already uploaded. "
+                f"Using the existing batch ({prior_name}) — no duplicate created."
+            ),
+            "category": "warning",
+            "duplicate_of": duplicate_job["id"],
+        }
+
     jobs[job_id] = {
         "id": job_id,
         "firm_id": user["firm_id"],
