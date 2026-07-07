@@ -2799,11 +2799,10 @@ def migration_nexus():
             _has_mappings = bool(db.list_account_mappings(firm_id, _realm)) if _realm else False
             job["tb_ob_posted"]    = _ob_posted
             job["tb_has_mappings"] = _has_mappings
-            # Route to account-mapping first if no mappings yet, otherwise OB post
-            if _has_mappings or _ob_posted:
-                job["tb_next_url"] = url_for("post_ob", job_id=job["id"])
-            else:
-                job["tb_next_url"] = url_for("ob_account_mapping", job_id=job["id"])
+            # Route to post_ob for all TB jobs — ob_account_mapping is not yet
+            # ported to cutovr. Both paths use post_ob until the OB mapping
+            # flow is fully synced in a dedicated session.
+            job["tb_next_url"] = url_for("post_ob", job_id=job["id"])
         else:
             job["tb_next_url"] = None
             job["tb_ob_posted"]    = False
