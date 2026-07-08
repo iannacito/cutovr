@@ -3275,6 +3275,14 @@ def dev_reset_migration():
     user = current_user()
     firm_id = user["firm_id"]
 
+    # Collect realms FIRST — the purge loop below deletes qbo_connections
+    # rows (via db.delete_job), after which the realms are unrecoverable.
+    _realms = {
+        c["realm_id"]
+        for c in db.list_qbo_connections_for_firm(firm_id)
+        if c.get("realm_id")
+    }
+
     qbo_reverted, qbo_failed = 0, 0
     if QBO_REAL_IMPORT:
         firm_job_rows = db.list_jobs_for_firm(firm_id, limit=200)
@@ -3318,6 +3326,15 @@ def dev_reset_migration():
         except Exception as exc:  # noqa: BLE001
             _log.warning("dev_reset_migration: purge failed for %s: %s", row["id"], exc)
 
+    # Purge import history for every realm this firm was connected to, so a
+    # full reset really allows re-importing the same files.
+    hist_deleted = 0
+    for _realm in _realms:
+        try:
+            hist_deleted += history.delete_all_for_firm_realm(_realm)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("dev_reset_migration: history purge failed for realm %s: %s", _realm, exc)
+
     # Belt-and-suspenders: flush any orphaned in-memory state
     keys_to_drop = [k for k, v in list(qbo_connections.items())]
     for k in keys_to_drop:
@@ -3326,26 +3343,27 @@ def dev_reset_migration():
     _audit(
         "dev_migration_reset",
         target_type="firm", target_id=str(firm_id),
-        details=f"qbo_reverted={qbo_reverted} qbo_failed={qbo_failed}",
+        details=f"qbo_reverted={qbo_reverted} qbo_failed={qbo_failed} hist_deleted={hist_deleted}",
     )
 
     if qbo_failed:
         flash(
             f"Reset complete. Reverted {qbo_reverted} QBO batch(es); "
             f"{qbo_failed} could not be removed from QBO — delete them manually. "
-            "All local data cleared.",
+            f"All local data cleared. Cleared {hist_deleted} import-history record(s).",
             "warning",
         )
     else:
         if qbo_reverted:
             flash(
                 f"Reset complete. Reverted {qbo_reverted} QBO batch(es) and "
-                "cleared all local data. Ready for a new run.",
+                f"cleared all local data. Cleared {hist_deleted} import-history record(s). Ready for a new run.",
                 "success",
             )
         else:
             flash(
-                "Reset complete. All local migration data cleared.",
+                f"Reset complete. All local migration data cleared. "
+                f"Cleared {hist_deleted} import-history record(s).",
                 "success",
             )
     return redirect(url_for("migration_nexus"))
@@ -7045,7 +7063,7 @@ def opening_balance_preview(job_id):
             "the migration dashboard, then return to this page.",
             "error",
         )
-        return redirect(url_for("migration_hub"))
+        return redirect(url_for("migration_nexus"))
     if not qbo:
         qbo_error = (
             "Connect QuickBooks to resolve TB accounts and (eventually) "
