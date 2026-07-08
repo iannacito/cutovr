@@ -395,6 +395,14 @@ class AppDB:
         # machine value used to resume a job at the correct step after a
         # refresh / re-login and to drive the operator per-job summary.
         add_col("jobs", "checkpoint TEXT")
+        # Parsed rows for Trial Balance and Trust Listing uploads. Without
+        # persistence the in-memory list lives only on the Gunicorn worker
+        # that handled the upload; a subsequent request routed to the other
+        # worker falls back to _reparse_report_rows(), which silently returns
+        # [] on any exception. Storing them in the DB eliminates the
+        # worker-switch failure mode, mirroring how gl_rows_json works.
+        add_col("jobs", "parsed_trial_balance_json TEXT")
+        add_col("jobs", "parsed_trust_listing_json TEXT")
 
         # cutover_settings: AR/AP migration strategy (Task 4 in the
         # migration-workflow completion PR). Default empty so existing
@@ -828,6 +836,20 @@ class AppDB:
                 if job_dict["auto_balance_rows"]
                 else None
             )
+        if "parsed_trial_balance" in job_dict:
+            fields.append("parsed_trial_balance_json")
+            values.append(
+                json.dumps(job_dict["parsed_trial_balance"])
+                if job_dict["parsed_trial_balance"]
+                else None
+            )
+        if "parsed_trust_listing" in job_dict:
+            fields.append("parsed_trust_listing_json")
+            values.append(
+                json.dumps(job_dict["parsed_trust_listing"])
+                if job_dict["parsed_trust_listing"]
+                else None
+            )
 
         set_clause = ", ".join(f"{f} = ?" for f in fields)
         values.append(job_id)
@@ -892,6 +914,8 @@ class AppDB:
             ("entity_name_blockers_json", "entity_name_blockers"),
             ("opening_balance_history_json", "opening_balance_history"),
             ("auto_balance_rows_json", "auto_balance_rows"),
+            ("parsed_trial_balance_json", "parsed_trial_balance"),
+            ("parsed_trust_listing_json", "parsed_trust_listing"),
         ]:
             v = row[src] if src in row.keys() else None
             if v:
