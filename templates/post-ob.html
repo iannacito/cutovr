@@ -1,0 +1,190 @@
+{% extends "_base.html" %}
+{% block title %}Post Opening Balance — {{ job.company }}{% endblock %}
+{% block content %}
+<section class="page" data-testid="post-ob-page">
+  {% include "_workflow_stepper.html" %}
+
+  <a href="{{ url_for('opening_balance_preview', job_id=job.id) }}" class="back-link">&larr; Back to Step 4: Review</a>
+
+  {% set ob_posted = job.opening_balance_history and job.opening_balance_history | length > 0 %}
+
+  <section class="card" id="post-ob-card">
+    {% if ob_posted %}
+      <p class="eyebrow">Step 5 of 5 · Import</p>
+      <h1 style="color:var(--success);">✓ Opening balance posted.</h1>
+      <p class="muted">
+        Verify in QuickBooks that the opening entry matches your Trial Balance figures.
+      </p>
+
+      {% set last_entry = job.opening_balance_history | last %}
+      <dl style="margin-top:var(--space-3);">
+        <dt>QuickBooks JE ID</dt>
+        <dd>{{ last_entry.qbo_je_id or '(demo)' }}</dd>
+        <dt>As of date</dt>
+        <dd>{{ last_entry.as_of_date }}</dd>
+        <dt>Lines posted</dt>
+        <dd>{{ last_entry.line_count }}</dd>
+        <dt>Total debits</dt>
+        <dd>{{ "%.2f"|format(last_entry.total_debit|float) }}</dd>
+        <dt>Total credits</dt>
+        <dd>{{ "%.2f"|format(last_entry.total_credit|float) }}</dd>
+        <dt>Balanced</dt>
+        <dd>
+          {% if last_entry.total_debit|float == last_entry.total_credit|float %}
+            ✓ Yes
+          {% else %}
+            ✗ No (difference: {{ "%.2f"|format((last_entry.total_debit|float) - (last_entry.total_credit|float)) }})
+          {% endif %}
+        </dd>
+        <dt>Company</dt>
+        <dd>{{ last_entry.company_name or qbo_conn.company_name or '—' }}</dd>
+      </dl>
+
+    {% else %}
+      <p class="eyebrow">Step 5 of 5 · Import</p>
+      <h1>Ready to post Opening Trial Balance</h1>
+      <p class="muted">
+        {% if plan.has_blockers %}
+          Cannot post: there are unresolved issues.
+        {% else %}
+          Nothing is posted until you confirm below.
+        {% endif %}
+      </p>
+
+      {% if plan.has_blockers %}
+        <div class="error-banner" style="margin-top:var(--space-3);">
+          <p><strong>{{ plan.blocker_count }} issue(s) must be resolved first.</strong></p>
+          <p>Return to Step 4 and fix the blockers, then come back to post.</p>
+          <a href="{{ url_for('opening_balance_preview', job_id=job.id) }}" class="btn btn-outline">
+            &larr; Back to Step 4: Review
+          </a>
+        </div>
+      {% else %}
+        <details class="quiet" open style="margin-top:var(--space-3);">
+          <summary>Details</summary>
+          <dl style="margin-top:var(--space-2);">
+            <dt>Company</dt>
+            <dd>
+              {{ qbo_conn.company_name or '(not connected)' }}
+              {% if qbo_real_import == 0 %}
+                <span style="color:var(--warning);font-size:.85rem;"> (Demo mode)</span>
+              {% endif %}
+            </dd>
+            <dt>As of date</dt>
+            <dd>{{ plan.as_of_date }}</dd>
+            <dt>Lines to post</dt>
+            <dd>{{ plan.line_count }}</dd>
+            <dt>Total debits</dt>
+            <dd>{{ "%.2f"|format(plan.total_debit|float) }}</dd>
+            <dt>Total credits</dt>
+            <dd>{{ "%.2f"|format(plan.total_credit|float) }}</dd>
+            <dt>Balanced</dt>
+            <dd>{% if plan.balanced %}✓ Yes{% else %}✗ No{% endif %}</dd>
+          </dl>
+        </details>
+
+        <form method="post" style="margin-top:var(--space-4);">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <p style="margin-bottom:var(--space-3);">
+            <button type="submit" class="btn btn-primary">
+              Post Opening Trial Balance{% if qbo_real_import == 0 %} (demo){% endif %}
+            </button>
+            <a href="{{ url_for('opening_balance_preview', job_id=job.id) }}" class="btn">
+              Cancel
+            </a>
+          </p>
+        </form>
+      {% endif %}
+    {% endif %}
+  </section>
+
+  {% if ob_posted %}
+    {# ── What to do next ──────────────────────────────────────────────── #}
+    <section class="card">
+      <p class="eyebrow">What to do next</p>
+      <h2>Verify the opening entry in QuickBooks</h2>
+      <ol style="margin:var(--space-3) 0 var(--space-4);padding-left:1.5rem;line-height:1.8;">
+        <li>Log in to your QuickBooks company.</li>
+        {% set _je = job.opening_balance_history | last %}
+        <li>Open Journal Entry #{{ _je.qbo_je_id or '(see above)' }}.</li>
+        <li>Compare the balances to your Trial Balance report from PCLaw.</li>
+        <li>If everything matches, you've successfully migrated the opening balances.</li>
+      </ol>
+      <p>
+        <a href="{{ url_for('migration_nexus') }}" class="btn btn-primary">
+          Done &mdash; Back to Migration Nexus &rarr;
+        </a>
+      </p>
+    </section>
+
+    {# ── Posting history ──────────────────────────────────────────────── #}
+    <section class="card">
+      <p class="eyebrow">Posting history</p>
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border);">
+            <th style="text-align:left;padding:var(--space-2);">Date</th>
+            <th style="text-align:left;padding:var(--space-2);">JE ID</th>
+            <th style="text-align:right;padding:var(--space-2);">Lines</th>
+            <th style="text-align:right;padding:var(--space-2);">Debits</th>
+            <th style="text-align:right;padding:var(--space-2);">Credits</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for entry in job.opening_balance_history %}
+            <tr style="border-bottom:1px solid var(--line);">
+              <td style="padding:var(--space-2);">{{ entry.as_of_date }}</td>
+              <td style="padding:var(--space-2);">
+                {% if entry.qbo_je_id %}
+                  {{ entry.qbo_je_id }}
+                {% elif entry.demo_mode %}
+                  (demo)
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+              <td style="text-align:right;padding:var(--space-2);">{{ entry.line_count }}</td>
+              <td style="text-align:right;padding:var(--space-2);">{{ "%.2f"|format(entry.total_debit|float) }}</td>
+              <td style="text-align:right;padding:var(--space-2);">{{ "%.2f"|format(entry.total_credit|float) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    {# ── Revert card ──────────────────────────────────────────────────── #}
+    <section class="card" style="border-color:var(--warning);margin-top:var(--space-4);">
+      <p class="eyebrow" style="color:var(--warning);">Revert</p>
+      <h2>Undo opening balance</h2>
+      <p class="muted" style="margin-top:var(--space-2);">
+        This will delete the opening balance journal entry from QuickBooks and clear
+        the local posting record. Use this if the posted balances were incorrect and
+        you need to re-post after fixing the account mapping.
+      </p>
+      {% set _last = job.opening_balance_history | last %}
+      {% if _last and _last.qbo_je_id %}
+        <p class="muted" style="margin-top:var(--space-2);">
+          JE <strong>#{{ _last.qbo_je_id }}</strong> will be deleted from QuickBooks.
+          This action cannot be undone.
+        </p>
+        <form method="post" action="{{ url_for('revert_ob', job_id=job.id) }}"
+              onsubmit="return confirm('Delete JE #{{ _last.qbo_je_id }} from QuickBooks? This cannot be undone.');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-danger" style="margin-top:var(--space-3);">
+            Delete JE #{{ _last.qbo_je_id }} from QuickBooks
+          </button>
+        </form>
+      {% elif _last and _last.demo_mode %}
+        <form method="post" action="{{ url_for('revert_ob', job_id=job.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-outline" style="margin-top:var(--space-3);">
+            Clear demo posting record
+          </button>
+        </form>
+      {% else %}
+        <p class="muted">Nothing to revert.</p>
+      {% endif %}
+    </section>
+  {% endif %}
+</section>
+{% endblock %}
