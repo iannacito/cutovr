@@ -4,10 +4,10 @@
 <section class="detail-page">
   {% include "_workflow_stepper.html" %}
 
-  <a href="{{ url_for('job_detail', job_id=job.id) }}" class="back-link">&larr; Back to migration</a>
+  <a href="{{ url_for('migration_nexus') }}" class="back-link">&larr; Back to Migration Nexus</a>
 
   <section class="card detail-hero">
-    <p class="eyebrow">Step 4 of 6 &middot; Starting balances</p>
+    <p class="eyebrow" style="margin-top:0;">Opening Balance</p>
     <h1>{{ job.company }}</h1>
     <p class="muted">
       Review the starting balances. Nothing posts to QuickBooks until you
@@ -63,6 +63,11 @@
       <ul>
         {% for b in tb_coa_validation.blockers %}<li>{{ b }}</li>{% endfor %}
       </ul>
+      {% if coa_job_id %}
+        <p>
+          <a class="btn primary" href="{{ url_for('coa_preview', job_id=coa_job_id) }}">Open Chart of Accounts review</a>
+        </p>
+      {% endif %}
     {% endif %}
 
     {% if tb_coa_validation.rows %}
@@ -113,26 +118,6 @@
       </div>
     {% endif %}
   </section>
-  {% endif %}
-
-  {% set last_attempt = (job.opening_balance_history or [])|last %}
-  {% if last_attempt and last_attempt.status == 'failed' %}
-    <section class="card error-panel">
-      <p class="eyebrow">Last attempt didn't post</p>
-      <h2><span class="badge error">Retry needed</span> The opening balance hasn't posted yet</h2>
-      <p>
-        We tried to post your starting balances to QuickBooks but the last
-        attempt didn't go through, so <strong>nothing was created</strong>.
-        Your migration is still on track — review the balances below and try
-        again when you're ready.
-      </p>
-      {% if last_attempt.error %}
-        <p class="muted">Details: {{ last_attempt.error }}</p>
-      {% endif %}
-      {% if last_attempt.intuit_tid %}
-        <p class="muted">Intuit reference: {{ last_attempt.intuit_tid }}</p>
-      {% endif %}
-    </section>
   {% endif %}
 
   <section class="card">
@@ -288,8 +273,6 @@
             credits=${{ h.total_credit }}
             {% if h.qbo_je_id %}
               &middot; JE #{{ h.qbo_je_id }}
-            {% elif h.status == 'failed' %}
-              &middot; <span class="badge error">failed</span>{% if h.error %} ({{ h.error }}){% endif %}
             {% elif h.demo_mode %}
               &middot; demo (not posted)
             {% endif %}
@@ -297,5 +280,6 @@
         {% endfor %}
       </ul>
     </section>
+  {% endif %}
 </section>
 {% endblock %}

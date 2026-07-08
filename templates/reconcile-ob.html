@@ -1,0 +1,77 @@
+{% extends "_base.html" %}
+{% block title %}Reconcile Opening Balance — {{ job.company }}{% endblock %}
+{% block content %}
+<section class="page" data-testid="reconcile-ob-page">
+  {% include "_workflow_stepper.html" %}
+
+  <a href="{{ url_for('migration_nexus') }}" class="back-link">&larr; Back to Migration Nexus</a>
+
+  <section class="card detail-hero">
+    <p class="eyebrow">Step 6 of 6 · Reconcile</p>
+    <h1>Opening balance posted.</h1>
+    <p class="muted">
+      Verify in QuickBooks that the opening entry matches your Trial Balance figures.
+    </p>
+  </section>
+
+  {% if posting %}
+    <section class="card">
+      <p class="eyebrow">Posting details</p>
+      <dl>
+        {% if posting.qbo_je_id %}
+          <dt>QuickBooks JE ID</dt>
+          <dd><strong>{{ posting.qbo_je_id }}</strong></dd>
+        {% elif posting.demo_mode %}
+          <dt>Status</dt>
+          <dd><em>Demo mode — not posted to QuickBooks</em></dd>
+        {% endif %}
+        <dt>As of date</dt>
+        <dd>{{ posting.as_of_date }}</dd>
+        <dt>Lines posted</dt>
+        <dd>{{ posting.line_count }}</dd>
+        <dt>Total debits</dt>
+        <dd>{{ "%.2f"|format(posting.total_debit) }}</dd>
+        <dt>Total credits</dt>
+        <dd>{{ "%.2f"|format(posting.total_credit) }}</dd>
+        <dt>Balanced</dt>
+        <dd>
+          {% if posting.total_debit == posting.total_credit %}
+            ✓ Yes
+          {% else %}
+            ✗ No (difference: {{ "%.2f"|format(posting.total_debit - posting.total_credit) }})
+          {% endif %}
+        </dd>
+        {% if posting.company_name %}
+          <dt>Company</dt>
+          <dd>{{ posting.company_name }}</dd>
+        {% endif %}
+      </dl>
+    </section>
+  {% endif %}
+
+  <section class="card">
+    <p class="eyebrow">What to do next</p>
+    <h2>Verify the opening entry in QuickBooks</h2>
+    <ol style="margin-top:var(--space-3);padding-left:var(--space-4);">
+      <li>Log in to your QuickBooks company.</li>
+      <li>
+        {% if posting.qbo_je_id %}
+          Open Journal Entry #{{ posting.qbo_je_id }}.
+        {% else %}
+          Find the opening balance journal entry.
+        {% endif %}
+      </li>
+      <li>Compare the balances to your Trial Balance report from PCLaw.</li>
+      <li>If everything matches, you've successfully migrated the opening balances.</li>
+    </ol>
+  </section>
+
+  <section class="card">
+    <p style="margin-bottom:var(--space-3);">
+      <a href="{{ url_for('migration_nexus') }}" class="btn btn-primary">
+        Done &rarr; Back to Migration Nexus
+      </a>
+    </p>
+  </section>
+</section>
+{% endblock %}
