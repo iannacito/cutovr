@@ -8882,49 +8882,85 @@ def _import_to_qbo_impl(job_id):
             )
 
     except QBOError as e:
-        job["status"] = "Import failed (QuickBooks error)"
-        job["last_error"] = qbo_error_hint.parse(str(e), intuit_tid=e.intuit_tid)
-        _record_checkpoint(job, job_id, job_checkpoints.NEEDS_ATTENTION)
-        _save_job(job_id)
+        # Always audit — diagnostic even if import already succeeded.
         _audit(
             "import_failed",
             target_type="job",
             target_id=job_id,
             details=_audit_details_with_tid(str(e), e.intuit_tid),
         )
-        hint = job["last_error"]
-        msg = hint["summary"]
-        if hint.get("action"):
-            msg = f"{msg} {hint['action']}"
-        if e.intuit_tid:
-            msg = f"{msg} (Intuit support reference: {e.intuit_tid})"
-        flash(msg, "error")
+        if not job.get("import_summary"):
+            job["status"] = "Import failed (QuickBooks error)"
+            job["last_error"] = qbo_error_hint.parse(str(e), intuit_tid=e.intuit_tid)
+            _record_checkpoint(job, job_id, job_checkpoints.NEEDS_ATTENTION)
+            _save_job(job_id)
+            hint = job["last_error"]
+            msg = hint["summary"]
+            if hint.get("action"):
+                msg = f"{msg} {hint['action']}"
+            if e.intuit_tid:
+                msg = f"{msg} (Intuit support reference: {e.intuit_tid})"
+            flash(msg, "error")
+        else:
+            # Import completed (import_summary saved) — do not overwrite COMPLETED
+            # checkpoint. Log for Render diagnostics only.
+            _log.exception(
+                "import_to_qbo: post-success QBOError for job %s (import_summary set, not overwriting checkpoint)",
+                job_id,
+            )
+            flash(
+                "Your previous import is already saved in QuickBooks — its status is unchanged. "
+                "A later step hit an error; no action needed unless your totals look wrong.",
+                "info",
+            )
     except ValueError as e:
-        job["status"] = "Import failed (validation)"
-        job["last_error"] = {
-            "summary": str(e),
-            "action": None,
-            "technical_detail": str(e),
-            "status_code": None,
-            "intuit_tid": None,
-        }
-        _record_checkpoint(job, job_id, job_checkpoints.NEEDS_ATTENTION)
-        _save_job(job_id)
         _audit("import_failed", target_type="job", target_id=job_id, details=str(e))
-        flash(f"Import failed: {e}", "error")
+        if not job.get("import_summary"):
+            job["status"] = "Import failed (validation)"
+            job["last_error"] = {
+                "summary": str(e),
+                "action": None,
+                "technical_detail": str(e),
+                "status_code": None,
+                "intuit_tid": None,
+            }
+            _record_checkpoint(job, job_id, job_checkpoints.NEEDS_ATTENTION)
+            _save_job(job_id)
+            flash(f"Import failed: {e}", "error")
+        else:
+            _log.exception(
+                "import_to_qbo: post-success ValueError for job %s (import_summary set, not overwriting checkpoint)",
+                job_id,
+            )
+            flash(
+                "Your previous import is already saved in QuickBooks — its status is unchanged. "
+                "A later step hit an error; no action needed unless your totals look wrong.",
+                "info",
+            )
     except Exception as e:  # noqa: BLE001
-        job["status"] = "Import failed"
-        job["last_error"] = {
-            "summary": "Unexpected error during import. The full message is in the technical details below.",
-            "action": "Try again, and if the problem persists, contact support with the job ID.",
-            "technical_detail": str(e),
-            "status_code": None,
-            "intuit_tid": None,
-        }
-        _record_checkpoint(job, job_id, job_checkpoints.NEEDS_ATTENTION)
-        _save_job(job_id)
         _audit("import_failed", target_type="job", target_id=job_id, details=str(e))
-        flash(f"Import failed: {e}", "error")
+        if not job.get("import_summary"):
+            job["status"] = "Import failed"
+            job["last_error"] = {
+                "summary": "Unexpected error during import. The full message is in the technical details below.",
+                "action": "Try again, and if the problem persists, contact support with the job ID.",
+                "technical_detail": str(e),
+                "status_code": None,
+                "intuit_tid": None,
+            }
+            _record_checkpoint(job, job_id, job_checkpoints.NEEDS_ATTENTION)
+            _save_job(job_id)
+            flash(f"Import failed: {e}", "error")
+        else:
+            _log.exception(
+                "import_to_qbo: post-success Exception for job %s (import_summary set, not overwriting checkpoint)",
+                job_id,
+            )
+            flash(
+                "Your previous import is already saved in QuickBooks — its status is unchanged. "
+                "A later step hit an error; no action needed unless your totals look wrong.",
+                "info",
+            )
 
     return redirect(url_for("job_detail", job_id=job_id))
 
