@@ -7148,6 +7148,13 @@ def opening_balance_preview(job_id):
             "error",
         )
         return redirect(url_for("migration_nexus"))
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("app").exception(
+            "opening_balance_preview: _get_qbo_client failed for job %s", job_id
+        )
+        qbo = None
+        qbo_conn = None
+        qbo_error = f"Could not connect to QuickBooks: {exc}"
     if not qbo:
         qbo_error = (
             "Connect QuickBooks to resolve TB accounts and (eventually) "
@@ -7199,12 +7206,19 @@ def opening_balance_preview(job_id):
         override=submitted_date or job.get("opening_balance_date_override"),
     )
 
-    plan = build_opening_balance_plan(
-        tb_rows,
-        qbo_accounts,
-        as_of_date=effective_as_of or cutover.get("opening_balance_date"),
-        account_mappings=account_mappings,
-    )
+    try:
+        plan = build_opening_balance_plan(
+            tb_rows,
+            qbo_accounts,
+            as_of_date=effective_as_of or cutover.get("opening_balance_date"),
+            account_mappings=account_mappings,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("app").exception(
+            "opening_balance_preview: build_opening_balance_plan failed for job %s", job_id
+        )
+        flash(f"Could not build the opening balance plan: {exc}", "error")
+        return redirect(url_for("job_detail", job_id=job_id))
 
     # COA-first validation: cross-check every TB account against the
     # firm's latest Chart of Accounts (parsed + operator overrides +
@@ -7213,14 +7227,21 @@ def opening_balance_preview(job_id):
     # finalized, an account type is blank, or an AR/AP mismatch hasn't
     # been resolved.
     coa_state = _firm_latest_coa_state(user["firm_id"])
-    tb_coa_validation = validate_tb_against_coa(
-        tb_rows,
-        coa_state["coa_rows"],
-        qbo_accounts,
-        account_mappings=account_mappings,
-        coa_create_history=coa_state["coa_create_history"],
-        coa_type_overrides=coa_state["coa_type_overrides"],
-    )
+    try:
+        tb_coa_validation = validate_tb_against_coa(
+            tb_rows,
+            coa_state["coa_rows"],
+            qbo_accounts,
+            account_mappings=account_mappings,
+            coa_create_history=coa_state["coa_create_history"],
+            coa_type_overrides=coa_state["coa_type_overrides"],
+        )
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("app").exception(
+            "opening_balance_preview: validate_tb_against_coa failed for job %s", job_id
+        )
+        flash(f"Could not validate the Trial Balance against the Chart of Accounts: {exc}", "error")
+        return redirect(url_for("job_detail", job_id=job_id))
 
     # POST from date-selector form only updates posting date and re-renders.
     if request.method == "POST":
