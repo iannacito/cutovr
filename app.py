@@ -7187,6 +7187,16 @@ def opening_balance_preview(job_id):
         account_mappings = db.list_account_mappings(
             user["firm_id"], qbo_conn["realm_id"], source_type="tb"
         ) if qbo_conn else []
+        # Fall back to GL account mappings when no TB-specific mappings exist.
+        # Firms that completed the GL workflow have finalized COA; their GL
+        # mappings share the same PCLaw account number space as the TB, so
+        # they satisfy has_coa and improve per-row QBO resolution.
+        if not account_mappings and qbo_conn:
+            _gl_fallback = db.list_account_mappings(
+                user["firm_id"], qbo_conn["realm_id"], source_type="gl"
+            )
+            if _gl_fallback:
+                account_mappings = _gl_fallback
 
     try:
         cutover = db.get_cutover_settings(user["firm_id"]) or {}
