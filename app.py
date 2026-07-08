@@ -418,6 +418,9 @@ QBO_ENVIRONMENT = os.environ.get("QBO_ENVIRONMENT", "sandbox")  # 'sandbox' or '
 # the existing demo flow keeps working until the user opts in.
 QBO_REAL_IMPORT = os.environ.get("QBO_REAL_IMPORT", "0").lower() in ("1", "true", "yes", "on")
 
+# Render sets RENDER_GIT_COMMIT on every deploy; locally absent so fall back to "local".
+DEPLOY_SHA = (os.environ.get("RENDER_GIT_COMMIT") or "local")[:7]
+
 # ---------------------------------------------------------------------------
 # Production environment validation.
 #
@@ -729,6 +732,11 @@ def inject_user():
     # these to seed quick-start prompts before the first API call.
     ctx["support_assistant_topics"] = support_assistant.suggested_topics()
     return ctx
+
+
+@app.context_processor
+def inject_deploy_sha():
+    return {"deploy_sha": DEPLOY_SHA}
 
 
 def _get_job(job_id):
