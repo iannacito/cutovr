@@ -2085,6 +2085,23 @@ def initialpost_retry(job_id, step_key):
 
 @app.route("/send-to-qbo")
 @login_required
+def _gl_period_key(j):
+    """Sort key for GL jobs by period (earliest first).
+
+    period_label ("Jan 2021") is set by the nexus card logic.
+    Parse to a date; jobs without a parseable period sort AFTER dated ones,
+    by created_at.
+    """
+    from datetime import datetime as _dt
+    lbl = (j.get("period_label") or _hub_period_label(j.get("source_file") or "") or "").strip()
+    for fmt in ("%b %Y", "%B %Y"):
+        try:
+            return (0, _dt.strptime(lbl, fmt), j.get("created_at") or "")
+        except ValueError:
+            pass
+    return (1, _dt.max, j.get("created_at") or "")
+
+
 def send_to_qbo_entry():
     """Firm-level Step 5 entry — redirects to the job-scoped send-to-qbo.
 
@@ -2110,13 +2127,24 @@ def send_to_qbo_entry():
         return redirect(url_for("dashboard"))
     # Honour an explicit job_id param (from nexus "Import →" or preview-import
     # Step 5 button) so we land on the correct batch when multiple GL uploads
-    # exist. Fall back to the most-recently-uploaded GL job.
+    # exist. Fall back to the earliest UNPOSTED GL by period (chronological).
+    unposted = [j for j in gl_jobs if j.get("checkpoint") != "completed"]
+    earliest_unposted = (sorted(unposted, key=_gl_period_key)[0] if unposted else gl_jobs[0])
+
     requested = request.args.get("job_id", "").strip()
     if requested:
         target = next((j for j in gl_jobs if j.get("id") == requested), None)
+        # If explicit job was requested but an earlier unposted GL exists, warn
+        if target and unposted and earliest_unposted.get("id") != target.get("id"):
+            earliest_label = earliest_unposted.get("period_label") or _hub_period_label(earliest_unposted.get("source_file") or "") or "earliest"
+            flash(
+                f"Heads up: {earliest_label} hasn't been posted yet. "
+                "QuickBooks balances are cumulative — post the earliest period first.",
+                "warning",
+            )
     else:
         target = None
-    target = target or gl_jobs[0]
+    target = target or earliest_unposted
     return redirect(url_for("send_to_qbo", job_id=target["id"]))
 
 
