@@ -7188,7 +7188,13 @@ def opening_balance_preview(job_id):
             user["firm_id"], qbo_conn["realm_id"], source_type="tb"
         ) if qbo_conn else []
 
-    cutover = db.get_cutover_settings(user["firm_id"]) or {}
+    try:
+        cutover = db.get_cutover_settings(user["firm_id"]) or {}
+    except Exception:  # noqa: BLE001
+        logging.getLogger("app").exception(
+            "opening_balance_preview: get_cutover_settings failed for firm %s", user["firm_id"]
+        )
+        cutover = {}
 
     # Beginning Trial Balance posting date. The card defaults it from
     # Step 1 (Setup) so the lawyer never retypes a date they already gave
@@ -7206,7 +7212,14 @@ def opening_balance_preview(job_id):
         submitted_date = ""
     if submitted_date:
         job["opening_balance_date_override"] = submitted_date
-        _save_job(job_id)
+        try:
+            _save_job(job_id)
+        except Exception:  # noqa: BLE001
+            logging.getLogger("app").exception(
+                "opening_balance_preview: _save_job failed for job %s", job_id
+            )
+            flash("Could not save the date. Please try again.", "error")
+            submitted_date = ""
     try:
         effective_as_of = resolve_opening_balance_date(
             cutover,
@@ -7277,41 +7290,60 @@ def opening_balance_preview(job_id):
 
     # TB 6-step workflow stepper (Step 4: Review)
     from tb_workflow import build_tb_stages, tb_stages_context
-    mapping_done = bool(db.list_account_mappings(user["firm_id"],
-                        qbo_conn["realm_id"] if qbo_conn else None,
-                        source_type="tb"))
-    _tb_stages = build_tb_stages(
-        job, url_for=url_for,
-        mapping_saved=mapping_done,
-        plan_ready=(not plan.has_blockers and plan.balanced),
-        cutover_done=True,
-    )
-    wf_ctx = tb_stages_context(_tb_stages)
+    try:
+        mapping_done = bool(db.list_account_mappings(user["firm_id"],
+                            qbo_conn["realm_id"] if qbo_conn else None,
+                            source_type="tb"))
+    except Exception:  # noqa: BLE001
+        logging.getLogger("app").exception(
+            "opening_balance_preview: list_account_mappings failed for job %s", job_id
+        )
+        mapping_done = False
+    try:
+        _tb_stages = build_tb_stages(
+            job, url_for=url_for,
+            mapping_saved=mapping_done,
+            plan_ready=(not plan.has_blockers and plan.balanced),
+            cutover_done=True,
+        )
+        wf_ctx = tb_stages_context(_tb_stages)
+    except Exception:  # noqa: BLE001
+        logging.getLogger("app").exception(
+            "opening_balance_preview: TB stepper build/context failed for job %s", job_id
+        )
+        wf_ctx = {}
 
-    return render_template(
-        "opening-balance.html",
-        job=job,
-        plan=plan.to_dict(),
-        tb_coa_validation=tb_coa_validation.to_dict(),
-        coa_job_id=(coa_state["coa_job"] or {}).get("id"),
-        qbo_connection=qbo_conn or {},
-        qbo_error=qbo_error,
-        report_label=REPORT_LABELS[REPORT_TRIAL_BALANCE],
-        source_file=_hub_display_filename(job.get("source_file") or ""),
-        posting_date=effective_as_of,
-        posting_date_source=(
-            "your setup answers"
-            if effective_as_of and not job.get("opening_balance_date_override")
-            else ("the date you chose" if job.get("opening_balance_date_override") else "")
-        ),
-        posting_date_error=posting_date_error,
-        qbo_env_status=(
-            "production" if (QBO_ENVIRONMENT or "").lower() == "production"
-            else "sandbox"
-        ),
-        ob_already_posted=bool(job.get("import_summary")),
-        **wf_ctx,
-    )
+    try:
+        return render_template(
+            "opening-balance.html",
+            job=job,
+            plan=plan.to_dict(),
+            tb_coa_validation=tb_coa_validation.to_dict(),
+            coa_job_id=(coa_state["coa_job"] or {}).get("id"),
+            qbo_connection=qbo_conn or {},
+            qbo_error=qbo_error,
+            report_label=REPORT_LABELS[REPORT_TRIAL_BALANCE],
+            source_file=_hub_display_filename(job.get("source_file") or ""),
+            posting_date=effective_as_of,
+            posting_date_source=(
+                "your setup answers"
+                if effective_as_of and not job.get("opening_balance_date_override")
+                else ("the date you chose" if job.get("opening_balance_date_override") else "")
+            ),
+            posting_date_error=posting_date_error,
+            qbo_env_status=(
+                "production" if (QBO_ENVIRONMENT or "").lower() == "production"
+                else "sandbox"
+            ),
+            ob_already_posted=bool(job.get("import_summary")),
+            **wf_ctx,
+        )
+    except Exception:  # noqa: BLE001
+        logging.getLogger("app").exception(
+            "opening_balance_preview: template render failed for job %s", job_id
+        )
+        flash("Could not display the opening balance preview. Please try again.", "error")
+        return redirect(url_for("job_detail", job_id=job_id))
 
 
 def _opening_balance_post(job, user, qbo, qbo_conn, plan):
