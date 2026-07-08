@@ -112,7 +112,7 @@ def build_tb_stages(
         STAGE_UPLOAD:  ("Back to Step 1: Setup", u("cutover_setup", "/cutover")),
         STAGE_MATCH:   ("Back to Step 2: Upload reports", u("job_detail", f"/jobs/{job_id}", job_id=job_id)),
         STAGE_REVIEW:  ("Back to Step 3: Match accounts", u("ob_account_mapping", f"/jobs/{job_id}/ob-account-mapping", job_id=job_id)),
-        STAGE_POST:    ("Back to Step 4: Review", u("opening_balance_preview", f"/jobs/{job_id}/opening-balance", job_id=job_id)),
+        STAGE_POST:    ("Back to Step 3: Match accounts", u("ob_account_mapping", f"/jobs/{job_id}/ob-account-mapping", job_id=job_id)),
     }
 
     stages: List[WorkflowStage] = []
