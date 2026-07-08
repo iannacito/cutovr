@@ -2805,7 +2805,7 @@ def migration_nexus():
     checkpoint_steps = {
         "uploaded": 1, "parsed": 2, "matched": 3,
         "reviewed": 4, "importing": 4, "completed": 6,
-        "needs_attention": 3,
+        "needs_attention": 2,
     }
 
     # TB routing: point to the post-ob entry for all Trial Balance jobs.

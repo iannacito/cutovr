@@ -293,9 +293,21 @@ def _stage_cta(
         # build_customer_stages now suppresses this CTA entirely when the
         # user is already on the page (on_match_page=True), letting the
         # page's own forward CTA to Step 4 stand alone.
+        if import_job_id and url_for is not None:
+            try:
+                return ("Match accounts",
+                        url_for("account_mapping", job_id=import_job_id))
+            except Exception:
+                pass
         return ("Match accounts",
                 u("match_accounts_entry", "/match-accounts"))
     if stage_key == STAGE_REVIEW:
+        if import_job_id and url_for is not None:
+            try:
+                return ("Proceed to Step 4: Review import",
+                        url_for("preview_import", job_id=import_job_id))
+            except Exception:
+                pass
         return ("Proceed to Step 4: Review import",
                 u("import_job_entry", "/import-job"))
     if stage_key == STAGE_IMPORT:
@@ -318,6 +330,7 @@ def _stage_cta(
 def _stage_back_link(
     current_key: str,
     url_for: Optional[Callable[..., str]],
+    import_job_id: Optional[str] = None,
 ) -> tuple:
     """Return (back_label, back_url) — where the customer goes to revisit
     the *previous* step from the stage that's currently in progress.
@@ -344,6 +357,15 @@ def _stage_back_link(
         except Exception:
             return fallback
 
+    def j(endpoint: str, job_id: Optional[str], fallback: str) -> str:
+        """Job-scoped url_for; falls back to flat route on any error."""
+        if url_for is None or not job_id:
+            return fallback
+        try:
+            return url_for(endpoint, job_id=job_id)
+        except Exception:
+            return fallback
+
     # Per-stage previous-step entry: (customer-facing label, route).
     # Keyed by the *current* stage; value describes the step before it.
     # Every URL must be a real, working route — never a bare '#'.
@@ -353,9 +375,9 @@ def _stage_back_link(
         STAGE_MATCH:     ("Back to Step 2: Upload reports",
                           u("dashboard", "/dashboard") + "?step=upload#intake"),
         STAGE_REVIEW:    ("Back to Step 3: Match accounts",
-                          u("match_accounts_entry", "/match-accounts")),
+                          j("account_mapping", import_job_id, "/match-accounts")),
         STAGE_IMPORT:    ("Back to Step 4: Review import",
-                          u("import_job_entry", "/import-job")),
+                          j("preview_import", import_job_id, "/import-job")),
         STAGE_RECONCILE: ("Back to Step 5: Send to QuickBooks",
                           u("send_to_qbo_entry", "/send-to-qbo")),
     }
@@ -386,8 +408,16 @@ def _stage_nav_url(
         STAGE_SETUP:     lambda: u("cutover_setup", "/cutover"),
         STAGE_UPLOAD:    lambda: (u("uploaded_reports", "/uploaded-reports")
                                   or u("dashboard", "/dashboard")),
-        STAGE_MATCH:     lambda: u("match_accounts_entry", "/match-accounts"),
-        STAGE_REVIEW:    lambda: u("import_job_entry", "/import-job"),
+        STAGE_MATCH:     lambda: (
+            url_for("account_mapping", job_id=import_job_id)
+            if import_job_id and url_for is not None
+            else u("match_accounts_entry", "/match-accounts")
+        ),
+        STAGE_REVIEW:    lambda: (
+            url_for("preview_import", job_id=import_job_id)
+            if import_job_id and url_for is not None
+            else u("import_job_entry", "/import-job")
+        ),
         STAGE_IMPORT:    lambda: (
             url_for("send_to_qbo", job_id=import_job_id)
             if import_job_id and url_for is not None
@@ -547,7 +577,7 @@ def build_customer_stages(
                 import_job_id=import_job_id,
             )
             stage.back_label, stage.back_url = _stage_back_link(
-                stage.key, url_for,
+                stage.key, url_for, import_job_id=import_job_id,
             )
         else:
             stage.status = STAGE_STATUS_UPCOMING
