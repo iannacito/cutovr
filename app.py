@@ -2866,7 +2866,6 @@ def migration_nexus():
         client_done=client_done,
         client_pushed=client_pushed,
         checkpoint_steps=checkpoint_steps,
-        is_dev_mode=os.environ.get("APP_ENV") == "development",
     )
 
 
