@@ -10632,6 +10632,774 @@ def account_mapping_refresh(job_id):
     return redirect(url_for("account_mapping", job_id=job_id))
 
 
+def _firm_coa_gap_analysis(
+    firm_id: int,
+    realm_id: str,
+    qbo_accounts_resp: dict,
+    saved_mappings: list[dict],
+) -> dict:
+    """Return accounts present in GL or TB uploads but missing from QBO."""
+    import re as _re
+    _cont_re = _re.compile(r'\s*-\s*continued\s*$', _re.IGNORECASE)
+
+    def _norm(name: str | None) -> str:
+        if not name:
+            return ""
+        return _cont_re.sub("", name).strip().lower()
+
+    _acct_list = (qbo_accounts_resp.get("QueryResponse") or {}).get("Account") or []
+    valid_ids = {str(a.get("Id")) for a in _acct_list if a.get("Id")}
+    qbo_numbers = {str(a.get("AcctNum") or "").strip() for a in _acct_list if a.get("AcctNum")}
+    qbo_names_norm = {_norm(a.get("Name")) for a in _acct_list if a.get("Name")}
+
+    saved_numbers = {
+        str(m["pclaw_account_number"])
+        for m in saved_mappings
+        if m.get("pclaw_account_number") and str(m.get("qbo_account_id")) in valid_ids
+    }
+    saved_names_norm = {
+        _norm(m["pclaw_account_name"])
+        for m in saved_mappings
+        if m.get("pclaw_account_name") and str(m.get("qbo_account_id")) in valid_ids
+    }
+
+    def _in_qbo(number, name):
+        if number and (str(number) in qbo_numbers or str(number) in saved_numbers):
+            return True
+        return _norm(name) in qbo_names_norm or _norm(name) in saved_names_norm
+
+    def _is_gl_reserved_gap(row: dict) -> bool:
+        return "retained earnings" in ((row or {}).get("account_name") or "").lower()
+
+    tb_accounts: dict[str, dict] = {}
+    gl_accounts: dict[str, dict] = {}
+
+    _all_jobs = db.list_jobs_for_firm(firm_id, limit=500)
+    for _j in _all_jobs:
+        _jh = db.hydrate_job(_j["id"]) or _j
+        _rtype = (_jh.get("report_type") or REPORT_GENERAL_LEDGER)
+
+        if _rtype == REPORT_TRIAL_BALANCE:
+            _rows = _job_trial_balance_rows(_jh)
+            if not _rows:
+                continue
+            for r in _rows:
+                num = (r.get("account_number") or "").strip()
+                name = _cont_re.sub("", r.get("account_name") or "").strip()
+                key = num or _norm(name)
+                if key and key not in tb_accounts:
+                    tb_accounts[key] = {"number": num or None, "name": name or None}
+
+        elif _rtype == REPORT_GENERAL_LEDGER:
+            _rows = _load_job_gl_rows_durable(_jh, _j["id"])
+            if not _rows:
+                continue
+            for r in _rows:
+                num = (r.get("account_number") or "").strip()
+                name = _cont_re.sub("", r.get("account_name") or "").strip()
+                key = num or _norm(name)
+                if key and key not in gl_accounts:
+                    gl_accounts[key] = {"number": num or None, "name": name or None}
+
+    from coa_apply import is_system_calculated_account as _is_sys_calc_gap
+    gl_missing = [
+        v for k, v in sorted(gl_accounts.items())
+        if not _in_qbo(v["number"], v["name"])
+        and not _is_sys_calc_gap({"account_name": v["name"]})
+        and not _is_gl_reserved_gap({"account_name": v["name"]})
+    ]
+    tb_missing = [
+        v for k, v in sorted(tb_accounts.items())
+        if not _in_qbo(v["number"], v["name"])
+        and not _is_sys_calc_gap({"account_name": v["name"]})
+        and not _is_gl_reserved_gap({"account_name": v["name"]})
+    ]
+    gl_only = [v for k, v in sorted(gl_accounts.items()) if k not in tb_accounts]
+    tb_only = [v for k, v in sorted(tb_accounts.items()) if k not in gl_accounts]
+
+    return {
+        "gl_missing_from_qbo": gl_missing,
+        "tb_missing_from_qbo": tb_missing,
+        "gl_only": gl_only,
+        "tb_only": tb_only,
+        "has_gaps": bool(gl_missing or tb_missing),
+    }
+
+
+@app.route("/jobs/<job_id>/ob-account-mapping", methods=["GET", "POST"])
+@login_required
+def ob_account_mapping(job_id):
+    """Trial Balance account mapping — same as account_mapping but for TB accounts.
+
+    TB accounts come from _job_trial_balance_rows(), deduplicated by
+    (account_number, account_name). All QBO logic, form handling, and save
+    paths are identical to account_mapping().
+    """
+    job, user = _job_or_403(job_id)
+    if (job.get("report_type") or REPORT_GENERAL_LEDGER) != REPORT_TRIAL_BALANCE:
+        flash("Account mapping is only available for Trial Balance jobs.", "error")
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    qbo_conn = _get_qbo_connection(job_id)
+    if not qbo_conn:
+        _firm_conns = db.list_qbo_connections_for_firm(user["firm_id"])
+        if _firm_conns:
+            _source = db.get_qbo_connection(_firm_conns[0]["job_id"])
+            if _source and _source.get("access_token_enc") and _source.get("refresh_token_enc"):
+                db.upsert_qbo_connection(
+                    job_id=job_id,
+                    firm_id=user["firm_id"],
+                    realm_id=_source["realm_id"],
+                    access_token_enc=_source["access_token_enc"],
+                    refresh_token_enc=_source["refresh_token_enc"],
+                    company_name=_source.get("company_name"),
+                    legal_name=_source.get("legal_name"),
+                    country=_source.get("country"),
+                    expires_at=_source.get("expires_at"),
+                    company_info_error=_source.get("company_info_error"),
+                )
+                qbo_connections.pop(job_id, None)
+                qbo_conn = _get_qbo_connection(job_id)
+    if not qbo_conn:
+        flash("Connect QuickBooks to this firm before matching accounts.", "error")
+        return redirect(url_for("connect_qbo", job_id=job_id))
+
+    try:
+        qbo, qbo_conn = _get_qbo_client(job_id, user)
+    except QBOAuthExpired as e:
+        tid = getattr(e, "intuit_tid", None)
+        _audit(
+            "qbo_token_refresh_failed",
+            target_type="job",
+            target_id=job_id,
+            details=_audit_details_with_tid(str(e), tid),
+        )
+        return _render_account_mapping_error(
+            job=job,
+            qbo_conn=qbo_conn,
+            category=qbo_error_hint.CATEGORY_AUTH,
+            status_code=None,
+            intuit_tid=tid,
+        )
+
+    realm_id = qbo_conn["realm_id"]
+
+    try:
+        qbo_accounts_resp = qbo.get_accounts()
+    except QBOError as e:
+        category = qbo_error_hint.classify(e.status_code, e.body)
+        _audit(
+            "ob_account_mapping_qbo_error",
+            target_type="job",
+            target_id=job_id,
+            details=_audit_details_with_tid(
+                f"status={e.status_code} category={category} body={e.body}",
+                e.intuit_tid,
+            ),
+        )
+        return _render_account_mapping_error(
+            job=job,
+            qbo_conn=qbo_conn,
+            category=category,
+            status_code=e.status_code,
+            intuit_tid=e.intuit_tid,
+        )
+    except Exception as e:
+        _audit("ob_account_mapping_qbo_error", target_type="job", target_id=job_id, details=str(e))
+        return _render_account_mapping_error(
+            job=job,
+            qbo_conn=qbo_conn,
+            category=qbo_error_hint.CATEGORY_UNKNOWN,
+            status_code=None,
+            intuit_tid=None,
+        )
+    qbo_accounts = qbo_accounts_resp.get("QueryResponse", {}).get("Account", [])
+
+    if request.method == "POST":
+        saved = 0
+        skipped = 0
+        try:
+            for key, qbo_acct_id in request.form.items(multi=False):
+                if not key.startswith("mapping[") or not key.endswith("]"):
+                    continue
+                qbo_acct_id = (qbo_acct_id or "").strip()
+                if not qbo_acct_id:
+                    continue
+                row_idx = key[len("mapping["):-1]
+                pclaw_num = (request.form.get(f"pclaw_num[{row_idx}]") or "").strip() or None
+                pclaw_name = (request.form.get(f"pclaw_name[{row_idx}]") or "").strip() or None
+                if not pclaw_num and not pclaw_name:
+                    skipped += 1
+                    continue
+                qbo_match = next((a for a in qbo_accounts if a.get("Id") == qbo_acct_id), None)
+                db.save_account_mapping(
+                    firm_id=user["firm_id"],
+                    realm_id=realm_id,
+                    pclaw_account_number=pclaw_num,
+                    pclaw_account_name=pclaw_name,
+                    qbo_account_id=qbo_acct_id,
+                    qbo_account_name=qbo_match.get("Name") if qbo_match else None,
+                    qbo_account_type=qbo_match.get("AccountType") if qbo_match else None,
+                    source_type="tb",
+                )
+                saved += 1
+        except Exception as e:
+            _audit("ob_account_mapping_save_error", target_type="job", target_id=job_id, details=str(e))
+            flash("Something went wrong while saving your mappings. Please reload the page and try again.", "error")
+            return redirect(url_for("ob_account_mapping", job_id=job_id))
+        _audit("ob_account_mapping_saved", target_type="job", target_id=job_id,
+               details=f"saved {saved} mapping(s) skipped {skipped}")
+        if saved:
+            flash(f"Saved {saved} account mapping(s). We'll remember these matches for next time.", "success")
+        else:
+            flash("Nothing changed yet. Pick a QuickBooks account for at least one row and click Save matches.", "info")
+        return redirect(url_for("ob_account_mapping", job_id=job_id))
+
+    # Load TB accounts
+    tb_rows = _job_trial_balance_rows(job)
+    if not tb_rows:
+        flash("Could not read the Trial Balance. Re-upload and try again.", "error")
+        return redirect(url_for("job_detail", job_id=job_id))
+    seen = set()
+    pclaw_accounts = []
+    for r in tb_rows:
+        key = (r.get("account_number") or "").strip(), (r.get("account_name") or "").strip()
+        if key not in seen:
+            seen.add(key)
+            pclaw_accounts.append({"number": key[0] or None, "name": key[1] or None})
+
+    account_mappings = db.list_account_mappings(user["firm_id"], realm_id, source_type="tb")
+    saved_by_key = {
+        (m["pclaw_account_number"], m["pclaw_account_name"]): m
+        for m in account_mappings
+    }
+
+    # Inferred types from create-missing dry-run (GL-style)
+    inferred_types: dict = {}
+    try:
+        _preview, _plan = _build_create_missing_plan(
+            user=user,
+            pclaw_accounts=pclaw_accounts,
+            qbo_accounts_response=qbo_accounts_resp,
+            job=job,
+        )
+        for entry in (_plan.to_create or []):
+            info = {
+                "decision": "ok",
+                "account_type": entry.qbo_account_type,
+                "detail_type": entry.qbo_detail_type,
+                "account_type_label": _account_type_label(entry.qbo_account_type),
+            }
+            if entry.account_number:
+                inferred_types[entry.account_number] = info
+            if entry.account_name:
+                inferred_types[entry.account_name.lower()] = info
+        for entry in (_plan.blocked or []):
+            info = {
+                "decision": "blocked",
+                "account_type": None,
+                "detail_type": None,
+                "account_type_label": None,
+            }
+            if entry.account_number:
+                inferred_types[entry.account_number] = info
+            if entry.account_name:
+                inferred_types[entry.account_name.lower()] = info
+    except Exception:
+        inferred_types = {}
+
+    type_override_keys = set(_job_account_type_overrides(job).keys())
+
+    rows_raw, mapping_summary = _build_account_mapping_rows(
+        pclaw_accounts=pclaw_accounts,
+        qbo_accounts=qbo_accounts,
+        saved_by_key=saved_by_key,
+        inferred_types=inferred_types,
+        type_override_keys=type_override_keys,
+    )
+
+    # Sort rows: unmatched first, then suggestions, then saved, then system-calculated
+    def _sort_key(r):
+        if r.get("is_system_calculated"):
+            return (3, "")
+        elif r.get("is_saved"):
+            return (2, r.get("pclaw_name") or "")
+        elif r.get("is_suggestion"):
+            return (1, r.get("pclaw_name") or "")
+        else:
+            return (0, r.get("pclaw_name") or "")
+    rows = sorted(rows_raw, key=_sort_key)
+
+    # Create missing offer
+    create_missing_offer = _summarize_create_missing_offer(
+        user=user, pclaw_accounts=pclaw_accounts, summary=mapping_summary, rows=rows)
+
+    # Build TB workflow stages
+    from tb_workflow import build_tb_stages, tb_stages_context
+    mapping_saved = bool(account_mappings)
+    _stages = build_tb_stages(
+        job,
+        url_for=url_for,
+        mapping_saved=mapping_saved,
+        plan_ready=False,
+        cutover_done=True,
+    )
+    wf_ctx = tb_stages_context(_stages)
+
+    coa_gap = _firm_coa_gap_analysis(
+        firm_id=user["firm_id"],
+        realm_id=realm_id,
+        qbo_accounts_resp=qbo_accounts_resp,
+        saved_mappings=account_mappings,
+    )
+
+    return render_template(
+        "ob-account-mapping.html",
+        job=job,
+        rows=rows,
+        qbo_accounts=qbo_accounts,
+        mapping_summary=mapping_summary,
+        qbo_connection=qbo_conn,
+        opening_balance_url=url_for("opening_balance_preview", job_id=job_id),
+        account_mapping_categories=ACCOUNT_MAPPING_CATEGORIES,
+        coa_override_account_types=list(COA_OVERRIDE_ACCOUNT_TYPES),
+        create_missing_offer=create_missing_offer,
+        coa_gap=coa_gap,
+        **wf_ctx,
+    )
+
+
+@app.route("/jobs/<job_id>/ob-account-mapping/undo-mapping", methods=["POST"])
+@login_required
+def ob_account_mapping_undo(job_id):
+    """Undo TB account mapping — copy of account_mapping_undo but for TB."""
+    job, user = _job_or_403(job_id)
+    account_number = (request.form.get("pclaw_number") or "").strip() or None
+    account_name = (request.form.get("pclaw_name") or "").strip() or None
+    qbo_conn = _get_qbo_connection(job_id)
+    if qbo_conn:
+        db.delete_account_mapping(
+            firm_id=user["firm_id"],
+            realm_id=qbo_conn["realm_id"],
+            pclaw_account_number=account_number,
+            pclaw_account_name=account_name,
+            source_type="tb",
+        )
+        _audit(
+            "ob_account_mapping_deleted",
+            target_type="job",
+            target_id=job_id,
+            details=f"account_number={account_number} account_name={account_name}",
+        )
+        flash("Mapping deleted. The account is now unmatched.", "success")
+    return redirect(url_for("ob_account_mapping", job_id=job_id))
+
+
+@app.route("/jobs/<job_id>/ob-account-mapping/add-account", methods=["POST"])
+@login_required
+def ob_account_mapping_add_account(job_id):
+    """Create a single missing QuickBooks account from the Match-accounts page.
+
+    Form fields:
+      * ``pclaw_number`` (optional but recommended)
+      * ``pclaw_name`` (required when no number)
+      * ``category`` (optional) — one of ``ACCOUNT_MAPPING_CATEGORIES``
+        keys. When supplied we save it as a per-row override before
+        running the create plan, so the next render shows the row as
+        having a chosen category and the create call uses it.
+
+    Behaviour:
+      * If the row already has a safe type (from heuristics or COA upload),
+        no ``category`` is needed — the route creates the account directly.
+      * If no safe type is available and no ``category`` is supplied,
+        the route returns the user to the Match-accounts page with a
+        flash asking them to pick a category for that row. No create
+        call is issued.
+      * If the same account already exists in QBO (by AcctNum or Name),
+        we save the mapping and report "matched to an existing account"
+        rather than re-creating.
+
+    Always redirects back to /ob-account-mapping. Never silently fails.
+    """
+    job, user = _job_or_403(job_id)
+    qbo_conn = _get_qbo_connection(job_id)
+    if not qbo_conn:
+        flash(
+            "Connect QuickBooks to this job before creating accounts.",
+            "error",
+        )
+        return redirect(url_for("connect_qbo", job_id=job_id))
+
+    pclaw_number = (request.form.get("pclaw_number") or "").strip()
+    pclaw_name = (request.form.get("pclaw_name") or "").strip()
+    category_key   = (request.form.get("category") or "").strip()
+    direct_acct_type  = (request.form.get("account_type") or "").strip()
+    direct_detail_type = (request.form.get("detail_type") or "").strip()
+
+    override_key = _override_key_for(pclaw_number, pclaw_name)
+    if not override_key:
+        flash(
+            "We need the PCLaw account number or name to add it to "
+            "QuickBooks. Reload the page and try again.",
+            "error",
+        )
+        return redirect(url_for("ob_account_mapping", job_id=job_id))
+
+    # Persist a per-row category override when the user picked one. The
+    # override is consumed by ``_build_create_missing_plan`` which feeds
+    # it to ``coa_apply.build_create_plan``.
+    # New path: direct account_type + detail_type submitted from the two-select UI.
+    # Legacy path: category key from old single-select (kept for backward compat).
+    if direct_acct_type:
+        allowed = list(COA_OVERRIDE_ACCOUNT_TYPES)
+        # COA_OVERRIDE_ACCOUNT_TYPES uses display strings like "Other Expense".
+        # Normalise to reject anything not in the allowed list.
+        if direct_acct_type not in allowed:
+            flash(
+                "That account type isn't recognised. Pick a type from "
+                "the dropdown and try again.",
+                "error",
+            )
+            return redirect(url_for("ob_account_mapping", job_id=job_id))
+        overrides = _job_account_type_overrides(job)
+        overrides[override_key] = {
+            "account_type": direct_acct_type,
+            "detail_type": direct_detail_type or "",
+            "account_number": pclaw_number,
+            "account_name": pclaw_name,
+        }
+        _save_job_account_type_overrides(job_id, job, overrides)
+        _audit(
+            "account_mapping_category_set",
+            target_type="job", target_id=job_id,
+            details=(
+                f"key={override_key!r} "
+                f"account_type={direct_acct_type!r} "
+                f"detail_type={direct_detail_type!r}"
+            ),
+        )
+    elif category_key:
+        category = _resolve_account_mapping_category(category_key)
+        if not category:
+            flash(
+                "That category isn't one we recognise. Pick a category "
+                "from the dropdown and try again.",
+                "error",
+            )
+            return redirect(url_for("ob_account_mapping", job_id=job_id))
+        overrides = _job_account_type_overrides(job)
+        overrides[override_key] = {
+            "account_type": category["account_type"],
+            "detail_type": category["detail_type"],
+            "account_number": pclaw_number,
+            "account_name": pclaw_name,
+        }
+        _save_job_account_type_overrides(job_id, job, overrides)
+        _audit(
+            "account_mapping_category_set",
+            target_type="job", target_id=job_id,
+            details=(
+                f"key={override_key!r} "
+                f"account_type={category['account_type']!r}"
+            ),
+        )
+
+    try:
+        qbo, qbo_conn = _get_qbo_client(job_id, user)
+    except QBOAuthExpired as e:
+        tid = getattr(e, "intuit_tid", None)
+        _audit(
+            "account_mapping_add_account_auth_expired",
+            target_type="job", target_id=job_id,
+            details=_audit_details_with_tid(str(e), tid),
+        )
+        flash(
+            "QuickBooks connection expired. Reconnect and try again.",
+            "error",
+        )
+        return redirect(url_for("ob_account_mapping", job_id=job_id))
+
+    # Pull the latest QBO account list so we can dedupe against it.
+    try:
+        qbo_accounts_resp = qbo.get_accounts()
+    except (QBOError, Exception) as e:  # noqa: BLE001
+        tid = getattr(e, "intuit_tid", None)
+        _audit(
+            "account_mapping_add_account_qbo_error",
+            target_type="job", target_id=job_id,
+            details=_audit_details_with_tid(str(e)[:200], tid),
+        )
+        flash(
+            "We couldn't reach QuickBooks just now. Wait a moment and "
+            "try again."
+            + (f" (Intuit support reference: {tid})" if tid else ""),
+            "error",
+        )
+        return redirect(url_for("ob_account_mapping", job_id=job_id))
+
+    # Build the plan but ONLY against this one PCLaw account so we don't
+    # accidentally create the firm's entire missing-account list when the
+    # user clicked the per-row button.
+    target_pclaw = [{
+        "number": pclaw_number or None,
+        "name": pclaw_name or None,
+    }]
+    preview, plan = _build_create_missing_plan(
+        user=user,
+        pclaw_accounts=target_pclaw,
+        qbo_accounts_response=qbo_accounts_resp,
+        job=job,
+    )
+
+    # Already exists in QBO (preview matched it) — save the mapping and
+    # bail out so we don't create a duplicate.
+    if preview.get("matched") and not plan.to_create and not plan.blocked:
+        matched = preview["matched"][0]
+        try:
+            db.save_account_mapping(
+                firm_id=user["firm_id"],
+                realm_id=qbo_conn["realm_id"],
+                pclaw_account_number=pclaw_number or None,
+                pclaw_account_name=pclaw_name or None,
+                qbo_account_id=str(matched.get("qbo_account_id") or matched.get("Id") or ""),
+                qbo_account_name=matched.get("qbo_account_name") or matched.get("Name"),
+                qbo_account_type=matched.get("qbo_account_type") or matched.get("AccountType"),
+                source_type="tb",
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        remaining = _count_remaining_unmatched(
+            user=user, job=job, job_id=job_id,
+            qbo_accounts_resp=qbo_accounts_resp,
+        )
+        remaining_msg = _remaining_unmatched_blurb(remaining)
+        flash(
+            f'"{pclaw_name or pclaw_number}" is already in '
+            "QuickBooks — we matched it for you." + remaining_msg,
+            "success",
+        )
+        return redirect(url_for("ob_account_mapping", job_id=job_id))
+
+    if plan.blocked:
+        # No safe type AND the user didn't pick a category. Ask them to
+        # pick one — do not call QBO.
+        flash(
+            f"We need to know what kind of account "
+            f'"{pclaw_name or pclaw_number}" is. Pick a category '
+            "(Bank, Income, Expense, etc.) on that row and click "
+            '"Add to QuickBooks" again.',
+            "warning",
+        )
+        return redirect(url_for("ob_account_mapping", job_id=job_id))
+
+    if not plan.to_create:
+        flash(
+            "Nothing to add — this account is already handled.",
+            "info",
+        )
+        return redirect(url_for("ob_account_mapping", job_id=job_id))
+
+    # Defensive dedupe right before the POST — another tab may have just
+    # created the same account.
+    entry = plan.to_create[0]
+    existing = None
+    try:
+        if entry.account_number:
+            existing = qbo.find_account_by_acctnum(entry.account_number)
+        if not existing and entry.account_name:
+            existing = qbo.find_account_by_name(entry.account_name)
+    except QBOError:
+        existing = None
+    if existing:
+        try:
+            db.save_account_mapping(
+                firm_id=user["firm_id"],
+                realm_id=qbo_conn["realm_id"],
+                pclaw_account_number=entry.account_number or None,
+                pclaw_account_name=entry.account_name or None,
+                qbo_account_id=str(existing.get("Id") or ""),
+                qbo_account_name=existing.get("Name"),
+                qbo_account_type=existing.get("AccountType"),
+                source_type="tb",
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        remaining = _count_remaining_unmatched(
+            user=user, job=job, job_id=job_id,
+            qbo_accounts_resp=qbo_accounts_resp,
+        )
+        remaining_msg = _remaining_unmatched_blurb(remaining)
+        flash(
+            f'"{entry.account_name or entry.account_number}" '
+            "is already in QuickBooks — we matched it for you."
+            + remaining_msg,
+            "success",
+        )
+        return redirect(url_for("ob_account_mapping", job_id=job_id))
+
+    from coa_apply import CreatePlan as _CP
+    single_plan = _CP(
+        matched=[], to_create=[entry], blocked=[], soft_conflicts=[],
+    )
+    try:
+        result = apply_create_plan(qbo, single_plan)
+    except Exception as e:  # noqa: BLE001
+        tid = getattr(e, "intuit_tid", None)
+        _audit(
+            "account_mapping_add_account_apply_error",
+            target_type="job", target_id=job_id,
+            details=_audit_details_with_tid(str(e)[:300], tid),
+        )
+        flash(
+            "Something went wrong while adding the QuickBooks account. "
+            "Nothing partial was left behind."
+            + (f" (Intuit support reference: {tid})" if tid else ""),
+            "error",
+        )
+        return redirect(url_for("ob_account_mapping", job_id=job_id))
+
+    created = result.get("created") or []
+    failed = result.get("failed") or []
+    tids = result.get("intuit_tids") or []
+
+    for c in created:
+        try:
+            db.save_account_mapping(
+                firm_id=user["firm_id"],
+                realm_id=qbo_conn["realm_id"],
+                pclaw_account_number=c.get("account_number") or None,
+                pclaw_account_name=c.get("account_name") or None,
+                qbo_account_id=c.get("qbo_account_id"),
+                qbo_account_name=c.get("qbo_account_name"),
+                qbo_account_type=c.get("qbo_account_type"),
+                source_type="tb",
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    _audit(
+        "account_mapping_add_account_completed",
+        target_type="job", target_id=job_id,
+        details=_audit_details_with_tid(
+            f"created={len(created)} failed={len(failed)} "
+            f"key={override_key!r}",
+            tids[0] if tids else None,
+        ),
+    )
+
+    if created:
+        c = created[0]
+        remaining = _count_remaining_unmatched(
+            user=user, job=job, job_id=job_id,
+            qbo_accounts_resp=qbo_accounts_resp,
+        )
+        remaining_msg = _remaining_unmatched_blurb(remaining)
+        flash(
+            f"Added 1 account ("
+            f"{c.get('qbo_account_name') or c.get('account_name')})"
+            " to QuickBooks." + remaining_msg,
+            "success",
+        )
+    elif failed:
+        f = failed[0]
+        flash(
+            f"QuickBooks rejected "
+            f'"{f.get("account_name") or f.get("account_number")}": '
+            f"{f.get('error') or 'unknown error'}. "
+            "Try a different category on that row.",
+            "error",
+        )
+    else:
+        flash("Nothing changed — try again.", "info")
+
+    return redirect(url_for("ob_account_mapping", job_id=job_id))
+
+
+@app.route("/jobs/<job_id>/ob-account-mapping/create-missing", methods=["POST"])
+@login_required
+def ob_account_mapping_create_missing(job_id):
+    """Bulk create missing accounts — TB version."""
+    job, user = _job_or_403(job_id)
+    qbo_conn = _get_qbo_connection(job_id)
+    if not qbo_conn:
+        flash("Connect QuickBooks first.", "error")
+        return redirect(url_for("ob_account_mapping", job_id=job_id))
+    try:
+        qbo, _ = _get_qbo_client(job_id, user)
+    except QBOAuthExpired:
+        flash("Your QuickBooks connection expired. Please reconnect.", "error")
+        return redirect(url_for("ob_account_mapping", job_id=job_id))
+    if not qbo:
+        flash("Could not connect to QuickBooks.", "error")
+        return redirect(url_for("ob_account_mapping", job_id=job_id))
+
+    created_count = 0
+    error_count = 0
+    for key, val in request.form.items():
+        if not key.startswith("create[") or not key.endswith("]"):
+            continue
+        if not (val or "").strip():
+            continue
+        row_idx = key[len("create["):-1]
+        account_number = (request.form.get(f"pclaw_number_{row_idx}") or "").strip() or None
+        account_name = (request.form.get(f"pclaw_name_{row_idx}") or "").strip() or None
+        acct_type_val = (request.form.get(f"category_{row_idx}") or "").strip()
+        if not acct_type_val or not (account_name or account_number):
+            continue
+
+        try:
+            mapping = _resolve_account_mapping_category(acct_type_val)
+            if not mapping:
+                error_count += 1
+                continue
+            result = qbo.create_account(
+                name=account_name or account_number or "Unknown",
+                account_type=mapping["account_type"],
+                detail_type=mapping["detail_type"],
+                parent_ref=mapping.get("parent_ref"),
+            )
+            qbo_acct_id = result.get("Id")
+            if qbo_acct_id:
+                db.save_account_mapping(
+                    firm_id=user["firm_id"],
+                    realm_id=qbo_conn["realm_id"],
+                    pclaw_account_number=account_number,
+                    pclaw_account_name=account_name,
+                    qbo_account_id=qbo_acct_id,
+                    qbo_account_name=result.get("Name"),
+                    qbo_account_type=mapping["account_type"],
+                    source_type="tb",
+                )
+                created_count += 1
+            else:
+                error_count += 1
+        except Exception as e:
+            _log.warning("ob_account_mapping_create_missing: failed for %s — %s", account_name, e)
+            error_count += 1
+
+    _audit(
+        "ob_account_bulk_create",
+        target_type="job",
+        target_id=job_id,
+        details=f"created={created_count} errors={error_count}",
+    )
+    if created_count:
+        flash(f"Created {created_count} account(s) in QuickBooks.", "success")
+    if error_count:
+        flash(f"{error_count} account(s) failed. Check logs.", "warning")
+    return redirect(url_for("ob_account_mapping", job_id=job_id))
+
+
+@app.route("/jobs/<job_id>/ob-account-mapping/refresh", methods=["POST"])
+@login_required
+def ob_account_mapping_refresh(job_id):
+    """Re-fetch QuickBooks accounts and reload the TB Match-accounts page."""
+    _job_or_403(job_id)
+    _audit("ob_account_mapping_refresh", target_type="job", target_id=job_id)
+    flash("Refreshed QuickBooks account list.", "info")
+    return redirect(url_for("ob_account_mapping", job_id=job_id))
+
+
 def _resolve_account_mapping_category(category_key: str) -> Optional[dict]:
     """Return the (account_type, detail_type) for a plain-English category
     key from the row-level dropdown, or None when the key is unknown.

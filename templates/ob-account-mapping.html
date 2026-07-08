@@ -1,0 +1,846 @@
+{% extends "_base.html" %}
+{% block title %}Match accounts &mdash; {{ job.company }}{% endblock %}
+{% block content %}
+{# Translate raw QuickBooks AccountType / AccountSubType enums into the
+   plain-English labels lawyers actually see in QuickBooks. #}
+{% set ACCOUNT_TYPE_LABELS = {
+  'Bank': 'Bank',
+  'AccountsReceivable': 'Accounts receivable',
+  'OtherCurrentAsset': 'Current asset',
+  'FixedAsset': 'Fixed asset',
+  'OtherAsset': 'Other asset',
+  'AccountsPayable': 'Accounts payable',
+  'CreditCard': 'Credit card',
+  'OtherCurrentLiability': 'Current liability',
+  'LongTermLiability': 'Long-term liability',
+  'Equity': 'Equity',
+  'EquityDoesNotClose': 'Equity',
+  'Income': 'Income',
+  'OtherIncome': 'Other income',
+  'Expense': 'Expense',
+  'OtherExpense': 'Other expense',
+  'CostOfGoodsSold': 'Cost of goods sold',
+  'NonPosting': 'Non-posting',
+} %}
+<section class="page" data-testid="account-mapping-page">
+  {# Step rail: Step 3 (Match accounts) is a workflow step, so it carries the
+     same progress stepper every other step page shows. Cesar's 2026-06-03 QA
+     noted the steps "weren't showing" on this page, leaving lawyers unsure
+     where they were in the migration. The stepper is included *inside* the
+     `.page` container — the same as every other step page — so its nav row,
+     rail, and progress bar share the page's contained width instead of
+     bleeding to the viewport edges (Cesar 2026-06-03: the Step 3 buttons
+     looked "stretched" because the stepper rendered full-bleed above the
+     contained hero). #}
+  {% include "_workflow_stepper.html" %}
+
+  <a href="{{ url_for('job_detail', job_id=job.id) }}" class="back-link">&larr; Back to migration</a>
+
+  <div class="hero">
+    <p class="eyebrow">Step 3 of 6 &middot; Match accounts</p>
+    <h1>Match your PCLaw accounts to QuickBooks.</h1>
+    <p class="muted" style="max-width:60ch;">
+      Pick the matching QuickBooks account for each PCLaw account in
+      <strong>{{ qbo_connection.company_name or 'your QuickBooks company' }}</strong>.
+      You only do this once.
+    </p>
+  </div>
+
+  {# Top action bar. Cesar's 2026-06-03 QA: after matching a long account
+     list the only Save / Proceed buttons were at the very bottom, so the
+     primary action was off-screen. We mirror it here. The Save button lives
+     outside the form below but targets it via the HTML `form=` attribute, so
+     one click still posts the matches. When every account is already matched
+     and saved, we surface the forward CTA to Step 4 instead. #}
+  {% if not load_error and rows %}
+    <div class="actions-row" data-testid="step3-top-actions"
+         style="margin:var(--space-4) 0 var(--space-2);justify-content:flex-end;">
+      {% if mapping_summary
+            and mapping_summary.matched_saved == mapping_summary.total
+            and mapping_summary.total > 0 %}
+        {# Top forward action. Distinct, shorter label than the footer's
+           full forward CTA so the page never prints the same CTA phrase
+           twice (Cesar 2026-06-03 QA — the doubled, stretched CTAs). Same
+           destination as the footer. #}
+        <a class="btn btn-primary btn-lg"
+           href="{{ opening_balance_url or url_for('opening_balance_preview', job_id=job.id) }}"
+           data-testid="step3-top-proceed-to-step4">
+          Review Opening Balance &rarr;
+        </a>
+      {% else %}
+        <button class="btn btn-primary btn-lg" type="submit"
+                form="account-mapping-form"
+                data-testid="step3-top-save">
+          Save matches
+        </button>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  {% if load_error %}
+    {# Account list could not be fetched from QuickBooks. We keep the user
+       on this screen and offer a CTA matched to the failure category. #}
+    <section class="card" data-testid="account-mapping-error" style="padding:var(--space-6);border-color:var(--danger,#b91c1c);">
+      {% if load_error.category == 'auth' %}
+        <h2 style="margin-top:0;">QuickBooks needs to be reconnected</h2>
+        <p>
+          We couldn&rsquo;t load your QuickBooks accounts because the saved
+          authorization is no longer valid. This usually happens after a
+          QuickBooks password change or when a connection has gone idle for
+          a long time.
+        </p>
+        <div class="actions-row" style="margin-top:var(--space-4);">
+          <a href="{{ load_error.reconnect_url }}" class="btn btn-primary btn-lg" data-testid="reconnect-cta">Reconnect QuickBooks</a>
+          <a href="{{ load_error.job_url }}" class="btn btn-link">Back to migration</a>
+        </div>
+      {% elif load_error.category == 'permission' %}
+        <h2 style="margin-top:0;">QuickBooks couldn&rsquo;t share this company&rsquo;s account list</h2>
+        <p>
+          QuickBooks accepted the request but declined to return the chart
+          of accounts for this company. The most common cause is that the
+          connected QuickBooks user no longer has access to the company,
+          or the connection was authorized against a different company
+          than the one you want to import into.
+        </p>
+        <div class="actions-row" style="margin-top:var(--space-4);">
+          <a href="{{ load_error.reconnect_url }}" class="btn btn-primary btn-lg" data-testid="reconnect-cta">Reconnect QuickBooks</a>
+          {% if support_email and "your-domain.example" not in support_email %}
+            <a href="mailto:{{ support_email }}?subject=QuickBooks%20account%20access" class="btn btn-link">Contact support</a>
+          {% else %}
+            <a href="{{ url_for('support') }}" class="btn btn-link">Contact support</a>
+          {% endif %}
+        </div>
+      {% elif load_error.category == 'rate_limit' %}
+        <h2 style="margin-top:0;">QuickBooks is asking us to slow down</h2>
+        <p>
+          QuickBooks is temporarily limiting how often we can ask for your
+          account list. Wait about a minute, then try again — your
+          connection is healthy.
+        </p>
+        <div class="actions-row" style="margin-top:var(--space-4);">
+          <a href="{{ load_error.retry_url }}" class="btn btn-primary btn-lg" data-testid="retry-cta">Try again</a>
+          <a href="{{ load_error.job_url }}" class="btn btn-link">Back to migration</a>
+        </div>
+      {% elif load_error.category == 'missing_source' %}
+        {% if load_error.demo_enabled and load_error.demo_start_url %}
+          <h2 style="margin-top:0;">This demo job is from an older run</h2>
+          <p>
+            This job was created before the latest demo-data persistence fixes,
+            so the PCLaw account list we need for Step&nbsp;3 is no longer on
+            file. Starting a fresh demo takes about a minute &mdash; the new
+            run will have all the reports it needs.
+          </p>
+          <div class="actions-row" style="margin-top:var(--space-4);">
+            <a href="{{ load_error.demo_start_url }}" class="btn btn-primary btn-lg" data-testid="demo-restart-cta">Start a fresh demo run</a>
+            <a href="{{ load_error.reupload_url or load_error.job_url }}" class="btn" data-testid="reupload-cta">Re-upload PCLaw export</a>
+            <a href="{{ load_error.job_url }}" class="btn btn-link">Back to migration</a>
+          </div>
+          <p class="muted" style="margin-top:var(--space-3);font-size:.9rem;">
+            Tip: from the demo workspace you can re-download all bundled
+            sample reports for the new run and walk the full flow from Step&nbsp;1.
+          </p>
+        {% else %}
+          <h2 style="margin-top:0;">We need the PCLaw file again to list your accounts</h2>
+          <p>
+            Your job and its QuickBooks connection are intact, but the original
+            PCLaw export is no longer on file for this job. Re-uploading just
+            this report finishes the match step &mdash; nothing you&rsquo;ve already
+            mapped or imported is lost.
+          </p>
+          <div class="actions-row" style="margin-top:var(--space-4);">
+            <a href="{{ load_error.reupload_url or load_error.job_url }}" class="btn btn-primary btn-lg" data-testid="reupload-cta">Re-upload PCLaw export</a>
+            <a href="{{ load_error.job_url }}" class="btn btn-link">Back to migration</a>
+          </div>
+        {% endif %}
+      {% elif load_error.category == 'service_unavailable' or load_error.category == 'network' %}
+        <h2 style="margin-top:0;">QuickBooks is temporarily unavailable</h2>
+        <p>
+          We couldn&rsquo;t reach QuickBooks just now. This is almost always
+          a brief Intuit-side hiccup. Try again in a minute or two — no
+          changes have been made.
+        </p>
+        <div class="actions-row" style="margin-top:var(--space-4);">
+          <a href="{{ load_error.retry_url }}" class="btn btn-primary btn-lg" data-testid="retry-cta">Try again</a>
+          <a href="{{ load_error.job_url }}" class="btn btn-link">Back to migration</a>
+        </div>
+      {% else %}
+        <h2 style="margin-top:0;">We couldn&rsquo;t load your QuickBooks accounts</h2>
+        <p>
+          Something went wrong while loading your QuickBooks chart of
+          accounts. Try again — if it keeps happening, reconnect
+          QuickBooks or contact support with the diagnostic id below.
+        </p>
+        <div class="actions-row" style="margin-top:var(--space-4);">
+          <a href="{{ load_error.retry_url }}" class="btn btn-primary btn-lg" data-testid="retry-cta">Try again</a>
+          <a href="{{ load_error.reconnect_url }}" class="btn" data-testid="reconnect-cta">Reconnect QuickBooks</a>
+          <a href="{{ load_error.job_url }}" class="btn btn-link">Back to migration</a>
+        </div>
+      {% endif %}
+
+      {% if load_error.intuit_tid or load_error.status_code %}
+        <p class="muted" style="margin-top:var(--space-5);font-size:.85rem;">
+          Diagnostic details (share with support if needed):
+          {% if load_error.status_code %}<span data-testid="error-status">HTTP {{ load_error.status_code }}</span>{% endif %}
+          {% if load_error.status_code and load_error.intuit_tid %} &middot; {% endif %}
+          {% if load_error.intuit_tid %}<span data-testid="error-tid">Intuit reference {{ load_error.intuit_tid }}</span>{% endif %}
+        </p>
+      {% endif %}
+    </section>
+  {% else %}
+
+  {% if create_missing_offer %}
+  <section class="card"
+           id="create-missing-banner"
+           data-testid="create-missing-banner"
+           data-unmatched-count="{{ create_missing_offer.unmatched }}"
+           data-many-unmatched="{{ 'yes' if create_missing_offer.many_unmatched else 'no' }}"
+           data-single-unmatched="{{ 'yes' if create_missing_offer.single_unmatched else 'no' }}"
+           style="padding:var(--space-6);margin-bottom:var(--space-5);border-color:{% if create_missing_offer.many_unmatched %}var(--warning,#b45309){% else %}var(--line){% endif %};background:{% if create_missing_offer.many_unmatched %}var(--warning-bg,#fff7ed){% else %}var(--surface-2,#fafafa){% endif %};">
+    {% if create_missing_offer.single_unmatched %}
+      <h2 style="margin-top:0;" data-testid="create-missing-headline">
+        One account isn&rsquo;t in QuickBooks yet.
+      </h2>
+      <p style="max-width:70ch;">
+        {% if create_missing_offer.unmatched_labels %}
+          <strong data-testid="create-missing-account-label">{{ create_missing_offer.unmatched_labels[0] }}</strong>
+          isn&rsquo;t in QuickBooks yet. We&rsquo;ll add it for you &mdash;
+          no need to open QuickBooks.
+        {% else %}
+          We&rsquo;ll add the missing account to QuickBooks for you &mdash;
+          no need to open QuickBooks.
+        {% endif %}
+      </p>
+    {% elif create_missing_offer.many_unmatched %}
+      <h2 style="margin-top:0;" data-testid="create-missing-headline">A few accounts aren&rsquo;t in QuickBooks yet.</h2>
+      <p style="max-width:70ch;">
+        <strong>{{ create_missing_offer.unmatched }} of {{ create_missing_offer.total }}</strong>
+        accounts aren&rsquo;t in QuickBooks. We&rsquo;ll add them for you
+        in one click &mdash; no need to open QuickBooks.
+      </p>
+    {% else %}
+      <h2 style="margin-top:0;" data-testid="create-missing-headline">A few accounts aren&rsquo;t in QuickBooks yet.</h2>
+      <p style="max-width:70ch;">
+        <strong>{{ create_missing_offer.unmatched }} of {{ create_missing_offer.total }}</strong>
+        accounts need a match. Let us add them for you, or pick a
+        QuickBooks account below.
+      </p>
+    {% endif %}
+    {% if create_missing_offer.unmatched_labels and not create_missing_offer.single_unmatched %}
+      <ul class="muted" data-testid="create-missing-account-list"
+          style="max-width:70ch;font-size:.9rem;margin:var(--space-2) 0 var(--space-3);padding-left:var(--space-5);">
+        {% for lbl in create_missing_offer.unmatched_labels %}
+          <li>{{ lbl }}</li>
+        {% endfor %}
+        {% if create_missing_offer.unmatched > create_missing_offer.unmatched_labels|length %}
+          <li>&hellip; and {{ create_missing_offer.unmatched - create_missing_offer.unmatched_labels|length }} more</li>
+        {% endif %}
+      </ul>
+    {% endif %}
+    <p class="muted" style="max-width:70ch;font-size:.9rem;">
+      This just adds the empty accounts to QuickBooks. No transactions
+      are posted yet.
+      {% if not create_missing_offer.has_coa %}
+        If we&rsquo;re not sure what kind of account it is, we&rsquo;ll
+        ask you to upload your account list first.
+      {% endif %}
+    </p>
+    <div class="actions-row" style="margin-top:var(--space-4);gap:var(--space-3);">
+      <form method="post"
+            action="{{ url_for('ob_account_mapping_create_missing', job_id=job.id) }}"
+            style="display:inline-block;margin:0;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-primary btn-lg" type="submit"
+                data-testid="create-missing-cta">
+          Create missing QuickBooks accounts
+        </button>
+      </form>
+      <form method="post"
+            action="{{ url_for('ob_account_mapping_refresh', job_id=job.id) }}"
+            style="display:inline-block;margin:0;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn" type="submit" data-testid="refresh-qbo-cta">
+          Refresh QuickBooks accounts
+        </button>
+      </form>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if mapping_summary %}
+  {% if mapping_summary.matched_saved == mapping_summary.total and mapping_summary.total > 0 %}
+  <section class="card step-complete-card"
+           data-testid="step3-complete-card"
+           style="padding:var(--space-6);margin-bottom:var(--space-5);border-color:var(--success,#15803d);background:var(--success-bg,#f0fdf4);">
+    <p class="eyebrow" style="margin:0;color:var(--success,#15803d);">
+      Step 3 of 6 &middot; Complete
+    </p>
+    <h2 style="margin:var(--space-2) 0 var(--space-3);">
+      Amazing! We&rsquo;ve matched your accounts.
+    </h2>
+    <p style="max-width:62ch;margin:0 0 var(--space-4);">
+      You&rsquo;re now ready to move on to Step 4.
+    </p>
+  </section>
+  {% endif %}
+  <p class="muted" data-testid="mapping-summary"
+     style="margin:0 0 var(--space-4);font-size:.9rem;">
+    We matched
+    <strong data-testid="summary-matched">{{ mapping_summary.matched }}</strong>
+    of
+    <strong data-testid="summary-total">{{ mapping_summary.total }}</strong>
+    accounts for you.
+    {% if mapping_summary.unmatched %}
+      <strong data-testid="summary-unmatched">{{ mapping_summary.unmatched }}</strong>
+      still need a quick look.
+    {% else %}
+      Looks good &mdash; just save below.
+    {% endif %}
+  </p>
+  {% endif %}
+
+  {# Hidden per-row forms — live OUTSIDE the main save-matches form.
+     Controls inside the table bind to these via the HTML5 form= attribute. #}
+  {% for r in rows %}
+    {% if not r.is_system_calculated and not r.is_saved %}
+      <form id="add-form-{{ r.idx }}"
+            method="post"
+            action="{{ url_for('ob_account_mapping_add_account', job_id=job.id) }}"
+            data-testid="row-add-outer-form-{{ r.idx }}"
+            style="display:none;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="pclaw_number" value="{{ r.pclaw_number or '' }}">
+        <input type="hidden" name="pclaw_name" value="{{ r.pclaw_name or '' }}">
+      </form>
+    {% endif %}
+    {% if r.is_saved or r.is_suggestion %}
+      <form id="undo-form-{{ r.idx }}"
+            method="post"
+            action="{{ url_for('ob_account_mapping_undo', job_id=job.id) }}"
+            data-testid="row-undo-outer-form-{{ r.idx }}"
+            style="display:none;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="pclaw_number" value="{{ r.pclaw_number or '' }}">
+        <input type="hidden" name="pclaw_name" value="{{ r.pclaw_name or '' }}">
+      </form>
+    {% endif %}
+  {% endfor %}
+
+  {% if coa_gap and coa_gap.has_gaps %}
+  <details class="card coa-gap-panel" style="margin-bottom:1.5rem;">
+    <summary style="cursor:pointer;padding:var(--space-4) var(--space-5);display:flex;align-items:center;gap:.5rem;list-style:none;user-select:none;">
+      <span style="display:inline-flex;align-items:center;justify-content:center;width:1.25rem;height:1.25rem;font-size:.75rem;border-radius:50%;background:var(--warn,#f59e0b);color:#fff;flex-shrink:0;">!</span>
+      <strong>Account gap detected</strong>
+      <span style="color:var(--muted);font-size:.875rem;margin-left:.25rem;">
+        —
+        {% set _total = (coa_gap.gl_missing_from_qbo|length) + (coa_gap.tb_missing_from_qbo|length) %}
+        {{ _total }} account{{ 's' if _total != 1 else '' }} missing from QuickBooks
+      </span>
+      <span class="coa-gap-chevron" style="margin-left:auto;font-size:.75rem;color:var(--muted);">▼</span>
+    </summary>
+    <div style="padding:0 var(--space-5) var(--space-4);border-top:1px solid var(--line);">
+      {% if coa_gap.gl_missing_from_qbo %}
+      <p style="margin:.75rem 0 .25rem">
+        <strong>{{ coa_gap.gl_missing_from_qbo|length }} GL account(s) not yet in QuickBooks</strong>
+        — these will block the GL import until created:
+      </p>
+      <ul style="margin:.25rem 0 .75rem;padding-left:1.25rem;font-size:.875rem;">
+        {% for a in coa_gap.gl_missing_from_qbo[:20] %}
+        <li>{% if a.number %}{{ a.number }} — {% endif %}{{ a.name or '(unnamed)' }}</li>
+        {% endfor %}
+        {% if coa_gap.gl_missing_from_qbo|length > 20 %}
+        <li><em>… and {{ coa_gap.gl_missing_from_qbo|length - 20 }} more</em></li>
+        {% endif %}
+      </ul>
+      {% endif %}
+      {% if coa_gap.tb_missing_from_qbo %}
+      <p style="margin:.5rem 0 .25rem">
+        <strong>{{ coa_gap.tb_missing_from_qbo|length }} TB account(s) not yet in QuickBooks</strong>
+        — these will block the opening balance post until created:
+      </p>
+      <ul style="margin:.25rem 0 .75rem;padding-left:1.25rem;font-size:.875rem;">
+        {% for a in coa_gap.tb_missing_from_qbo[:20] %}
+        <li>{% if a.number %}{{ a.number }} — {% endif %}{{ a.name or '(unnamed)' }}</li>
+        {% endfor %}
+        {% if coa_gap.tb_missing_from_qbo|length > 20 %}
+        <li><em>… and {{ coa_gap.tb_missing_from_qbo|length - 20 }} more</em></li>
+        {% endif %}
+      </ul>
+      {% endif %}
+      <p style="margin:.25rem 0 0;font-size:.875rem;color:var(--muted);">
+        Use the <strong>Add to QuickBooks</strong> button on each row below to create missing
+        accounts, then save your matches before proceeding.
+      </p>
+    </div>
+  </details>
+  {% endif %}
+
+  <section class="card" style="padding:0;">
+    <form method="post" id="account-mapping-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      {# Bulk category overrides — hidden fields synced by onchange handlers #}
+      {% for r in rows %}
+        {% if r.needs_category %}
+          <input type="hidden" name="bulk_pclaw_number_{{ r.idx }}"
+                 value="{{ r.pclaw_number or '' }}">
+          <input type="hidden" name="bulk_pclaw_name_{{ r.idx }}"
+                 value="{{ r.pclaw_name or '' }}">
+          <input type="hidden" name="bulk_category_{{ r.idx }}"
+                 id="bulk-cat-{{ r.idx }}" value="">
+        {% endif %}
+      {% endfor %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>PCLaw account</th>
+              <th style="min-width:220px;">QuickBooks account</th>
+              <th>Match <button type="button" id="toggle-all-btn"
+                  onclick="toggleAllOverrides()"
+                  style="background:none;border:none;cursor:pointer;font-size:.85rem;color:var(--muted);padding:0 0 0 .3rem;line-height:1;"
+                  title="Expand / collapse all">&#8853;</button></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in rows %}
+              <tr {% if r.is_system_calculated %}data-testid="row-system-calculated"{% endif %}>
+                <td>
+                  <strong>
+                    {% if r.pclaw_number %}<code>{{ r.pclaw_number }}</code> &middot; {% endif %}{{ r.pclaw_name or '(no name)' }}
+                  </strong>
+                  {% if not r.pclaw_number %}
+                    <p class="muted" style="margin:.2rem 0 0;font-size:.85rem;">No account number</p>
+                  {% endif %}
+                  {% if r.is_system_calculated %}
+                    <p class="muted" data-testid="system-calculated-note"
+                       style="margin:.3rem 0 0;font-size:.85rem;">
+                      QuickBooks calculates this automatically, so we won&rsquo;t
+                      create it as a separate account.
+                    </p>
+                  {% elif r.is_reserved %}
+                    <p class="muted" data-testid="reserved-note"
+                       style="margin:.3rem 0 0;font-size:.85rem;">
+                      QuickBooks manages Retained Earnings internally.
+                      The opening balance will post to
+                      <strong>{{ r.reserved_pclaw_name }}</strong> instead.
+                    </p>
+                  {% endif %}
+                  <input type="hidden" name="pclaw_num[{{ r.idx }}]" value="{{ r.pclaw_number or '' }}">
+                  <input type="hidden" name="pclaw_name[{{ r.idx }}]" value="{{ r.pclaw_name or '' }}">
+                </td>
+                <td>
+                  {% if r.is_system_calculated %}
+                    <span class="muted" style="font-size:.9rem;">No match needed</span>
+                  {% elif r.is_reserved %}
+                    <span class="muted" style="font-size:.9rem;">
+                      Will use <strong>{{ r.reserved_pclaw_name }}</strong>
+                    </span>
+                  {% elif r.creatable %}
+                    <span class="muted" style="font-size:.85rem;">
+                      Will be created in QuickBooks as
+                      <strong>{{ r.pclaw_name or r.pclaw_number }}</strong>
+                    </span>
+                    <details style="margin-top:.4rem;">
+                      <summary style="cursor:pointer;font-size:.8rem;color:var(--muted);">
+                        Change type
+                      </summary>
+                      <div style="margin-top:.3rem;display:flex;flex-direction:column;gap:.3rem;max-width:18rem;">
+                        <select name="account_type"
+                                form="add-form-{{ r.idx }}"
+                                data-detail-target="acct-detail-cr-{{ r.idx }}"
+                                style="width:100%;">
+                          <option value="">&mdash; use inferred type &mdash;</option>
+                          {% for t in coa_override_account_types %}
+                            <option value="{{ t }}">{{ t }}</option>
+                          {% endfor %}
+                        </select>
+                        <select name="detail_type"
+                                id="acct-detail-cr-{{ r.idx }}"
+                                form="add-form-{{ r.idx }}"
+                                style="width:100%;">
+                          <option value="">— default for type —</option>
+                        </select>
+                      </div>
+                    </details>
+                  {% elif r.needs_category %}
+                    <span class="muted" style="font-size:.85rem;">
+                      Will be created in QuickBooks as
+                      <strong>{{ r.pclaw_name or r.pclaw_number }}</strong>
+                    </span>
+                  {% else %}
+                    <select name="mapping[{{ r.idx }}]" style="width:100%;">
+                      <option value="">&mdash; pick an existing QuickBooks account &mdash;</option>
+                      {% for a in qbo_accounts %}
+                        <option value="{{ a.Id }}"
+                          {% if r.current_qbo_id == a.Id %}selected{% endif %}>
+                          {{ a.Name }}{% if a.AcctNum %} ({{ a.AcctNum }}){% endif %} &mdash; {{ ACCOUNT_TYPE_LABELS.get(a.AccountType, a.AccountType) }}
+                        </option>
+                      {% endfor %}
+                    </select>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if r.is_system_calculated %}
+                    <span class="badge" data-testid="badge-system-calculated">
+                      Skipped &mdash; calculated by QuickBooks
+                    </span>
+                  {% elif r.is_reserved %}
+                    <span class="badge" data-testid="badge-reserved"
+                          title="QuickBooks manages this account internally. Opening balance posts to {{ r.reserved_pclaw_name }} instead.">
+                      Reserved &mdash; uses -PCLaw routing
+                    </span>
+                  {% elif r.is_saved %}
+                    <span class="badge success">Saved</span>
+                    <button class="btn btn-sm"
+                            type="submit"
+                            form="undo-form-{{ r.idx }}"
+                            data-testid="row-undo-button-{{ r.idx }}"
+                            style="margin-left:.35rem;">
+                      Change mapping
+                    </button>
+                  {% elif r.is_suggestion %}
+                    <span class="badge">Auto-match</span>
+                    {# Show undo button so the user can dismiss the suggestion and
+                       interact with the row like an unmatched account. #}
+                    {% if r.idx is defined and not r.is_system_calculated %}
+                      <button class="btn btn-sm"
+                              type="button"
+                              data-testid="row-undo-button-{{ r.idx }}"
+                              style="margin-left:.35rem;"
+                              onclick="toggleMappingOverride({{ r.idx }})">
+                        Change mapping
+                      </button>
+                    {% endif %}
+                    {# Override panel — hidden by default. Clicking "Change mapping"
+                       calls toggleMappingOverride() to reveal it. #}
+                    <div id="mapping-override-{{ r.idx }}"
+                         style="display:none;margin:.35rem 0 0;">
+                      <label for="row-category-{{ r.idx }}"
+                             style="display:block;margin:0 0 .25rem;font-size:.8rem;">
+                        What kind of account is this? (to override the auto-match)
+                      </label>
+                      <div style="display:flex;flex-direction:column;gap:.3rem;max-width:18rem;margin:0 0 .35rem 0;">
+                        <select name="account_type"
+                                form="add-form-{{ r.idx }}"
+                                data-detail-target="acct-detail-sg-{{ r.idx }}"
+                                data-testid="row-category-select-{{ r.idx }}"
+                                style="width:100%;">
+                          <option value="">— accept auto-match or pick a type —</option>
+                          {% for t in coa_override_account_types %}
+                            <option value="{{ t }}">{{ t }}</option>
+                          {% endfor %}
+                        </select>
+                        <select name="detail_type"
+                                id="acct-detail-sg-{{ r.idx }}"
+                                form="add-form-{{ r.idx }}"
+                                style="width:100%;">
+                          <option value="">— default for type —</option>
+                        </select>
+                      </div>
+                      <button class="btn btn-sm" type="submit"
+                              form="add-form-{{ r.idx }}"
+                              data-testid="row-add-button-{{ r.idx }}">
+                        Add to QuickBooks (with selected type)
+                      </button>
+                      <p class="muted" style="margin:.25rem 0 0;font-size:.75rem;max-width:36ch;">
+                        Leave blank to accept the auto-match, or pick a category
+                        to create this account with a specific type.
+                      </p>
+                    </div>
+                  {% else %}
+                    <span class="badge error">Unmatched</span>
+                    {# Row-level "Add to QuickBooks" CTA. Three states:
+                       (1) creatable=True -> simple Add button, the safe
+                           type was inferred from the name / COA upload.
+                       (2) needs_category=True -> inline category select
+                           + Add button. No write happens until the user
+                           picks a category.
+                       (3) neither (e.g. dry-run unavailable) -> just the
+                           "Add to QuickBooks" link the banner already
+                           anchored to. #}
+                    {% if r.creatable %}
+                      <div style="margin:.35rem 0 0;">
+                        {% if r.inferred_type_label %}
+                          <p class="muted" data-testid="row-inferred-type-{{ r.idx }}"
+                             style="margin:0 0 .35rem;font-size:.8rem;">
+                            We&rsquo;ll add this as
+                            <strong>{{ r.inferred_type_label }}</strong>.
+                            No transactions are posted.
+                          </p>
+                        {% endif %}
+                        <button class="btn btn-sm" type="submit"
+                                form="add-form-{{ r.idx }}"
+                                data-testid="row-add-button-{{ r.idx }}">
+                          Add this account to QuickBooks
+                        </button>
+                      </div>
+                    {% elif r.needs_category %}
+                      <div style="margin:.35rem 0 0;">
+                        <label for="row-category-{{ r.idx }}"
+                               style="display:block;margin:0 0 .25rem;font-size:.8rem;">
+                          What kind of account is this?
+                        </label>
+                        <div style="display:flex;flex-direction:column;gap:.3rem;max-width:18rem;margin:0 0 .35rem 0;">
+                          <select name="account_type"
+                                  form="add-form-{{ r.idx }}"
+                                  data-detail-target="acct-detail-nc-{{ r.idx }}"
+                                  data-testid="row-category-select-{{ r.idx }}"
+                                  style="width:100%;"
+                                  required>
+                            <option value="">— pick a type —</option>
+                            {% for t in coa_override_account_types %}
+                              <option value="{{ t }}">{{ t }}</option>
+                            {% endfor %}
+                          </select>
+                          <select name="detail_type"
+                                  id="acct-detail-nc-{{ r.idx }}"
+                                  form="add-form-{{ r.idx }}"
+                                  style="width:100%;">
+                            <option value="">— default for type —</option>
+                          </select>
+                        </div>
+                        <button class="btn btn-sm" type="submit"
+                                form="add-form-{{ r.idx }}"
+                                data-testid="row-add-button-{{ r.idx }}">
+                          Add to QuickBooks
+                        </button>
+                        <p class="muted"
+                           style="margin:.25rem 0 0;font-size:.75rem;max-width:36ch;">
+                          We couldn&rsquo;t tell what kind of account this is.
+                          Pick the closest match &mdash; you can always
+                          rename or recategorise it in QuickBooks later.
+                        </p>
+                      </div>
+                    {% else %}
+                      <div style="margin:.35rem 0 0;">
+                        <button class="btn btn-sm" type="submit"
+                                form="add-form-{{ r.idx }}"
+                                data-testid="row-add-button-{{ r.idx }}">
+                          Add this account to QuickBooks
+                        </button>
+                        <p class="muted"
+                           data-testid="row-create-hint-{{ r.idx }}"
+                           style="margin:.35rem 0 0;font-size:.8rem;">
+                           This only creates the empty account, no
+                           transactions are posted.
+                        </p>
+                      </div>
+                    {% endif %}
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      {# ─── Section 2: Customers ───────────────────────────────────────── #}
+      {% if customer_entity_rows %}
+      <div style="padding:var(--space-5) 0;border-top:1px solid var(--line);">
+        <h3 style="margin:var(--space-4) var(--space-6) var(--space-3);font-size:1rem;">
+          Customers ({{ customer_entity_rows|length }})
+        </h3>
+        <div class="table-wrap">
+          <table style="width:100%;">
+            <thead>
+              <tr style="background:var(--surface-2);font-size:.875rem;">
+                <th style="padding:var(--space-2) var(--space-3);text-align:left;">PCLaw Name</th>
+                <th style="padding:var(--space-2) var(--space-3);text-align:left;">Status</th>
+                <th style="padding:var(--space-2) var(--space-3);text-align:left;">Match to existing QBO customer</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in customer_entity_rows %}
+              <tr style="border-bottom:1px solid var(--line);">
+                <td style="padding:var(--space-3);vertical-align:top;">
+                  <strong>{{ row.pclaw_name }}</strong>
+                  <input type="hidden" name="entity_type[{{ loop.index0 }}]" value="{{ row.entity_type }}">
+                  <input type="hidden" name="entity_pclaw_name[{{ loop.index0 }}]" value="{{ row.pclaw_name }}">
+                </td>
+                <td style="padding:var(--space-3);vertical-align:top;">
+                  {% if row.is_new %}
+                    <span class="badge" style="font-size:.75rem;padding:var(--space-1) var(--space-2);">Will be created</span>
+                  {% else %}
+                    <span class="badge success" style="font-size:.75rem;padding:var(--space-1) var(--space-2);">Matched</span>
+                  {% endif %}
+                </td>
+                <td style="padding:var(--space-3);vertical-align:top;">
+                  <select name="entity_match[{{ loop.index0 }}]" style="width:100%;max-width:300px;">
+                    <option value="">&mdash; auto-create &mdash;</option>
+                    {% for entity in qbo_customers %}
+                      <option value="{{ entity.Id }}"
+                        {% if row.saved_qbo_id == entity.Id %}selected{% endif %}>
+                        {{ entity.DisplayName }}
+                      </option>
+                    {% endfor %}
+                  </select>
+                  {% if row.suggestion and not row.saved_qbo_id %}
+                  <p class="muted" style="margin:var(--space-1) 0 0;font-size:.8rem;">
+                    Suggestion: <strong>{{ row.suggestion.DisplayName }}</strong>
+                  </p>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endif %}
+
+      {# ─── Section 3: Vendors ─────────────────────────────────────────── #}
+      {% if vendor_entity_rows %}
+      <div style="padding:var(--space-5) 0;border-top:1px solid var(--line);">
+        <h3 style="margin:var(--space-4) var(--space-6) var(--space-3);font-size:1rem;">
+          Vendors ({{ vendor_entity_rows|length }})
+        </h3>
+        <div class="table-wrap">
+          <table style="width:100%;">
+            <thead>
+              <tr style="background:var(--surface-2);font-size:.875rem;">
+                <th style="padding:var(--space-2) var(--space-3);text-align:left;">PCLaw Name</th>
+                <th style="padding:var(--space-2) var(--space-3);text-align:left;">Status</th>
+                <th style="padding:var(--space-2) var(--space-3);text-align:left;">Match to existing QBO vendor</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in vendor_entity_rows %}
+              <tr style="border-bottom:1px solid var(--line);">
+                <td style="padding:var(--space-3);vertical-align:top;">
+                  <strong>{{ row.pclaw_name }}</strong>
+                  <input type="hidden" name="entity_type[{{ loop.index0 + customer_entity_rows|length }}]" value="{{ row.entity_type }}">
+                  <input type="hidden" name="entity_pclaw_name[{{ loop.index0 + customer_entity_rows|length }}]" value="{{ row.pclaw_name }}">
+                </td>
+                <td style="padding:var(--space-3);vertical-align:top;">
+                  {% if row.is_new %}
+                    <span class="badge" style="font-size:.75rem;padding:var(--space-1) var(--space-2);">Will be created</span>
+                  {% else %}
+                    <span class="badge success" style="font-size:.75rem;padding:var(--space-1) var(--space-2);">Matched</span>
+                  {% endif %}
+                </td>
+                <td style="padding:var(--space-3);vertical-align:top;">
+                  <select name="entity_match[{{ loop.index0 + customer_entity_rows|length }}]" style="width:100%;max-width:300px;">
+                    <option value="">&mdash; auto-create &mdash;</option>
+                    {% for entity in qbo_vendors %}
+                      <option value="{{ entity.Id }}"
+                        {% if row.saved_qbo_id == entity.Id %}selected{% endif %}>
+                        {{ entity.DisplayName }}
+                      </option>
+                    {% endfor %}
+                  </select>
+                  {% if row.suggestion and not row.saved_qbo_id %}
+                  <p class="muted" style="margin:var(--space-1) 0 0;font-size:.8rem;">
+                    Suggestion: <strong>{{ row.suggestion.DisplayName }}</strong>
+                  </p>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endif %}
+
+      <div style="padding:var(--space-5) var(--space-6);border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:var(--space-4);flex-wrap:wrap;">
+        <p class="muted" style="margin:0;font-size:.9rem;max-width:48ch;">
+          Leave a row blank to keep the suggested match.
+        </p>
+        <div class="actions-row">
+          <a href="{{ url_for('job_detail', job_id=job.id) }}" class="btn btn-link">Cancel</a>
+          <button class="btn btn-primary btn-lg" type="submit">Save matches</button>
+        </div>
+      </div>
+    </form>
+  </section>
+
+  <div class="actions-row" data-testid="step3-nav-footer"
+       style="margin-top:var(--space-6);">
+    <a class="btn"
+       href="{{ url_for('dashboard') }}#intake"
+       data-testid="step3-back-to-step2">
+      &larr; Back to Step 2: Upload reports
+    </a>
+    {% if mapping_summary
+          and mapping_summary.matched_saved == mapping_summary.total
+          and mapping_summary.total > 0 %}
+      <a class="btn btn-primary"
+         href="{{ opening_balance_url or url_for('opening_balance_preview', job_id=job.id) }}"
+         data-testid="step3-proceed-to-step4">
+        Review Opening Balance &rarr;
+      </a>
+    {% endif %}
+  </div>
+  {% endif %}
+  <script>
+  // Account type → detail type vocabulary (same as account-mapping.html)
+  const ACCT_DETAIL_TYPES = {
+    "Bank":                    ["Checking","Savings","MoneyMarket","CashOnHand","TrustAccounts"],
+    "Other Current Asset":     ["AllowanceForBadDebts","DevelopmentCosts","EmployeeCashAdvances",
+                                 "OtherCurrentAssets","PrepaidExpenses","Retainage","UndepositedFunds"],
+    "Fixed Asset":             ["AccumulatedDepreciation","Buildings","DepletableAssets",
+                                 "FurnitureAndFixtures","Land","LeaseholdImprovements",
+                                 "MachineryAndEquipment","OtherFixedAssets","Vehicles"],
+    "Other Asset":             ["LeaseBuyout","OtherLongTermAssets","SecurityDeposits"],
+    "Credit Card":             ["CreditCard"],
+    "Other Current Liability": ["DirectDepositPayable","InsurancePayable","LineOfCredit",
+                                 "LoanPayable","OtherCurrentLiabilities","PayrollClearing",
+                                 "SalesTaxPayable","TrustAccountsLiabilities"],
+    "Long Term Liability":     ["NotesPayable","OtherLongTermLiabilities"],
+    "Equity":                  ["AccumulatedAdjustment","CommonStock","EstimatedTaxes",
+                                 "HealthInsurancePremium","HealthSavingsAccountContribution",
+                                 "OpeningBalanceEquity","OwnersEquity","PaidInCapitalOrSurplus",
+                                 "PartnerContributions","PartnerDistributions","PartnerEquity",
+                                 "PersonalExpense","PersonalIncome","PreferredStock","RetainedEarnings"],
+    "Income":                  ["NonProfitIncome","OtherPrimaryIncome","SalesOfProductIncome",
+                                 "ServiceFeeIncome","UnappliedCashPaymentIncome"],
+    "Other Income":            ["DividendIncome","InterestEarned","OtherInvestmentIncome",
+                                 "OtherMiscellaneousIncome","TaxExemptInterest"],
+    "Cost of Goods Sold":      ["CostOfLabor","EquipmentRentalCOGS","GoodsCostOfGoodsSold",
+                                 "OtherCostsOfServicesCOGS","ShippingFreightAndDeliveryCogs"],
+    "Expense":                 ["AdvertisingPromotional","BadDebts","BankCharges","CommissionsAndFees",
+                                 "Entertainment","EntertainmentMeals","EquipmentRental","FilingFees",
+                                 "Insurance","InterestPaid","LegalProfessionalFees","Meals",
+                                 "OfficeExpenses","OtherBusinessExpenses","PenaltiesAndSettlements",
+                                 "Rent","RepairMaintenance","ShippingFreightAndDelivery","Supplies",
+                                 "Taxes","Travel","TravelMeals","Utilities"],
+    "Other Expense":           ["Depreciation","ExchangeGainOrLoss","OtherMiscellaneousExpense",
+                                 "PenaltyForEarlyWithdrawal"],
+  };
+
+  function populateAcctDetailTypes(typeSelect) {
+    const targetId = typeSelect.dataset.detailTarget;
+    const detailSelect = targetId ? document.getElementById(targetId) : null;
+    if (!detailSelect) return;
+    const options = ACCT_DETAIL_TYPES[typeSelect.value] || [];
+    detailSelect.innerHTML = '<option value="">— default for type —</option>';
+    options.forEach(dt => {
+      const opt = document.createElement('option');
+      opt.value = dt;
+      opt.textContent = dt.replace(/([A-Z])/g, ' $1').trim();
+      detailSelect.appendChild(opt);
+    });
+  }
+
+  document.querySelectorAll('select[name="account_type"][data-detail-target]').forEach(sel => {
+    sel.addEventListener('change', () => populateAcctDetailTypes(sel));
+  });
+  </script>
+  <script>
+  (function () {
+    var expanded = false;
+    window.toggleMappingOverride = function (idx) {
+      var panel = document.getElementById('mapping-override-' + idx);
+      if (!panel) return;
+      panel.style.display = panel.style.display === 'none' ? '' : 'none';
+    };
+    window.toggleAllOverrides = function () {
+      expanded = !expanded;
+      var panels = document.querySelectorAll('[id^="mapping-override-"]');
+      panels.forEach(function (p) { p.style.display = expanded ? '' : 'none'; });
+      var btn = document.getElementById('toggle-all-btn');
+      if (btn) btn.innerHTML = expanded ? '&#8854;' : '&#8853;';
+    };
+  }());
+  </script>
+</section>
+{% endblock %}
