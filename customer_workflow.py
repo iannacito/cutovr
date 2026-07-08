@@ -316,13 +316,7 @@ def _stage_cta(
             _url = u("send_to_qbo_entry", "/send-to-qbo") + "#send-to-qbo-card"
         return ("Send to QuickBooks", _url)
     if stage_key == STAGE_RECONCILE:
-        if gl_job_id:
-            try:
-                _url = url_for("reconcile_balances_job", job_id=gl_job_id)
-            except Exception:
-                _url = f"/jobs/{gl_job_id}/reconcile-balances"
-        else:
-            _url = u("reconcile_balances", "/reconcile-balances")
+        _url = u("reconcile_balances", "/reconcile-balances")
         return ("Proceed to Step 6: Reconcile balances", _url)
     return ("", "")
 
@@ -411,9 +405,13 @@ def _stage_nav_url(
     if stage_key == STAGE_IMPORT and gl_job_id:
         return (url_for("send_to_qbo", job_id=gl_job_id)
                 if url_for else f"/jobs/{gl_job_id}/send-to-qbo")
-    if stage_key == STAGE_RECONCILE and gl_job_id:
-        return (url_for("reconcile_balances_job", job_id=gl_job_id)
-                if url_for else f"/jobs/{gl_job_id}/reconcile-balances")
+    if stage_key == STAGE_RECONCILE:
+        if url_for:
+            try:
+                return url_for("reconcile_balances")
+            except Exception:
+                return "/reconcile-balances"
+        return "/reconcile-balances"
 
     table = {
         STAGE_SETUP:     lambda: u("cutover_setup", "/cutover"),
