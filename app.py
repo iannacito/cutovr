@@ -3660,7 +3660,31 @@ def _find_or_create_entity(qbo, kind, name, persisted, created,
                 if existing and existing.get("Id"):
                     entity_id = existing["Id"]
                 else:
-                    raise
+                    # exact-name lookup missed — QBO error body may contain
+                    # the existing entity's Id: "The name supplied already exists. : Id=11"
+                    # Use it directly to bypass the name-match problem.
+                    _body_id = None
+                    try:
+                        import json as _json, re as _re
+                        _fault = _json.loads(getattr(e, "body", "") or "{}")
+                        for _err in (_fault.get("Fault") or {}).get("Error") or []:
+                            _m = _re.search(r"\bId=(\d+)\b", _err.get("Detail", ""))
+                            if _m:
+                                _body_id = _m.group(1)
+                                break
+                    except Exception:  # noqa: BLE001
+                        pass
+                    if _body_id:
+                        _direct = qbo.query(
+                            f"SELECT Id, DisplayName FROM {kind} WHERE Id = '{_body_id}'"
+                        )
+                        _items = (_direct.get("QueryResponse") or {}).get(kind) or []
+                        if _items and _items[0].get("Id"):
+                            entity_id = _items[0]["Id"]
+                        else:
+                            raise
+                    else:
+                        raise
             else:
                 raise
 
