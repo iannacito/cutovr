@@ -260,6 +260,7 @@
       </thead>
       <tbody>
         {% for job in active_batches %}
+        {%- set _eff_status = 'completed' if (job.get('import_summary') and (job.get('report_type') or 'general_ledger') == 'general_ledger') else (job.get('checkpoint') or 'uploaded') -%}
         <tr>
           <td style="width:2rem;">
             <input type="checkbox" name="job_ids" value="{{ job['id'] }}" class="hub-active-check" form="bulk-remove-form">
@@ -275,10 +276,10 @@
             {% elif job.get('report_type') in ('vendor_list', 'customer_list') %}
               <div class="hub-dots">{{ dots2(job.get('checkpoint') or 'uploaded') }}</div>
             {% else %}
-              <div class="hub-dots">{{ dots(job.get('checkpoint') or 'uploaded', checkpoint_steps) }}</div>
+              <div class="hub-dots">{{ dots(_eff_status, checkpoint_steps) }}</div>
             {% endif %}
           </td>
-          <td>{{ status_badge(job.get('checkpoint') or 'uploaded') }}</td>
+          <td>{{ status_badge(_eff_status) }}</td>
           <td class="muted" style="font-size:.8rem;">{{ job.get('updated_at', '—') }}</td>
           <td style="text-align:right;display:flex;gap:var(--space-2);justify-content:flex-end;align-items:center;">
             {% if job.get('report_type') in ('vendor_list', 'customer_list') %}

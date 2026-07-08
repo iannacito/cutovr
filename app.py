@@ -3085,6 +3085,7 @@ def migration_nexus():
         for _raw_key, _parsed_key in [
             ("opening_balance_history_json", "opening_balance_history"),
             ("qbo_results_json",             "qbo_results"),
+            ("import_summary_json",          "import_summary"),
         ]:
             _raw = _j.get(_raw_key)
             if _raw and _parsed_key not in _j:
