@@ -586,23 +586,6 @@
     };
   }());
   </script>
-
-  {% if qbo_connected %}
-  <div class="card" style="margin-top:1.5rem;">
-    <h3 style="margin:0 0 .5rem;">Account Numbers in QuickBooks</h3>
-    <p style="color:var(--muted);margin:0 0 1rem;font-size:.9rem;">
-      Writes your PC Law account numbers to QuickBooks as account numbers.
-      Safe to run more than once — only updates accounts where the number differs.
-    </p>
-    <form method="post"
-          action="{{ url_for('update_qbo_account_numbers', firm_id=firm_id) }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button class="btn btn-secondary" type="submit">
-        Sync account numbers to QuickBooks
-      </button>
-    </form>
-  </div>
-  {% endif %}
 </section>
 
 <script>
