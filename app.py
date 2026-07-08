@@ -2265,19 +2265,308 @@ def send_to_qbo(job_id: str):
 
 @app.route("/jobs/<job_id>/post-ob", methods=["GET", "POST"])
 @login_required
-def post_ob(job_id: str):
-    """Step OB-post: stub redirect until full OB post workflow is synced.
+def post_ob(job_id):
+    """Step 5: Post opening balance to QBO."""
+    job, user = _job_or_403(job_id)
+    if (job.get("report_type") or REPORT_GENERAL_LEDGER) != REPORT_TRIAL_BALANCE:
+        flash("This is not a Trial Balance job.", "error")
+        return redirect(url_for("job_detail", job_id=job_id))
 
-    Full implementation (account mapping for TB accounts, QBO JE creation,
-    revert) lives in migrator/backend/app.py and will be synced in a
-    dedicated patch. For now, redirect to the opening-balance preview so
-    the Trial Balance CTA in Migration Nexus resolves to a valid page.
+    qbo_conn = _get_qbo_connection(job_id)
+    if not qbo_conn:
+        _firm_conns = db.list_qbo_connections_for_firm(user["firm_id"])
+        if _firm_conns:
+            _source = db.get_qbo_connection(_firm_conns[0]["job_id"])
+            if _source and _source.get("access_token_enc") and _source.get("refresh_token_enc"):
+                db.upsert_qbo_connection(
+                    job_id=job_id, firm_id=user["firm_id"],
+                    realm_id=_source["realm_id"],
+                    access_token_enc=_source["access_token_enc"],
+                    refresh_token_enc=_source["refresh_token_enc"],
+                    company_name=_source.get("company_name"),
+                    legal_name=_source.get("legal_name"),
+                    country=_source.get("country"),
+                    expires_at=_source.get("expires_at"),
+                    company_info_error=_source.get("company_info_error"),
+                )
+                jobs.pop(job_id, None)
+                qbo_conn = _get_qbo_connection(job_id)
+    if not qbo_conn:
+        flash("Connect QuickBooks to this firm first.", "error")
+        return redirect(url_for("connect_qbo", job_id=job_id))
+
+    try:
+        qbo, qbo_conn = _get_qbo_client(job_id, user)
+    except QBOAuthExpired as e:
+        tid = getattr(e, "intuit_tid", None)
+        flash("Your QuickBooks connection expired. Please reconnect.", "error")
+        return redirect(url_for("connect_qbo", job_id=job_id))
+
+    tb_rows = _job_trial_balance_rows(job)
+    if not tb_rows:
+        flash("Could not read the Trial Balance. Re-upload and try again.", "error")
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    realm_id = qbo_conn["realm_id"]
+    account_mappings = db.list_account_mappings(user["firm_id"], realm_id, source_type="tb") if qbo_conn else []
+
+    try:
+        qbo_accounts = qbo.get_accounts()
+    except Exception:
+        qbo_accounts = {"QueryResponse": {"Account": []}}
+
+    # Resolve the as-of date the same way opening_balance_preview does:
+    # user's explicit override on this job wins, then cutover.opening_balance_date
+    # (set in Step 1 Setup), then auto-detected from TB rows, then empty.
+    cutover = db.get_cutover_settings(user["firm_id"]) or {}
+    effective_as_of = resolve_opening_balance_date(
+        cutover,
+        tb_rows,
+        override=job.get("opening_balance_date_override"),
+    )
+
+    plan = build_opening_balance_plan(
+        tb_rows,
+        qbo_accounts,
+        as_of_date=effective_as_of or cutover.get("opening_balance_date") or "",
+        account_mappings=account_mappings,
+    )
+
+    if request.method == "POST":
+        if plan.has_blockers:
+            flash("Cannot post: there are unresolved blockers.", "error")
+            return redirect(url_for("opening_balance_preview", job_id=job_id))
+
+        if not QBO_REAL_IMPORT:
+            job["status"] = "Opening balance JE (demo mode)"
+            history_entry = {
+                "created_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                "demo_mode": True,
+                "as_of_date": plan.as_of_date,
+                "total_debit": plan.total_debit,
+                "total_credit": plan.total_credit,
+                "line_count": len(plan.postable_lines),
+                "qbo_je_id": None,
+            }
+            job.setdefault("opening_balance_history", []).append(history_entry)
+            job["checkpoint"] = "completed"
+            _save_job(job_id)
+            _audit("opening_balance_demo", target_type="job", target_id=job_id,
+                   details=f"lines={len(plan.postable_lines)}")
+            flash("Demo mode: journal entry not posted. Set QBO_REAL_IMPORT=1 to post real entries.", "info")
+            return redirect(url_for("post_ob", job_id=job_id))
+
+        # Create any pclaw_suffix accounts (AR-PCLaw, AP-PCLaw, Retained
+        # Earnings-PCLaw, Net Income-PCLaw) that don't yet exist in QBO.
+        # These are needed before build_opening_je_payload() can produce a
+        # valid payload — without them qbo_account_id is None and QBO returns
+        # 400 "AccountRef missing" on those lines.
+        _all_plan_lines = list(plan.lines)
+        for _pline in _all_plan_lines:
+            if not _pline.pclaw_suffix_needed or _pline.qbo_account_id:
+                continue
+            _suffix_name = _pline.pclaw_suffix_name or ""
+            _spec = _pline.pclaw_suffix_spec or {}
+            if not _suffix_name:
+                continue
+            try:
+                _existing_pclaw = qbo.find_account_by_name(_suffix_name)
+                if _existing_pclaw:
+                    _pline.qbo_account_id = str(_existing_pclaw.get("Id") or "")
+                    _pline.qbo_account_name = _existing_pclaw.get("Name") or _suffix_name
+                else:
+                    _create_payload = {
+                        "Name": _suffix_name,
+                        "AccountType": _spec.get("AccountType", "Equity"),
+                    }
+                    if _spec.get("AccountSubType"):
+                        _create_payload["AccountSubType"] = _spec["AccountSubType"]
+                    _created_acct_resp = qbo.create_account(_create_payload)
+                    _created_acct = (
+                        (_created_acct_resp or {}).get("Account")
+                        or _created_acct_resp
+                        or {}
+                    )
+                    _pline.qbo_account_id = str(_created_acct.get("Id") or "")
+                    _pline.qbo_account_name = (
+                        _created_acct.get("Name") or _suffix_name
+                    )
+                    _audit(
+                        "ob_pclaw_suffix_created",
+                        target_type="job", target_id=job_id,
+                        details=f"created {_suffix_name!r} id={_pline.qbo_account_id}",
+                    )
+            except QBOError as _pclaw_exc:
+                flash(
+                    f"Could not create '{_suffix_name}' in QuickBooks: {_pclaw_exc}. "
+                    "Create it manually in QuickBooks first, then retry.",
+                    "error",
+                )
+                return redirect(url_for("post_ob", job_id=job_id))
+
+        payload = build_opening_je_payload(plan)
+        try:
+            response = qbo.create_journal_entry(payload)
+        except QBOError as e:
+            flash(f"Could not post JE to QuickBooks. {e}", "error")
+            return redirect(url_for("post_ob", job_id=job_id))
+        except Exception as e:
+            flash("Could not post JE. Try again.", "error")
+            return redirect(url_for("post_ob", job_id=job_id))
+
+        je = (response or {}).get("JournalEntry") or {}
+        je_id = str(je.get("Id") or "")
+        history_entry = {
+            "created_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            "as_of_date": plan.as_of_date,
+            "total_debit": plan.total_debit,
+            "total_credit": plan.total_credit,
+            "line_count": len(plan.postable_lines),
+            "qbo_je_id": je_id,
+            "realm_id": qbo_conn.get("realm_id"),
+            "company_name": qbo_conn.get("company_name"),
+        }
+        job.setdefault("opening_balance_history", []).append(history_entry)
+        job["status"] = f"Opening balance JE posted (#{je_id})"
+        # Mark checkpoint complete so Migration Nexus "Opening Balances" setup
+        # card shows "✓ Complete" and ob_done evaluates to True.
+        job["checkpoint"] = "completed"
+        _save_job(job_id)
+        flash(f"Opening balance JE #{je_id} posted to QuickBooks.", "success")
+        return redirect(url_for("post_ob", job_id=job_id))
+
+    from tb_workflow import build_tb_stages, tb_stages_context
+    ob_posted = bool(job.get("opening_balance_history"))
+    _tb_stages = build_tb_stages(
+        job, url_for=url_for,
+        mapping_saved=bool(account_mappings),
+        plan_ready=(not plan.has_blockers and plan.balanced),
+        cutover_done=True,
+    )
+    wf_ctx = tb_stages_context(_tb_stages)
+
+    return render_template(
+        "post-ob.html",
+        job=job,
+        plan=plan.to_dict(),
+        qbo_conn=qbo_conn,
+        qbo_real_import=QBO_REAL_IMPORT,
+        **wf_ctx,
+    )
+
+
+@app.route("/jobs/<string:job_id>/set-opening-balance-date", methods=["POST"])
+@login_required
+def set_opening_balance_date(job_id):
+    """Save the opening-balance 'as of' date override from the TB card."""
+    job, user = _job_or_403(job_id)
+    as_of = (request.form.get("as_of_date") or "").strip()
+    if as_of and is_iso_date(as_of):
+        job["opening_balance_date_override"] = as_of
+        _save_job(job_id)
+    elif as_of:
+        flash("Enter the date as YYYY-MM-DD.", "error")
+    return redirect(url_for("uploaded_reports"))
+
+
+@app.route("/jobs/<job_id>/revert-ob", methods=["POST"])
+@login_required
+def revert_ob(job_id: str):
+    """Delete the most recently posted opening-balance JE from QBO and clear
+    the local opening_balance_history so the user can re-post after fixing
+    account mappings.
     """
-    job, _user = _job_or_403(job_id)
-    if not job:
-        flash("Job not found.", "error")
-        return redirect(url_for("dashboard"))
-    return redirect(url_for("opening_balance_preview", job_id=job_id))
+    job, user = _job_or_403(job_id)
+    history = job.get("opening_balance_history") or []
+    if not history:
+        flash("Nothing to revert: no opening balance has been posted.", "info")
+        return redirect(url_for("post_ob", job_id=job_id))
+
+    last_entry = history[-1]
+    je_id = last_entry.get("qbo_je_id")
+
+    if je_id:
+        qbo_conn = db.get_qbo_connection(user["firm_id"])
+        if not qbo_conn:
+            flash("QuickBooks is not connected. Reconnect and try again.", "error")
+            return redirect(url_for("post_ob", job_id=job_id))
+        try:
+            qbo = QBOClient(
+                access_token=decrypt_token(qbo_conn["access_token_enc"]),
+                realm_id=qbo_conn["realm_id"],
+                environment=QBO_ENVIRONMENT,
+            )
+            # Fetch current SyncToken — QBO requires it for delete
+            je_record = qbo.get_journal_entry(je_id)
+            if je_record:
+                sync_token = str(je_record.get("SyncToken") or "0")
+                qbo.delete_journal_entry(je_id, sync_token)
+                _audit(
+                    "ob_je_reverted",
+                    target_type="job", target_id=job_id,
+                    details=f"deleted QBO JE #{je_id}",
+                )
+                flash(f"Opening balance JE #{je_id} deleted from QuickBooks.", "success")
+            else:
+                # JE not found in QBO — already deleted or wrong realm; clear local anyway
+                flash(
+                    f"JE #{je_id} not found in QuickBooks (may already be deleted). "
+                    "Local record cleared.",
+                    "warning",
+                )
+                _audit(
+                    "ob_je_revert_not_found",
+                    target_type="job", target_id=job_id,
+                    details=f"JE #{je_id} not found in QBO during revert",
+                )
+        except QBOError as e:
+            flash(f"Could not delete JE #{je_id} from QuickBooks: {e}", "error")
+            return redirect(url_for("post_ob", job_id=job_id))
+    else:
+        # Demo-mode entry — no real JE to delete
+        flash("Demo posting record cleared.", "info")
+
+    # Clear local history, reset job status and checkpoint
+    job["opening_balance_history"] = []
+    job["status"] = "Ready to post opening balance"
+    job["checkpoint"] = "uploaded"
+    _save_job(job_id)
+    return redirect(url_for("post_ob", job_id=job_id))
+
+
+@app.route("/jobs/<job_id>/reconcile-ob", methods=["GET"])
+@login_required
+def reconcile_ob(job_id):
+    """Step 6: Show opening balance posting result."""
+    job, user = _job_or_403(job_id)
+    if (job.get("report_type") or REPORT_GENERAL_LEDGER) != REPORT_TRIAL_BALANCE:
+        flash("This is not a Trial Balance job.", "error")
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    if not job.get("opening_balance_history"):
+        flash("Finish Step 5 (Post Opening Balance) first.", "error")
+        return redirect(url_for("post_ob", job_id=job_id))
+
+    qbo_conn = _get_qbo_connection(job_id)
+    hist = job.get("opening_balance_history", [{}])
+    posting = hist[-1] if isinstance(hist, list) and hist else {}
+
+    from tb_workflow import build_tb_stages, tb_stages_context
+    _tb_stages = build_tb_stages(
+        job, url_for=url_for,
+        mapping_saved=True,
+        plan_ready=True,
+        cutover_done=True,
+    )
+    wf_ctx = tb_stages_context(_tb_stages)
+
+    return render_template(
+        "reconcile-ob.html",
+        job=job,
+        posting=posting,
+        qbo_conn=qbo_conn,
+        **wf_ctx,
+    )
 
 
 def _build_reconcile_view(firm_id):
@@ -3079,6 +3368,26 @@ def push_entity_list(job_id):
         return redirect(url_for("migration_nexus"))
 
     qbo_conn = _get_qbo_connection(job_id)
+    if not qbo_conn:
+        _firm_conns = db.list_qbo_connections_for_firm(user["firm_id"])
+        if _firm_conns:
+            _source = db.get_qbo_connection(_firm_conns[0]["job_id"])
+            if _source and _source.get("access_token_enc") and _source.get("refresh_token_enc"):
+                db.upsert_qbo_connection(
+                    job_id=job_id,
+                    firm_id=user["firm_id"],
+                    realm_id=_source["realm_id"],
+                    access_token_enc=_source["access_token_enc"],
+                    refresh_token_enc=_source["refresh_token_enc"],
+                    company_name=_source.get("company_name"),
+                    legal_name=_source.get("legal_name"),
+                    country=_source.get("country"),
+                    expires_at=_source.get("expires_at"),
+                    company_info_error=_source.get("company_info_error"),
+                )
+                jobs.pop(job_id, None)
+                qbo_conn = _get_qbo_connection(job_id)
+
     if not qbo_conn:
         flash("Connect QuickBooks before pushing the entity list.", "error")
         return redirect(url_for("migration_nexus"))
@@ -5691,6 +6000,22 @@ def job_detail(job_id):
     )
 
     report_type = job.get("report_type") or REPORT_GENERAL_LEDGER
+
+    # TB jobs get 6-step TB stepper; GL gets multi-job checklist stepper
+    extra_ctx = {}
+    if report_type == REPORT_TRIAL_BALANCE:
+        import tb_workflow
+        _realm = (qbo_conn or {}).get("realm_id")
+        _has_mappings = bool(db.list_account_mappings(_user["firm_id"], _realm, source_type="tb")) if _realm else False
+        _ob_posted = bool(job.get("opening_balance_history"))
+        _tb_stages = tb_workflow.build_tb_stages(
+            job, url_for=url_for,
+            mapping_saved=_has_mappings,
+            plan_ready=False,
+            cutover_done=True,
+        )
+        extra_ctx = tb_workflow.tb_stages_context(_tb_stages)
+
     return render_template(
         "job-detail.html",
         job=job,
@@ -5705,14 +6030,14 @@ def job_detail(job_id):
         report_type=report_type,
         report_label=REPORT_LABELS.get(report_type, REPORT_LABELS[REPORT_GENERAL_LEDGER]),
         qbo_behavior=REPORT_QBO_BEHAVIOR.get(report_type, "importable"),
-        **_workflow_stepper_context(
+        **(extra_ctx or _workflow_stepper_context(
             _user["firm_id"],
             gl_job_id=(
                 job_id
                 if (job.get("report_type") or "") == "general_ledger"
                 else None
             ),
-        ),
+        )),
     )
 
 
@@ -6690,16 +7015,37 @@ def opening_balance_preview(job_id):
         flash("Could not read the Trial Balance upload. Re-upload and try again.", "error")
         return redirect(url_for("job_detail", job_id=job_id))
 
+    # Inherit firm QBO connection if this TB job has none.
+    # Same pattern as account_mapping() — Bug 30 fix.
+    if not _get_qbo_connection(job_id):
+        _firm_conns = db.list_qbo_connections_for_firm(user["firm_id"])
+        if _firm_conns:
+            _source = db.get_qbo_connection(_firm_conns[0]["job_id"])
+            if _source and _source.get("access_token_enc") and _source.get("refresh_token_enc"):
+                db.upsert_qbo_connection(
+                    job_id=job_id,
+                    firm_id=user["firm_id"],
+                    realm_id=_source["realm_id"],
+                    access_token_enc=_source["access_token_enc"],
+                    refresh_token_enc=_source["refresh_token_enc"],
+                    company_name=_source.get("company_name"),
+                    legal_name=_source.get("legal_name"),
+                    country=_source.get("country"),
+                    expires_at=_source.get("expires_at"),
+                    company_info_error=_source.get("company_info_error"),
+                )
+                jobs.pop(job_id, None)
+
     qbo_error: Optional[str] = None
     try:
         qbo, qbo_conn = _get_qbo_client(job_id, user)
     except QBOAuthExpired:
         flash(
-            "Your QuickBooks connection has expired. Reconnect from the "
-            "migration dashboard, then open the Opening Balance page again.",
+            "Your QuickBooks connection has expired. Please reconnect from "
+            "the migration dashboard, then return to this page.",
             "error",
         )
-        return redirect(url_for("migration_nexus"))
+        return redirect(url_for("migration_hub"))
     if not qbo:
         qbo_error = (
             "Connect QuickBooks to resolve TB accounts and (eventually) "
@@ -6723,7 +7069,7 @@ def opening_balance_preview(job_id):
                 details=str(exc)[:200],
             )
         account_mappings = db.list_account_mappings(
-            user["firm_id"], qbo_conn["realm_id"]
+            user["firm_id"], qbo_conn["realm_id"], source_type="tb"
         ) if qbo_conn else []
 
     cutover = db.get_cutover_settings(user["firm_id"]) or {}
@@ -6774,49 +7120,29 @@ def opening_balance_preview(job_id):
         coa_type_overrides=coa_state["coa_type_overrides"],
     )
 
-    confirmation_error: Optional[str] = None
-    # A POST from the date-selector form (no confirmation phrase) only
-    # updates the posting date and re-renders the plan — it must not be
-    # treated as a failed confirmation attempt.
-    is_confirm_submit = request.method == "POST" and "confirm_post" in request.form
-    if request.method == "POST" and not is_confirm_submit:
+    # POST from date-selector form only updates posting date and re-renders.
+    if request.method == "POST":
         if posting_date_error:
             flash(posting_date_error, "error")
         elif submitted_date:
             flash(
                 f"Starting-balance date set to {submitted_date}. Review the "
-                "plan below, then confirm to post.",
+                "plan below before proceeding to Step 5.",
                 "success",
             )
-    elif is_confirm_submit:
-        phrase = (request.form.get("confirm_post") or "").strip().upper()
-        if phrase != OPENING_BALANCE_CONFIRMATION_PHRASE:
-            confirmation_error = (
-                f"Type {OPENING_BALANCE_CONFIRMATION_PHRASE} exactly to "
-                "confirm. Nothing was posted."
-            )
-            _audit(
-                "opening_balance_confirmation_failed",
-                target_type="job", target_id=job_id,
-                details=f"phrase={phrase!r}",
-            )
-        elif plan.has_blockers:
-            confirmation_error = (
-                "Cannot post: the plan has blockers (unbalanced TB or "
-                "rows that don't resolve to a QBO account). Fix them "
-                "before confirming."
-            )
-            _audit(
-                "opening_balance_confirmation_blocked",
-                target_type="job", target_id=job_id,
-                details=f"blocker_count={len(plan.blockers)}",
-            )
-        elif not qbo:
-            confirmation_error = (
-                "Connect QuickBooks before confirming. Nothing was posted."
-            )
-        else:
-            return _opening_balance_post(job, user, qbo, qbo_conn, plan)
+
+    # TB 6-step workflow stepper (Step 4: Review)
+    from tb_workflow import build_tb_stages, tb_stages_context
+    mapping_done = bool(db.list_account_mappings(user["firm_id"],
+                        qbo_conn["realm_id"] if qbo_conn else None,
+                        source_type="tb"))
+    _tb_stages = build_tb_stages(
+        job, url_for=url_for,
+        mapping_saved=mapping_done,
+        plan_ready=(not plan.has_blockers and plan.balanced),
+        cutover_done=True,
+    )
+    wf_ctx = tb_stages_context(_tb_stages)
 
     return render_template(
         "opening-balance.html",
@@ -6826,8 +7152,6 @@ def opening_balance_preview(job_id):
         coa_job_id=(coa_state["coa_job"] or {}).get("id"),
         qbo_connection=qbo_conn or {},
         qbo_error=qbo_error,
-        confirmation_phrase=OPENING_BALANCE_CONFIRMATION_PHRASE,
-        confirmation_error=confirmation_error,
         report_label=REPORT_LABELS[REPORT_TRIAL_BALANCE],
         posting_date=effective_as_of,
         posting_date_source=(
@@ -6840,6 +7164,8 @@ def opening_balance_preview(job_id):
             "production" if (QBO_ENVIRONMENT or "").lower() == "production"
             else "sandbox"
         ),
+        ob_already_posted=bool(job.get("import_summary")),
+        **wf_ctx,
     )
 
 
@@ -6878,8 +7204,6 @@ def _opening_balance_post(job, user, qbo, qbo_conn, plan):
         )
         return redirect(url_for("opening_balance_preview", job_id=job_id))
 
-    payload = build_opening_je_payload(plan)
-
     def _record_opening_failure(message, intuit_tid=None):
         """Persist a retryable failure on the job without breaking the flow.
 
@@ -6907,6 +7231,75 @@ def _opening_balance_post(job, user, qbo, qbo_conn, plan):
         job["status"] = "Opening balance posting failed (retryable)"
         _save_job(job_id)
 
+    tb_rows = _job_trial_balance_rows(job)
+    account_mappings = (
+        db.list_account_mappings(user["firm_id"], qbo_conn["realm_id"], source_type="tb")
+        if qbo_conn else []
+    )
+    try:
+        qbo_accounts = qbo.get_accounts()
+    except Exception:  # noqa: BLE001
+        qbo_accounts = {"QueryResponse": {"Account": []}}
+
+    # Pre-create all -PCLaw accounts the plan needs (AR-PCLaw, AP-PCLaw,
+    # RE-PCLaw, NI-PCLaw). Deduplicate by pclaw_suffix_name so RE-PCLaw
+    # isn't created twice when both a direct RE row and the NI closing pair
+    # reference it.
+    pclaw_to_create: dict[str, dict] = {}
+    for line in plan.lines:
+        if (
+            line.pclaw_suffix_needed
+            and line.pclaw_suffix_name
+            and line.pclaw_suffix_spec
+            and line.pclaw_suffix_name not in pclaw_to_create
+        ):
+            pclaw_to_create[line.pclaw_suffix_name] = line.pclaw_suffix_spec
+
+    if pclaw_to_create:
+        created_any = False
+        for acct_name, spec in pclaw_to_create.items():
+            try:
+                qbo.create_account({
+                    "Name": acct_name,
+                    "AccountType": spec["AccountType"],
+                    "AccountSubType": spec["AccountSubType"],
+                    "Description": (
+                        "PCLaw migration: opening balance account "
+                        f"(reserved QBO account — posted separately)."
+                    ),
+                })
+                _audit(
+                    "opening_balance_pclaw_account_created",
+                    target_type="job", target_id=job["id"],
+                    details=f"name={acct_name!r}",
+                )
+                created_any = True
+            except Exception as exc:  # noqa: BLE001
+                _log.warning(
+                    "opening_balance: failed to create %r — %s",
+                    acct_name, exc,
+                )
+        if created_any:
+            try:
+                refreshed_accounts = qbo.get_accounts()
+            except Exception:  # noqa: BLE001
+                refreshed_accounts = qbo_accounts
+            plan = build_opening_balance_plan(
+                tb_rows,
+                refreshed_accounts,
+                as_of_date=plan.as_of_date,
+                account_mappings=account_mappings,
+            )
+            if plan.has_blockers:
+                _record_opening_failure("Some -PCLaw accounts could not be created.")
+                flash(
+                    "Some -PCLaw accounts could not be created in QuickBooks. "
+                    "Check the per-row table below and resolve remaining blockers.",
+                    "error",
+                )
+                return redirect(url_for("opening_balance_preview", job_id=job["id"]))
+
+    payload = build_opening_je_payload(plan)
     try:
         response = qbo.create_journal_entry(payload)
     except QBOError as e:
