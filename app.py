@@ -9145,7 +9145,7 @@ def preview_import(job_id):
             force_current_stage=customer_workflow.STAGE_REVIEW,
             review_blocker=review_blocker,
             review_job_id=job["id"],
-            import_job_id=job["id"],
+            gl_job_id=job["id"],
         ),
     )
 
