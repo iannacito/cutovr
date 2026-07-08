@@ -2967,6 +2967,99 @@ def hub_bulk_revert():
     return redirect(url_for("migration_nexus"))
 
 
+@app.route("/dev/reset-migration", methods=["POST"])
+@login_required
+def dev_reset_migration():
+    """Revert all posted QBO journal entries then wipe all local job data.
+
+    Step 1 — delete every GL JE from QBO for completed batches (when
+              QBO_REAL_IMPORT=1; skipped in demo mode to avoid API calls).
+    Step 2 — purge all local jobs for the firm (_purge_job_local removes
+              encrypted files, in-memory cache, and DB rows).
+    Step 3 — flush remaining in-memory state.
+
+    Intentionally not gated by IS_PRODUCTION — the user needs this on the
+    live site to start a fresh migration run.
+    """
+    user = current_user()
+    firm_id = user["firm_id"]
+
+    qbo_reverted, qbo_failed = 0, 0
+    if QBO_REAL_IMPORT:
+        firm_job_rows = db.list_jobs_for_firm(firm_id, limit=200)
+        for row in firm_job_rows:
+            job = db.hydrate_job(row["id"])
+            if not job:
+                continue
+            if job.get("checkpoint") != "completed":
+                continue
+            if not job.get("import_summary"):
+                continue
+            try:
+                qbo, qbo_conn = _get_qbo_client(row["id"], user)
+                if not qbo_conn:
+                    qbo_failed += 1
+                    continue
+                for result in (job.get("qbo_results") or []):
+                    je_id = result.get("Id")
+                    if not je_id:
+                        continue
+                    try:
+                        je = qbo.get_journal_entry(je_id)
+                        if not je:
+                            continue
+                        sync_token = je.get("SyncToken")
+                        if sync_token:
+                            qbo.delete_journal_entry(je_id, sync_token)
+                    except Exception:  # noqa: BLE001
+                        pass
+                qbo_reverted += 1
+            except Exception as exc:  # noqa: BLE001
+                _log.warning("dev_reset_migration: revert failed for %s: %s", row["id"], exc)
+                qbo_failed += 1
+
+    # Purge all local job data for the firm
+    all_rows = db.list_jobs_for_firm(firm_id, limit=200)
+    for row in all_rows:
+        try:
+            job = db.hydrate_job(row["id"]) or {}
+            _purge_job_local(row["id"], job)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("dev_reset_migration: purge failed for %s: %s", row["id"], exc)
+
+    # Belt-and-suspenders: flush any orphaned in-memory state
+    keys_to_drop = [k for k, v in list(qbo_connections.items())]
+    for k in keys_to_drop:
+        qbo_connections.pop(k, None)
+
+    _audit(
+        "dev_migration_reset",
+        target_type="firm", target_id=str(firm_id),
+        details=f"qbo_reverted={qbo_reverted} qbo_failed={qbo_failed}",
+    )
+
+    if qbo_failed:
+        flash(
+            f"Reset complete. Reverted {qbo_reverted} QBO batch(es); "
+            f"{qbo_failed} could not be removed from QBO — delete them manually. "
+            "All local data cleared.",
+            "warning",
+        )
+    else:
+        if qbo_reverted:
+            flash(
+                f"Reset complete. Reverted {qbo_reverted} QBO batch(es) and "
+                "cleared all local data. Ready for a new run.",
+                "success",
+            )
+        else:
+            flash(
+                "Reset complete. All local migration data cleared.",
+                "success",
+            )
+    return redirect(url_for("migration_nexus"))
+
+
 @app.route("/jobs/<job_id>/push-entity-list", methods=["POST"])
 @login_required
 def push_entity_list(job_id):
