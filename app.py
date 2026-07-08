@@ -3675,14 +3675,10 @@ def _find_or_create_entity(qbo, kind, name, persisted, created,
                     except Exception:  # noqa: BLE001
                         pass
                     if _body_id:
-                        _direct = qbo.query(
-                            f"SELECT Id, DisplayName FROM {kind} WHERE Id = '{_body_id}'"
-                        )
-                        _items = (_direct.get("QueryResponse") or {}).get(kind) or []
-                        if _items and _items[0].get("Id"):
-                            entity_id = _items[0]["Id"]
-                        else:
-                            raise
+                        # QBO confirmed the entity exists at this Id — use it
+                        # directly. No extra lookup needed; inactive/duplicate
+                        # entities are fine to reference in JE lines.
+                        entity_id = _body_id
                     else:
                         raise
             else:
