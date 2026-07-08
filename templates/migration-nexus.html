@@ -395,7 +395,11 @@
           <td>{{ status_badge('completed') }}</td>
           <td class="muted" style="font-size:.8rem;">{{ job.get('updated_at', '—') }}</td>
           <td style="text-align:right;display:flex;gap:var(--space-2);justify-content:flex-end;align-items:center;">
-            <a href="{{ url_for('job_detail', job_id=job['id']) }}" class="btn btn-sm">View results</a>
+            {% if job.get('report_type') == 'trial_balance' %}
+              <a href="{{ url_for('reconcile_ob', job_id=job['id']) }}" class="btn btn-sm">View results</a>
+            {% else %}
+              <a href="{{ url_for('job_detail', job_id=job['id']) }}" class="btn btn-sm">View results</a>
+            {% endif %}
             <form action="{{ url_for('hub_remove_job', job_id=job['id']) }}" method="post"
                   style="display:inline"
                   onsubmit="return confirm('Remove this batch locally? This does not affect QBO.');">
