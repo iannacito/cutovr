@@ -3618,6 +3618,19 @@ def _resolve_entity_hints(qbo, payloads, customer_index=None, vendor_index=None,
     return created
 
 
+def _sanitize_qbo_display_name(name: str) -> str:
+    """Strip characters QBO rejects in DisplayName (error 2040).
+
+    QBO's DisplayName field rejects colons and several other special
+    characters, returning error code 2040 "Invalid String".  Sanitise
+    before every find/create call so the vendor or customer name is
+    accepted regardless of what PCLaw stores in the description column.
+    """
+    sanitized = re.sub(r'[:<>|*"\\?]', '', str(name or ''))
+    sanitized = re.sub(r' {2,}', ' ', sanitized).strip()
+    return sanitized[:100]  # QBO DisplayName max is 100 chars
+
+
 def _find_or_create_entity(qbo, kind, name, persisted, created,
                            firm_id=None, realm_id=None):
     """Resolve ``name`` to a QuickBooks entity Id, creating it if needed.
@@ -3635,6 +3648,7 @@ def _find_or_create_entity(qbo, kind, name, persisted, created,
     Any newly created or freshly resolved Id is written back to the
     persisted map so the next run skips straight to step 1.
     """
+    name = _sanitize_qbo_display_name(name)
     norm = entity_resolution._normalize_name(name)
     cached_id = persisted.get((kind, norm))
     if cached_id:
@@ -8649,8 +8663,7 @@ def _import_to_qbo_impl(job_id):
                 )
                 tid_suffix = f" (Intuit support reference: {e.intuit_tid})" if e.intuit_tid else ""
                 flash(
-                    "Could not set up the Customer/Vendor required by QBO for "
-                    f"Accounts Receivable / Accounts Payable lines: {e}{tid_suffix}",
+                    f"Could not create Name in QuickBooks: {e}{tid_suffix}",
                     "error",
                 )
                 return redirect(url_for("job_detail", job_id=job_id))
