@@ -396,3 +396,33 @@ class ImportHistory:
                 ).fetchone()
                 imp["reversal"] = dict(rev) if rev else None
         return imports
+
+    def delete_import_record(self, import_id: int) -> None:
+        """Remove a single import history record so the file can be re-imported.
+
+        Cascading delete removes related rows in imported_transactions and
+        imported_entities (FOREIGN KEY constraints handle it automatically).
+        """
+        with self._conn() as c:
+            c.execute("DELETE FROM imports WHERE id = ?", (import_id,))
+
+    def delete_by_id(self, import_id: int) -> bool:
+        """Delete one import record (and its child rows via CASCADE).
+
+        Returns True if a row was deleted, False if not found.
+        """
+        with self._conn() as c:
+            cur = c.execute("DELETE FROM imports WHERE id = ?", (import_id,))
+            return cur.rowcount > 0
+
+    def delete_all_for_firm_realm(self, realm_id: str) -> int:
+        """Delete ALL import records for a given QBO realm.
+
+        Returns count of deleted rows. Used by /dev/reset-migration to purge
+        import history when wiping a firm's local data.
+        """
+        with self._conn() as c:
+            cur = c.execute(
+                "DELETE FROM imports WHERE realm_id = ?", (realm_id,)
+            )
+            return cur.rowcount

@@ -306,6 +306,15 @@ def derive_entity_hint(row, account_type):
         name = _first_entity_value(row, _VENDOR_KEY_CANDIDATES)
         identifier = _first_entity_value(row, _VENDOR_ID_CANDIDATES)
         return ("Vendor", name or DEFAULT_VENDOR_NAME, identifier)
+
+    # Non-AR/AP lines (Income, Expense, Bank, Other, unknown): QBO accepts an
+    # optional Vendor entity on any JE line to populate the Name column. Use
+    # the PCLaw "Rcvd/Pd to" column when present; Vendor (not Customer) avoids
+    # find-or-create-Customer 6240s on Income lines.
+    name = _first_entity_value(row, _VENDOR_KEY_CANDIDATES)
+    if name:
+        identifier = _first_entity_value(row, _VENDOR_ID_CANDIDATES)
+        return ("Vendor", name, identifier)
     return None
 
 

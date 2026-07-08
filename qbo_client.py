@@ -150,7 +150,7 @@ class QBOClient:
         return response.json()
 
     def get_accounts(self):
-        return self.query("SELECT Id, Name, AcctNum, AccountType, Active FROM Account MAXRESULTS 1000")
+        return self.query("SELECT Id, Name, AcctNum, AccountType, AccountSubType, Active FROM Account MAXRESULTS 1000")
 
     def get_company_info(self):
         """Return the connected company's CompanyInfo for the current realmId.
@@ -438,6 +438,23 @@ class QBOClient:
             url, headers=self._headers(), json={"DisplayName": display_name}, timeout=30
         )
         tid = self._record_tid(response)
+        if response.status_code == 400:
+            # 6240 = Duplicate Name Exists. The find-before-create check can miss
+            # the entity due to case/whitespace differences or prior partial runs.
+            # Fall back to a second lookup; if found, return it as if we created it.
+            try:
+                errors = (response.json().get("Fault") or {}).get("Error") or []
+                if any(str(e.get("code")) == "6240" for e in errors):
+                    _log.warning(
+                        "create_customer 6240 for %r — entity already exists in QBO; "
+                        "falling back to find_customer_by_name",
+                        display_name,
+                    )
+                    existing = self.find_customer_by_name(display_name)
+                    if existing:
+                        return existing
+            except Exception:  # noqa: BLE001
+                pass  # fall through to generic raise below
         if response.status_code >= 400:
             raise QBOError(
                 f"QBO returned {response.status_code} creating Customer: {response.text}",
@@ -459,6 +476,21 @@ class QBOClient:
             url, headers=self._headers(), json={"DisplayName": display_name}, timeout=30
         )
         tid = self._record_tid(response)
+        if response.status_code == 400:
+            # 6240 = Duplicate Name Exists — fall back to find.
+            try:
+                errors = (response.json().get("Fault") or {}).get("Error") or []
+                if any(str(e.get("code")) == "6240" for e in errors):
+                    _log.warning(
+                        "create_vendor 6240 for %r — entity already exists in QBO; "
+                        "falling back to find_vendor_by_name",
+                        display_name,
+                    )
+                    existing = self.find_vendor_by_name(display_name)
+                    if existing:
+                        return existing
+            except Exception:  # noqa: BLE001
+                pass  # fall through to generic raise below
         if response.status_code >= 400:
             raise QBOError(
                 f"QBO returned {response.status_code} creating Vendor: {response.text}",
@@ -479,6 +511,24 @@ class QBOClient:
         if existing:
             return existing
         return self.create_vendor(display_name)
+
+    def get_all_customers(self) -> list[dict]:
+        """Fetch all active customers from QBO for entity matching in Step 3.
+
+        Returns a list of dicts with at minimum Id and DisplayName.
+        QBO paginates at 1000 — fetch up to 500 which covers typical firm size.
+        """
+        result = self.query(
+            "SELECT Id, DisplayName FROM Customer WHERE Active = true MAXRESULTS 500"
+        )
+        return result.get("QueryResponse", {}).get("Customer", [])
+
+    def get_all_vendors(self) -> list[dict]:
+        """Fetch all active vendors from QBO for entity matching in Step 3."""
+        result = self.query(
+            "SELECT Id, DisplayName FROM Vendor WHERE Active = true MAXRESULTS 500"
+        )
+        return result.get("QueryResponse", {}).get("Vendor", [])
 
 
 class QBOError(Exception):
