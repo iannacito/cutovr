@@ -52,6 +52,35 @@ def _find_job(jobs: list[dict], report_type: str) -> dict | None:
     return matches[0]
 
 
+def _url_for_job(jobs: list[dict], report_type: str, route_path: str) -> str | None:
+    job = _find_job(jobs, report_type)
+    return f"/jobs/{job['id']}/{route_path}" if job else None
+
+
+def _start_auto_thread_if_needed(
+    firm_id: int,
+    gl_job_id: str,
+    state: dict,
+    jobs: list[dict],
+    push_fn,
+    save_fn,
+    real_import: bool,
+) -> None:
+    """Start vendor/customer background thread when auto steps remain."""
+    if state["overall"] in ("needs_action", "ready_for_gl", "done", "failed"):
+        return
+    t = threading.Thread(
+        target=_run_auto_steps,
+        args=(firm_id, gl_job_id, jobs, push_fn, save_fn, real_import),
+        daemon=True,
+    )
+    with _SEQ_LOCK:
+        stored = _SEQ_STATE.get((firm_id, gl_job_id))
+        if stored is not None:
+            stored["thread"] = t
+    t.start()
+
+
 # ── State builder ─────────────────────────────────────────────────────────────
 
 def build_initial_state(firm_id: int, gl_job_id: str, jobs: list[dict]) -> dict:
@@ -61,33 +90,49 @@ def build_initial_state(firm_id: int, gl_job_id: str, jobs: list[dict]) -> dict:
     # Vendors
     v = _find_job(jobs, "vendor_list")
     if v and v.get("checkpoint") == "completed":
-        steps["vendors"] = {"key": "vendors", "label": _LABELS["vendors"], "status": "completed",
-                            "pct": 100, "msg": "Vendors pushed", "url": None}
+        steps["vendors"] = {"key": "vendors", "label": _LABELS["vendors"], "status": "completed", "pct": 100,
+                            "msg": "Vendors pushed", "url": None}
     elif not v:
-        steps["vendors"] = {"key": "vendors", "label": _LABELS["vendors"], "status": "skipped",
-                            "pct": 100, "msg": "No Vendor List — skipped", "url": None}
+        steps["vendors"] = {"key": "vendors", "label": _LABELS["vendors"], "status": "skipped", "pct": 100,
+                            "msg": "No Vendor List — skipped", "url": None}
 
     # Customers
     c = _find_job(jobs, "customer_list")
     if c and c.get("checkpoint") == "completed":
-        steps["customers"] = {"key": "customers", "label": _LABELS["customers"], "status": "completed",
-                              "pct": 100, "msg": "Customers pushed", "url": None}
+        steps["customers"] = {"key": "customers", "label": _LABELS["customers"], "status": "completed", "pct": 100,
+                              "msg": "Customers pushed", "url": None}
     elif not c:
-        steps["customers"] = {"key": "customers", "label": _LABELS["customers"], "status": "skipped",
-                              "pct": 100, "msg": "No Customer List — skipped", "url": None}
+        steps["customers"] = {"key": "customers", "label": _LABELS["customers"], "status": "skipped", "pct": 100,
+                              "msg": "No Customer List — skipped", "url": None}
 
     # GL always pending (JS triggers the actual submit)
     steps["gl"] = {"key": "gl", "label": _LABELS["gl"], "status": "pending", "pct": 0,
                    "msg": "Sends after above steps complete", "url": None}
 
-    return {"steps": steps, "overall": _compute_overall(steps), "thread": None}
+    return {
+        "steps": steps,
+        "overall": _compute_overall(steps),
+        "thread": None,
+    }
 
 
-def _rebuild_state(firm_id: int, gl_job_id: str, jobs: list[dict], existing: dict | None) -> dict:
+def _rebuild_state(
+    firm_id: int,
+    gl_job_id: str,
+    jobs: list[dict],
+    existing: dict | None,
+) -> dict:
+    """Rebuild from DB."""
     return build_initial_state(firm_id, gl_job_id, jobs)
 
 
 def _compute_overall(steps: dict) -> str:
+    """Compute overall sequence state.
+
+    COA and OB (ROUTE_KEYS) are informational — their status shows in the
+    UI as warnings with action links, but they do NOT gate the GL post.
+    Only Vendors and Customers (AUTO_KEYS) gate readiness.
+    """
     for key in AUTO_KEYS:
         if steps[key]["status"] in ("in_progress", "initializing"):
             return "running"
@@ -174,22 +219,14 @@ def retry_step(
 
 # ── Background thread ─────────────────────────────────────────────────────────
 
-def _start_auto_thread_if_needed(firm_id, gl_job_id, state, jobs, push_fn, save_fn, real_import):
-    if state["overall"] in ("needs_action", "ready_for_gl", "done", "failed"):
-        return
-    t = threading.Thread(
-        target=_run_auto_steps,
-        args=(firm_id, gl_job_id, jobs, push_fn, save_fn, real_import),
-        daemon=True,
-    )
-    with _SEQ_LOCK:
-        stored = _SEQ_STATE.get((firm_id, gl_job_id))
-        if stored is not None:
-            stored["thread"] = t
-    t.start()
-
-
-def _run_auto_steps(firm_id, gl_job_id, jobs, push_fn, save_fn, real_import):
+def _run_auto_steps(
+    firm_id:     int,
+    gl_job_id:   str,
+    jobs:        list[dict],
+    push_fn,
+    save_fn,
+    real_import: bool,
+) -> None:
     """Sequential: Vendors then Customers. Updates _SEQ_STATE in-place."""
     for key in AUTO_KEYS:  # ["vendors", "customers"]
         with _SEQ_LOCK:

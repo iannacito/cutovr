@@ -248,7 +248,7 @@ def _stage_cta(
     url_for: Optional[Callable[..., str]],
     has_jobs: bool,
     ready_to_advance: bool = False,
-    import_job_id: Optional[str] = None,
+    gl_job_id: Optional[str] = None,
 ) -> tuple:
     """Return (cta_label, cta_url) for the *current* stage.
 
@@ -260,6 +260,9 @@ def _stage_cta(
     user has all three core reports on file but the Upload stage hasn't
     rolled up to `complete` yet, we steer them to Step 3 instead of
     nagging them to upload more.
+
+    `gl_job_id` when provided routes Steps 5 and 6 to job-scoped URLs
+    instead of global dispatch routes.
     """
     def u(endpoint: str, fallback: str) -> str:
         if url_for is None:
@@ -293,44 +296,41 @@ def _stage_cta(
         # build_customer_stages now suppresses this CTA entirely when the
         # user is already on the page (on_match_page=True), letting the
         # page's own forward CTA to Step 4 stand alone.
-        if import_job_id and url_for is not None:
-            try:
-                return ("Match accounts",
-                        url_for("account_mapping", job_id=import_job_id))
-            except Exception:
-                pass
         return ("Match accounts",
                 u("match_accounts_entry", "/match-accounts"))
     if stage_key == STAGE_REVIEW:
-        if import_job_id and url_for is not None:
-            try:
-                return ("Proceed to Step 4: Review import",
-                        url_for("preview_import", job_id=import_job_id))
-            except Exception:
-                pass
         return ("Proceed to Step 4: Review import",
                 u("import_job_entry", "/import-job"))
     if stage_key == STAGE_IMPORT:
-        # Use job-scoped URL when a specific GL job is in context so the
-        # stepper CTA goes to the correct batch, not the firm-level primary.
-        if import_job_id and url_for is not None:
+        # The customer is *on* Step 5 — point the stepper CTA at the
+        # actual send action rather than telling them to "Proceed to
+        # Step 5" while they are already there. The send-to-qbo page
+        # renders its own confirmation form; the stepper CTA simply
+        # focuses that page (anchor to the send card).
+        if gl_job_id:
             try:
-                return ("Send to QuickBooks",
-                        url_for("send_to_qbo", job_id=import_job_id) + "#send-to-qbo-card")
+                _url = url_for("send_to_qbo", job_id=gl_job_id) + "#send-to-qbo-card"
             except Exception:
-                pass
-        return ("Send to QuickBooks",
-                u("send_to_qbo_entry", "/send-to-qbo") + "#send-to-qbo-card")
+                _url = f"/jobs/{gl_job_id}/send-to-qbo#send-to-qbo-card"
+        else:
+            _url = u("send_to_qbo_entry", "/send-to-qbo") + "#send-to-qbo-card"
+        return ("Send to QuickBooks", _url)
     if stage_key == STAGE_RECONCILE:
-        return ("Proceed to Step 6: Reconcile balances",
-                u("reconcile_balances", "/reconcile-balances"))
+        if gl_job_id:
+            try:
+                _url = url_for("reconcile_balances_job", job_id=gl_job_id)
+            except Exception:
+                _url = f"/jobs/{gl_job_id}/reconcile-balances"
+        else:
+            _url = u("reconcile_balances", "/reconcile-balances")
+        return ("Proceed to Step 6: Reconcile balances", _url)
     return ("", "")
 
 
 def _stage_back_link(
     current_key: str,
     url_for: Optional[Callable[..., str]],
-    import_job_id: Optional[str] = None,
+    gl_job_id: Optional[str] = None,
 ) -> tuple:
     """Return (back_label, back_url) — where the customer goes to revisit
     the *previous* step from the stage that's currently in progress.
@@ -348,6 +348,9 @@ def _stage_back_link(
 
     Returns ("", "") for the first stage (no previous step exists) so
     callers/templates can hide the back button cleanly.
+
+    `gl_job_id` when provided routes Step 6's back link to the job-scoped
+    Step 5 URL instead of the global dispatch route.
     """
     def u(endpoint: str, fallback: str) -> str:
         if url_for is None:
@@ -357,27 +360,25 @@ def _stage_back_link(
         except Exception:
             return fallback
 
-    def j(endpoint: str, job_id: Optional[str], fallback: str) -> str:
-        """Job-scoped url_for; falls back to flat route on any error."""
-        if url_for is None or not job_id:
-            return fallback
-        try:
-            return url_for(endpoint, job_id=job_id)
-        except Exception:
-            return fallback
-
     # Per-stage previous-step entry: (customer-facing label, route).
     # Keyed by the *current* stage; value describes the step before it.
     # Every URL must be a real, working route — never a bare '#'.
+    if current_key == STAGE_RECONCILE and gl_job_id:
+        try:
+            back_url = url_for("send_to_qbo", job_id=gl_job_id)
+        except Exception:
+            back_url = f"/jobs/{gl_job_id}/send-to-qbo"
+        return ("Back to Step 5: Send to QuickBooks", back_url)
+
     table = {
         STAGE_UPLOAD:    ("Back to Step 1: Setup",
                           u("cutover_setup", "/cutover")),
         STAGE_MATCH:     ("Back to Step 2: Upload reports",
-                          u("dashboard", "/dashboard") + "?step=upload#intake"),
+                          u("dashboard", "/dashboard") + "#intake"),
         STAGE_REVIEW:    ("Back to Step 3: Match accounts",
-                          j("account_mapping", import_job_id, "/match-accounts")),
+                          u("match_accounts_entry", "/match-accounts")),
         STAGE_IMPORT:    ("Back to Step 4: Review import",
-                          j("preview_import", import_job_id, "/import-job")),
+                          u("import_job_entry", "/import-job")),
         STAGE_RECONCILE: ("Back to Step 5: Send to QuickBooks",
                           u("send_to_qbo_entry", "/send-to-qbo")),
     }
@@ -387,7 +388,7 @@ def _stage_back_link(
 def _stage_nav_url(
     stage_key: str,
     url_for: Optional[Callable[..., str]],
-    import_job_id: Optional[str] = None,
+    gl_job_id: Optional[str] = None,
 ) -> str:
     """Canonical entry URL for a stage's rail bubble.
 
@@ -395,6 +396,9 @@ def _stage_nav_url(
     stepper rail can deep-link. Mirrors the back-link table but is keyed
     by the stage *itself* (not the step before it). Returns "" when no
     safe destination exists (e.g. url_for unavailable in unit tests).
+
+    `gl_job_id` when provided routes Steps 5 and 6 rail links to the
+    job-scoped URLs instead of global dispatch routes.
     """
     def u(endpoint: str, fallback: str) -> str:
         if url_for is None:
@@ -404,25 +408,20 @@ def _stage_nav_url(
         except Exception:
             return fallback
 
+    if stage_key == STAGE_IMPORT and gl_job_id:
+        return (url_for("send_to_qbo", job_id=gl_job_id)
+                if url_for else f"/jobs/{gl_job_id}/send-to-qbo")
+    if stage_key == STAGE_RECONCILE and gl_job_id:
+        return (url_for("reconcile_balances_job", job_id=gl_job_id)
+                if url_for else f"/jobs/{gl_job_id}/reconcile-balances")
+
     table = {
         STAGE_SETUP:     lambda: u("cutover_setup", "/cutover"),
         STAGE_UPLOAD:    lambda: (u("uploaded_reports", "/uploaded-reports")
                                   or u("dashboard", "/dashboard")),
-        STAGE_MATCH:     lambda: (
-            url_for("account_mapping", job_id=import_job_id)
-            if import_job_id and url_for is not None
-            else u("match_accounts_entry", "/match-accounts")
-        ),
-        STAGE_REVIEW:    lambda: (
-            url_for("preview_import", job_id=import_job_id)
-            if import_job_id and url_for is not None
-            else u("import_job_entry", "/import-job")
-        ),
-        STAGE_IMPORT:    lambda: (
-            url_for("send_to_qbo", job_id=import_job_id)
-            if import_job_id and url_for is not None
-            else u("send_to_qbo_entry", "/send-to-qbo")
-        ),
+        STAGE_MATCH:     lambda: u("match_accounts_entry", "/match-accounts"),
+        STAGE_REVIEW:    lambda: u("import_job_entry", "/import-job"),
+        STAGE_IMPORT:    lambda: u("send_to_qbo_entry", "/send-to-qbo"),
         STAGE_RECONCILE: lambda: u("reconcile_balances", "/reconcile-balances"),
     }
     factory = table.get(stage_key)
@@ -440,7 +439,7 @@ def build_customer_stages(
     review_blocker: Optional[str] = None,
     review_job_id: Optional[str] = None,
     on_match_page: bool = False,
-    import_job_id: Optional[str] = None,
+    gl_job_id: Optional[str] = None,
 ) -> List[WorkflowStage]:
     """Project the detailed checklist into the 6-stage customer stepper.
 
@@ -574,10 +573,11 @@ def build_customer_stages(
             stage.cta_label, stage.cta_url = _stage_cta(
                 stage.key, url_for, has_jobs=has_jobs,
                 ready_to_advance=ready_to_advance,
-                import_job_id=import_job_id,
+                gl_job_id=gl_job_id,
             )
             stage.back_label, stage.back_url = _stage_back_link(
-                stage.key, url_for, import_job_id=import_job_id,
+                stage.key, url_for,
+                gl_job_id=gl_job_id,
             )
         else:
             stage.status = STAGE_STATUS_UPCOMING
@@ -585,7 +585,7 @@ def build_customer_stages(
         # (re-focus) are clickable; upcoming steps deliberately are not,
         # so the rail can never skip a lawyer ahead past unfinished work.
         if stage.status in (STAGE_STATUS_COMPLETE, STAGE_STATUS_CURRENT):
-            stage.nav_url = _stage_nav_url(stage.key, url_for, import_job_id=import_job_id)
+            stage.nav_url = _stage_nav_url(stage.key, url_for, gl_job_id=gl_job_id)
 
     # When the Match stage is blocked by missing-account detection,
     # override its CTA to send the user straight into the
@@ -645,13 +645,9 @@ def build_customer_stages(
                     return fallback
             if review_blocker == "ready":
                 stage.cta_label = "Step 5: Send to QuickBooks"
-                if import_job_id and url_for is not None:
-                    try:
-                        stage.cta_url = url_for("send_to_qbo", job_id=import_job_id)
-                    except Exception:
-                        stage.cta_url = _u("send_to_qbo_entry", "/send-to-qbo")
-                else:
-                    stage.cta_url = _u("send_to_qbo_entry", "/send-to-qbo")
+                stage.cta_url = _u(
+                    "send_to_qbo_entry", "/send-to-qbo"
+                )
             elif review_blocker == "unmatched":
                 if review_job_id:
                     stage.cta_url = _u(

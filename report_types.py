@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from csv_decode import open_csv_text
+from coa_apply import is_system_calculated_account as _is_sys_calc
 
 
 REPORT_GENERAL_LEDGER = "general_ledger"
@@ -92,8 +93,8 @@ REPORT_QBO_BEHAVIOR = {
     REPORT_CHART_OF_ACCOUNTS: "preview",
     REPORT_TRIAL_BALANCE: "readonly",
     REPORT_TRUST_LISTING: "readonly",
-    REPORT_VENDOR_LIST: "readonly",
-    REPORT_CUSTOMER_LIST: "readonly",
+    REPORT_VENDOR_LIST: "importable",
+    REPORT_CUSTOMER_LIST: "importable",
     REPORT_UNKNOWN: "readonly",
 }
 
@@ -639,8 +640,14 @@ def parse_trial_balance(path) -> tuple[list[dict], list[str], list[str]]:
     if not (has_debit or has_credit or has_net):
         missing.append("debit_balance/credit_balance or net_balance")
 
-    has_num_col = _norm_header("account_number") in idx
+    has_num_col = any(
+        _norm_header(h) in idx
+        for h in ("account_number", "account_nickname", "acct_nickname",
+                  "nickname", "acct_num", "number")
+    )
     has_name_col = _norm_header("account_name") in idx
+    if has_num_col and "account_number" in missing:
+        missing.remove("account_number")
     combined_key = None
     for alias in ("account", "gl_account", "ledger_account"):
         if _norm_header(alias) in idx:
@@ -649,7 +656,11 @@ def parse_trial_balance(path) -> tuple[list[dict], list[str], list[str]]:
 
     normalized = []
     for row in rows:
-        account_number = _pick(row, idx, "account_number", "acct_num", "number")
+        account_number = _pick(
+            row, idx,
+            "account_number", "account_nickname", "acct_nickname", "nickname",
+            "acct_num", "number",
+        )
         account_name = _pick(row, idx, "account_name", "name")
         if (not account_number or not account_name) and combined_key is not None:
             combined = _pick(row, idx, "account", "gl_account", "ledger_account")
@@ -745,32 +756,54 @@ def parse_vendor_list(path) -> tuple[list[dict], list[str], list[str]]:
     idx = _index_headers(fieldnames)
     has_name = any(
         _norm_header(h) in idx
-        for h in ("vendor_name", "vendor", "name", "payee", "company")
+        for h in (
+            "vendor_name", "vendor", "name", "payee", "company",
+            "Vendor Name & Address", "Vendor Name",
+        )
     )
     missing = [] if has_name else ["vendor_name (any vendor/payee name)"]
 
+    is_pclaw_vendor = _norm_header("Vendor Name & Address") in idx
+
     normalized = []
     for row in rows:
-        vendor_id = _pick(row, idx, "vendor_id", "vendor_no", "vendor_number", "id")
         vendor_name = _pick(
-            row, idx, "vendor_name", "vendor", "name", "payee", "company"
+            row, idx,
+            "vendor_name", "vendor", "name", "payee", "company",
+            "Vendor Name & Address", "Vendor Name",
         )
-        contact = _pick(row, idx, "contact", "contact_name", "attention")
-        email = _pick(row, idx, "email", "email_address")
-        phone = _pick(row, idx, "phone", "phone_number", "telephone")
-        tax_id = _pick(row, idx, "tax_id", "gst_number", "hst_number", "business_number")
-        account = _pick(row, idx, "default_account", "expense_account", "account", "account_number")
-        normalized.append(
-            {
-                "vendor_id": vendor_id,
-                "vendor_name": vendor_name,
-                "contact": contact,
-                "email": email,
-                "phone": phone,
-                "tax_id": tax_id,
-                "default_account": account,
-            }
-        )
+        if not vendor_name:
+            continue
+
+        if is_pclaw_vendor:
+            # PCLaw positional columns: C=phone, D=street, F=city, G=state, H=zip, I=email
+            vals = list(row.values())
+            phone   = vals[2].strip() if len(vals) > 2 else ""
+            street  = vals[3].strip() if len(vals) > 3 else ""
+            city    = vals[5].strip() if len(vals) > 5 else ""
+            state   = vals[6].strip() if len(vals) > 6 else ""
+            zip_    = vals[7].strip() if len(vals) > 7 else ""
+            email   = vals[8].strip() if len(vals) > 8 else ""
+            tax_id  = _pick(row, idx, "tax_id", "ACCOUNT") or ""
+        else:
+            phone   = _pick(row, idx, "phone", "phone_number", "telephone") or ""
+            street  = _pick(row, idx, "street", "address", "billing_street") or ""
+            city    = _pick(row, idx, "city", "billing_city") or ""
+            state   = _pick(row, idx, "state", "province", "billing_state") or ""
+            zip_    = _pick(row, idx, "zip", "postal_code", "zip_code") or ""
+            email   = _pick(row, idx, "email", "email_address") or ""
+            tax_id  = _pick(row, idx, "tax_id", "gst_number", "business_number") or ""
+
+        normalized.append({
+            "vendor_name": vendor_name,
+            "phone": phone,
+            "street": street,
+            "city": city,
+            "state": state,
+            "zip": zip_,
+            "email": email,
+            "tax_id": tax_id,
+        })
     return normalized, fieldnames, missing
 
 
@@ -1092,6 +1125,8 @@ def build_coa_dry_run_preview(coa_rows: list[dict], qbo_accounts_response: dict)
                         f"{matched_account.get('AcctNum')} for the same name."
                     ),
                 })
+        elif _is_sys_calc({"account_name": name}):
+            pass  # QBO computes these automatically — exclude from create list
         else:
             would_create.append(entry)
 
