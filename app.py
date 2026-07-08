@@ -2325,7 +2325,7 @@ def post_ob(job_id):
                     expires_at=_source.get("expires_at"),
                     company_info_error=_source.get("company_info_error"),
                 )
-                jobs.pop(job_id, None)
+                qbo_connections.pop(job_id, None)
                 qbo_conn = _get_qbo_connection(job_id)
     if not qbo_conn:
         flash("Connect QuickBooks to this firm first.", "error")
@@ -7113,7 +7113,13 @@ def opening_balance_preview(job_id):
         )
         return redirect(url_for("job_detail", job_id=job_id))
 
-    tb_rows = _job_trial_balance_rows(job)
+    try:
+        tb_rows = _job_trial_balance_rows(job)
+    except Exception:  # noqa: BLE001
+        logging.getLogger("app").exception(
+            "opening_balance_preview: _job_trial_balance_rows failed for job %s", job_id
+        )
+        tb_rows = []
     if not tb_rows:
         flash("Could not read the Trial Balance upload. Re-upload and try again.", "error")
         return redirect(url_for("job_detail", job_id=job_id))
@@ -7137,7 +7143,7 @@ def opening_balance_preview(job_id):
                     expires_at=_source.get("expires_at"),
                     company_info_error=_source.get("company_info_error"),
                 )
-                jobs.pop(job_id, None)
+                qbo_connections.pop(job_id, None)
 
     qbo_error: Optional[str] = None
     try:
@@ -7201,11 +7207,18 @@ def opening_balance_preview(job_id):
     if submitted_date:
         job["opening_balance_date_override"] = submitted_date
         _save_job(job_id)
-    effective_as_of = resolve_opening_balance_date(
-        cutover,
-        tb_rows,
-        override=submitted_date or job.get("opening_balance_date_override"),
-    )
+    try:
+        effective_as_of = resolve_opening_balance_date(
+            cutover,
+            tb_rows,
+            override=submitted_date or job.get("opening_balance_date_override"),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("app").exception(
+            "opening_balance_preview: resolve_opening_balance_date failed for job %s", job_id
+        )
+        posting_date_error = f"Could not resolve the posting date: {exc}"
+        effective_as_of = None
 
     try:
         plan = build_opening_balance_plan(
@@ -7227,7 +7240,14 @@ def opening_balance_preview(job_id):
     # the TB step must not be allowed to proceed when the COA isn't
     # finalized, an account type is blank, or an AR/AP mismatch hasn't
     # been resolved.
-    coa_state = _firm_latest_coa_state(user["firm_id"])
+    try:
+        coa_state = _firm_latest_coa_state(user["firm_id"])
+    except Exception:  # noqa: BLE001
+        logging.getLogger("app").exception(
+            "opening_balance_preview: _firm_latest_coa_state failed for firm %s", user["firm_id"]
+        )
+        coa_state = {"coa_rows": [], "coa_job": None,
+                     "coa_type_overrides": {}, "coa_create_history": []}
     try:
         tb_coa_validation = validate_tb_against_coa(
             tb_rows,
