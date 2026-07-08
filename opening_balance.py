@@ -40,14 +40,74 @@ from dataclasses import dataclass, field, asdict
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 
-import reserved_accounts
-
 
 OPENING_BALANCE_CONFIRMATION_PHRASE = "POST OPENING BALANCE"
 
 import re as _re
 
 _ISO_DATE_RE = _re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+# ── Reserved-account routing constants ────────────────────────────────────
+
+# QBO account types that require entity refs we can't supply in a bulk JE.
+# These are redirected to "{name}-PCLaw" accounts.
+_RESERVED_QBO_TYPES: frozenset[str] = frozenset({
+    "Accounts Receivable",
+    "Accounts Payable",
+})
+
+# Name fragments (lowercased) that identify accounts we redirect to -PCLaw.
+# Covers both Retained Earnings and Net Income variants.
+_RESERVED_NAME_FRAGMENTS: tuple[str, ...] = (
+    "retained earnings",
+    "net income",
+)
+
+# QBO account specs for auto-created -PCLaw accounts.
+# Key = QBO AccountType (for AR/AP) or name fragment (for equity accounts).
+_PCLAW_ACCOUNT_SPEC: dict[str, dict] = {
+    "Accounts Receivable": {
+        "AccountType": "Other Current Asset",
+        "AccountSubType": "OtherCurrentAssets",
+    },
+    "Accounts Payable": {
+        "AccountType": "Other Current Liability",
+        "AccountSubType": "OtherCurrentLiabilities",
+    },
+    "retained earnings": {
+        "AccountType": "Equity",
+        "AccountSubType": "OwnersEquity",
+    },
+    "net income": {
+        "AccountType": "Equity",
+        "AccountSubType": "OwnersEquity",
+    },
+}
+
+
+def _pclaw_suffix_name(account_name: str) -> str:
+    """Return the -PCLaw account name for a reserved account."""
+    return f"{account_name.strip()}-PCLaw"
+
+
+def _reserved_spec_for(name: str, qbo_account_type: Optional[str]) -> Optional[dict]:
+    """Return the _PCLAW_ACCOUNT_SPEC entry for a reserved account, or None.
+
+    Checks the resolved QBO AccountType first (catches AR/AP by type), then
+    checks the account name for equity accounts (Retained Earnings, Net Income).
+    """
+    if qbo_account_type and qbo_account_type in _RESERVED_QBO_TYPES:
+        return _PCLAW_ACCOUNT_SPEC.get(qbo_account_type)
+    name_l = (name or "").lower()
+    for fragment, spec in _PCLAW_ACCOUNT_SPEC.items():
+        if fragment.lower() in name_l:
+            return spec
+    return None
+
+
+def _is_net_income_row(name: str) -> bool:
+    """True when the account name is a Net Income variant."""
+    return "net income" in (name or "").lower()
 
 
 def is_iso_date(value) -> bool:
@@ -117,10 +177,16 @@ class OpeningLine:
     qbo_account_type: Optional[str]
     qbo_acct_num: Optional[str] = None
     blocker: Optional[str] = None      # set when the line can't be posted
-    # When the TB row is a reserved account (Net Income, Retained Earnings,
-    # A/R, A/P) we post it to a "-PC Law" holding account instead of
-    # QuickBooks' built-in one. This names the holding account for the UI.
-    routed_to: Optional[str] = None
+    # True when this is a reserved QBO account redirected to "{name}-PCLaw".
+    # The route must create that account in QBO before calling
+    # build_opening_je_payload if it doesn't exist yet.
+    pclaw_suffix_needed: bool = False
+    pclaw_suffix_name: Optional[str] = None    # target -PCLaw account name
+    pclaw_suffix_spec: Optional[dict] = None   # AccountType/SubType to create
+    # True for synthetic closing-entry lines generated from Net Income rows.
+    # These are not TB rows — they close NI-PCLaw into RE-PCLaw.
+    # Displayed separately in the preview template.
+    is_net_income_closing: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -157,6 +223,12 @@ class OpeningBalancePlan:
             "lines": [line.to_dict() for line in self.lines],
             "line_count": len(self.lines),
             "blocker_count": sum(1 for line in self.lines if line.blocker),
+            "pclaw_suffix_count": sum(
+                1 for line in self.lines if line.pclaw_suffix_needed
+            ),
+            "net_income_closing_count": sum(
+                1 for line in self.lines if line.is_net_income_closing
+            ),
             "has_blockers": self.has_blockers,
             "confirmation_phrase": OPENING_BALANCE_CONFIRMATION_PHRASE,
         }
@@ -231,7 +303,6 @@ def build_opening_balance_plan(
     plan_as_of = (as_of_date or detected_as_of or "").strip()
 
     lines: list[OpeningLine] = []
-    warnings: list[str] = []
     omitted = 0
     total_debit = Decimal("0.00")
     total_credit = Decimal("0.00")
@@ -250,54 +321,47 @@ def build_opening_balance_plan(
             omitted += 1
             continue
 
-        # Reserved accounts (Net Income, Retained Earnings, A/R, A/P) never
-        # post to QuickBooks' built-in account — QBO either calculates them
-        # itself (Net Income) or expects per-entity detail (A/R, A/P). We
-        # route them to a dedicated "-PC Law" holding account so the
-        # firm's QuickBooks totals stay clean and the later A/R / A/P work
-        # can move the balances onto real invoices and bills. An explicit
-        # operator mapping still wins over the automatic routing.
-        reserved = reserved_accounts.match_reserved(name)
-
+        # Saved mapping wins, then AcctNum, then Name.
         qbo_account = None
-        routed_to: Optional[str] = None
         if num and num in saved_by_num and saved_by_num[num] in qbo_by_id:
             qbo_account = qbo_by_id[saved_by_num[num]]
         elif name and name.lower() in saved_by_name_lower and saved_by_name_lower[name.lower()] in qbo_by_id:
             qbo_account = qbo_by_id[saved_by_name_lower[name.lower()]]
-        elif reserved:
-            routed_to = reserved.pc_law_name
-            pc_law_lower = reserved.pc_law_name.lower()
-            if pc_law_lower in by_name_lower:
-                qbo_account = by_name_lower[pc_law_lower]
         elif num and num in by_num:
             qbo_account = by_num[num]
         elif name and name.lower() in by_name_lower:
             qbo_account = by_name_lower[name.lower()]
 
-        blocker: Optional[str] = None
-        if not qbo_account:
-            if reserved:
-                blocker = (
-                    f"Create an account named \"{reserved.pc_law_name}\" "
-                    f"({reserved.qbo_account_type}) in QuickBooks — via the "
-                    "Chart of Accounts step — so the opening balance posts "
-                    f"there instead of QuickBooks' built-in {reserved.label}. "
-                    "Keeping these separate stops the migration from changing "
-                    "your QuickBooks totals."
-                )
+        # ── Reserved-account redirect ────────────────────────────────────────
+        # AR, AP, Retained Earnings, and Net Income cannot be posted to directly.
+        # Route each to a "{name}-PCLaw" account. If that account already exists
+        # in QBO, use it immediately. If not, flag for pre-creation at post time.
+        pclaw_suffix_needed = False
+        pclaw_suffix_acct_name: Optional[str] = None
+        pclaw_suffix_spec: Optional[dict] = None
+
+        reserved_spec = _reserved_spec_for(
+            name, qbo_account.get("AccountType") if qbo_account else None
+        )
+        if reserved_spec:
+            pclaw_name = _pclaw_suffix_name(name)
+            pclaw_acct = by_name_lower.get(pclaw_name.lower())
+            if pclaw_acct:
+                qbo_account = pclaw_acct   # already exists — use it
             else:
-                blocker = (
-                    f"Account {num or '(no number)'} '{name or '(no name)'}' "
-                    "does not exist in QuickBooks. Create it via the Chart of "
-                    "Accounts step (or add an Account Mapping) before posting "
-                    "the opening balance."
-                )
-        elif reserved:
-            warnings.append(
-                f"'{name}' will post to the \"{reserved.pc_law_name}\" "
-                f"holding account, not QuickBooks' built-in {reserved.label}, "
-                "so your QuickBooks totals stay clean."
+                qbo_account = None
+                pclaw_suffix_needed = True
+                pclaw_suffix_acct_name = pclaw_name
+                pclaw_suffix_spec = reserved_spec
+        # ────────────────────────────────────────────────────────────────────
+
+        blocker: Optional[str] = None
+        if not qbo_account and not pclaw_suffix_needed:
+            blocker = (
+                f"Account {num or '(no number)'} '{name or '(no name)'}' "
+                "does not exist in QuickBooks. Create it via the Chart of "
+                "Accounts step (or add an Account Mapping) before posting "
+                "the opening balance."
             )
 
         lines.append(OpeningLine(
@@ -310,15 +374,113 @@ def build_opening_balance_plan(
             qbo_account_type=qbo_account.get("AccountType") if qbo_account else None,
             qbo_acct_num=((qbo_account.get("AcctNum") or "").strip() or None) if qbo_account else None,
             blocker=blocker,
-            routed_to=routed_to,
+            pclaw_suffix_needed=pclaw_suffix_needed,
+            pclaw_suffix_name=pclaw_suffix_acct_name,
+            pclaw_suffix_spec=pclaw_suffix_spec,
         ))
         total_debit += debit
         total_credit += credit
+
+        # ── Net Income closing entry ─────────────────────────────────────────
+        # If this row is a Net Income variant, generate two synthetic closing
+        # lines in the same JE. These close NI-PCLaw into RE-PCLaw:
+        #
+        #   NI credit balance (profit):
+        #     Debit  Net Income-PCLaw   [offsets the direct NI-PCLaw credit above]
+        #     Credit Retained Earnings-PCLaw
+        #
+        #   NI debit balance (net loss):
+        #     Credit Net Income-PCLaw   [offsets the direct NI-PCLaw debit above]
+        #     Debit  Retained Earnings-PCLaw
+        #
+        # The direct NI-PCLaw line + NI-PCLaw closing line cancel to zero.
+        # RE-PCLaw absorbs the full Net Income amount. The JE stays balanced.
+        if _is_net_income_row(name):
+            ni_amount = debit if debit > 0 else credit
+            re_pclaw_name = _pclaw_suffix_name("Retained Earnings")
+            ni_pclaw_name = pclaw_suffix_acct_name or _pclaw_suffix_name(name)
+            re_spec = _PCLAW_ACCOUNT_SPEC["retained earnings"]
+
+            # Resolve RE-PCLaw: use existing QBO account if available.
+            re_acct = by_name_lower.get(re_pclaw_name.lower())
+            re_pclaw_needed = re_acct is None
+            re_pclaw_id = str(re_acct.get("Id")) if re_acct else None
+            re_pclaw_qbo_name = re_acct.get("Name") if re_acct else None
+
+            # NI-PCLaw account for the closing line.
+            ni_acct = by_name_lower.get(ni_pclaw_name.lower())
+            ni_pclaw_id = str(ni_acct.get("Id")) if ni_acct else None
+            ni_pclaw_qbo_name = ni_acct.get("Name") if ni_acct else None
+            ni_pclaw_closing_needed = ni_acct is None
+
+            if debit > 0:
+                # Net loss: Credit NI-PCLaw, Debit RE-PCLaw
+                closing_ni_line = OpeningLine(
+                    account_number="",
+                    account_name=ni_pclaw_name,
+                    debit="0.00",
+                    credit=f"{ni_amount:.2f}",
+                    qbo_account_id=ni_pclaw_id,
+                    qbo_account_name=ni_pclaw_qbo_name,
+                    qbo_account_type="Equity",
+                    pclaw_suffix_needed=ni_pclaw_closing_needed,
+                    pclaw_suffix_name=ni_pclaw_name if ni_pclaw_closing_needed else None,
+                    pclaw_suffix_spec=_PCLAW_ACCOUNT_SPEC["net income"] if ni_pclaw_closing_needed else None,
+                    is_net_income_closing=True,
+                )
+                closing_re_line = OpeningLine(
+                    account_number="",
+                    account_name=re_pclaw_name,
+                    debit=f"{ni_amount:.2f}",
+                    credit="0.00",
+                    qbo_account_id=re_pclaw_id,
+                    qbo_account_name=re_pclaw_qbo_name,
+                    qbo_account_type="Equity",
+                    pclaw_suffix_needed=re_pclaw_needed,
+                    pclaw_suffix_name=re_pclaw_name if re_pclaw_needed else None,
+                    pclaw_suffix_spec=re_spec if re_pclaw_needed else None,
+                    is_net_income_closing=True,
+                )
+            else:
+                # Net profit: Debit NI-PCLaw, Credit RE-PCLaw
+                closing_ni_line = OpeningLine(
+                    account_number="",
+                    account_name=ni_pclaw_name,
+                    debit=f"{ni_amount:.2f}",
+                    credit="0.00",
+                    qbo_account_id=ni_pclaw_id,
+                    qbo_account_name=ni_pclaw_qbo_name,
+                    qbo_account_type="Equity",
+                    pclaw_suffix_needed=ni_pclaw_closing_needed,
+                    pclaw_suffix_name=ni_pclaw_name if ni_pclaw_closing_needed else None,
+                    pclaw_suffix_spec=_PCLAW_ACCOUNT_SPEC["net income"] if ni_pclaw_closing_needed else None,
+                    is_net_income_closing=True,
+                )
+                closing_re_line = OpeningLine(
+                    account_number="",
+                    account_name=re_pclaw_name,
+                    debit="0.00",
+                    credit=f"{ni_amount:.2f}",
+                    qbo_account_id=re_pclaw_id,
+                    qbo_account_name=re_pclaw_qbo_name,
+                    qbo_account_type="Equity",
+                    pclaw_suffix_needed=re_pclaw_needed,
+                    pclaw_suffix_name=re_pclaw_name if re_pclaw_needed else None,
+                    pclaw_suffix_spec=re_spec if re_pclaw_needed else None,
+                    is_net_income_closing=True,
+                )
+
+            lines.append(closing_ni_line)
+            lines.append(closing_re_line)
+            # Note: closing lines are self-balancing (debit == credit in the pair),
+            # so total_debit and total_credit don't need adjustment.
+        # ── end Net Income closing entry ─────────────────────────────────────
 
     delta = (total_debit - total_credit).quantize(Decimal("0.01"))
     balanced = (delta == 0) and bool(lines)
 
     blockers: list[str] = []
+    warnings: list[str] = []
     if not lines:
         blockers.append(
             "Trial Balance has no non-zero rows — nothing to post as the "
@@ -338,6 +500,32 @@ def build_opening_balance_plan(
             "No as-of date detected on the trial balance. Enter the opening "
             "balance date on the confirmation page (typically the day "
             "before cutover)."
+        )
+
+    ni_closing_pairs = sum(
+        1 for line in lines
+        if line.is_net_income_closing and _money(line.credit) > 0
+        and "retained earnings" in (line.account_name or "").lower()
+    )
+    if ni_closing_pairs:
+        warnings.append(
+            f"{ni_closing_pairs} Net Income closing entr{'ies' if ni_closing_pairs > 1 else 'y'} "
+            "will be added to this journal entry. Net Income-PCLaw is created "
+            "temporarily and immediately closed into Retained Earnings-PCLaw, "
+            "so it nets to zero. This keeps Net Income separate from "
+            "QuickBooks' auto-calculated account."
+        )
+
+    pclaw_accounts_needed = {
+        line.pclaw_suffix_name
+        for line in lines
+        if line.pclaw_suffix_needed and line.pclaw_suffix_name
+    }
+    if pclaw_accounts_needed:
+        warnings.append(
+            f"{len(pclaw_accounts_needed)} -PCLaw account(s) will be created "
+            "automatically in QuickBooks when you confirm the post: "
+            + ", ".join(sorted(pclaw_accounts_needed)) + "."
         )
 
     return OpeningBalancePlan(
