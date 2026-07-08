@@ -7271,10 +7271,30 @@ def opening_balance_preview(job_id):
         )
         coa_state = {"coa_rows": [], "coa_job": None,
                      "coa_type_overrides": {}, "coa_create_history": []}
+    # When no COA file rows, build proxy rows from QBO accounts.
+    # Firms that already pushed COA to QBO don't need to re-upload;
+    # QBO is the authoritative source of account types at this point.
+    # Strip the "NNNN · " prefix QBO prepends to names so PCLaw name
+    # matching works (PCLaw stores name and number as separate fields).
+    import re as _coa_re
+    _qbo_num_prefix = _coa_re.compile(r'^\d[\d\s]*[·\-]\s*')
+    _coa_rows_for_val = coa_state["coa_rows"]
+    if not _coa_rows_for_val:
+        _qbo_acct_list = (qbo_accounts.get("QueryResponse") or {}).get("Account") or []
+        _coa_rows_for_val = [
+            {
+                "account_number": (a.get("AcctNum") or "").strip(),
+                "account_name": _qbo_num_prefix.sub("", a.get("Name") or "").strip(),
+                "account_type": a.get("AccountType") or "",
+                "detail_type": a.get("AccountSubType") or "",
+            }
+            for a in _qbo_acct_list
+            if a.get("Name")
+        ]
     try:
         tb_coa_validation = validate_tb_against_coa(
             tb_rows,
-            coa_state["coa_rows"],
+            _coa_rows_for_val,
             qbo_accounts,
             account_mappings=account_mappings,
             coa_create_history=coa_state["coa_create_history"],
