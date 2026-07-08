@@ -6715,24 +6715,6 @@ def opening_balance_preview(job_id):
                 target_type="job", target_id=job_id,
                 details=f"blocker_count={len(plan.blockers)}",
             )
-        elif not tb_coa_validation.ready:
-            # COA-first gate. The blockers list will contain a one-line
-            # rollup per category (missing-from-COA, needs-type, type-
-            # mismatch) so the operator sees the right next action.
-            confirmation_error = (
-                "Cannot post: the Chart of Accounts is not ready. "
-                + " ".join(tb_coa_validation.blockers)
-                + " Resolve on the Chart of Accounts step, then return "
-                "to the starting-balances step."
-            )
-            _audit(
-                "opening_balance_blocked_by_coa",
-                target_type="job", target_id=job_id,
-                details=(
-                    f"counts={tb_coa_validation.counts} "
-                    f"has_coa={tb_coa_validation.has_coa}"
-                ),
-            )
         elif not qbo:
             confirmation_error = (
                 "Connect QuickBooks before confirming. Nothing was posted."
