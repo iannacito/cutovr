@@ -6256,7 +6256,11 @@ def _init_push_entities(
     hydrated = db.hydrate_job(job_id) or job
     rows = hydrated.get(parsed_key) or []
     if not rows:
-        _log.warning("_init_push_entities: no parsed rows for %s job %s", report_type, job_id)
+        # parsed_vendor_list / parsed_customer_list have no DB column — fall back
+        # to re-decrypting from the encrypted upload on disk (same path as push_entity_list route).
+        rows = _reparse_report_rows(hydrated, report_type)
+    if not rows:
+        _log.warning("_init_push_entities: no parsed rows for %s job %s — file missing or unreadable", report_type, job_id)
         return 0, 0, 0
 
     if not real_import:
@@ -6686,8 +6690,16 @@ def opening_balance_preview(job_id):
         flash("Could not read the Trial Balance upload. Re-upload and try again.", "error")
         return redirect(url_for("job_detail", job_id=job_id))
 
-    qbo, qbo_conn = _get_qbo_client(job_id, user)
     qbo_error: Optional[str] = None
+    try:
+        qbo, qbo_conn = _get_qbo_client(job_id, user)
+    except QBOAuthExpired:
+        flash(
+            "Your QuickBooks connection has expired. Reconnect from the "
+            "migration dashboard, then open the Opening Balance page again.",
+            "error",
+        )
+        return redirect(url_for("migration_nexus"))
     if not qbo:
         qbo_error = (
             "Connect QuickBooks to resolve TB accounts and (eventually) "
