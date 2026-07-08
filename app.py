@@ -6829,6 +6829,7 @@ def opening_balance_preview(job_id):
         confirmation_phrase=OPENING_BALANCE_CONFIRMATION_PHRASE,
         confirmation_error=confirmation_error,
         report_label=REPORT_LABELS[REPORT_TRIAL_BALANCE],
+        source_file=_hub_display_filename(job.get("source_file") or ""),
         posting_date=effective_as_of,
         posting_date_source=(
             "your setup answers"
@@ -8690,6 +8691,7 @@ def preview_import(job_id):
             force_current_stage=customer_workflow.STAGE_REVIEW,
             review_blocker=review_blocker,
             review_job_id=job["id"],
+            import_job_id=job["id"],
         ),
     )
 
