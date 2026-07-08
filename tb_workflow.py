@@ -89,7 +89,7 @@ def build_tb_stages(
     nav_urls = {
         STAGE_SETUP:   u("cutover_setup", "/cutover"),
         STAGE_UPLOAD:  u("job_detail", f"/jobs/{job_id}", job_id=job_id),
-        STAGE_MATCH:   u("ob_account_mapping", f"/jobs/{job_id}/ob-account-mapping", job_id=job_id),
+        STAGE_MATCH:   u("account_mapping", f"/jobs/{job_id}/account-mapping", job_id=job_id),
         STAGE_REVIEW:  u("opening_balance_preview", f"/jobs/{job_id}/opening-balance", job_id=job_id),
         STAGE_POST:    (
             u("reconcile_ob", f"/jobs/{job_id}/reconcile-ob", job_id=job_id)
@@ -101,7 +101,7 @@ def build_tb_stages(
     # CTA for the current stage
     cta_map = {
         STAGE_SETUP:   ("Step 2: Upload Trial Balance", u("dashboard", "/dashboard") + "#intake"),
-        STAGE_UPLOAD:  ("Match accounts", u("ob_account_mapping", f"/jobs/{job_id}/ob-account-mapping", job_id=job_id)),
+        STAGE_UPLOAD:  ("Match accounts", u("account_mapping", f"/jobs/{job_id}/account-mapping", job_id=job_id)),
         STAGE_MATCH:   ("Review Opening Balance", u("opening_balance_preview", f"/jobs/{job_id}/opening-balance", job_id=job_id)),
         STAGE_REVIEW:  ("Step 5: Post Opening Trial Balance", u("post_ob", f"/jobs/{job_id}/post-ob", job_id=job_id)),
         STAGE_POST:    ("Post Opening Trial Balance", u("post_ob", f"/jobs/{job_id}/post-ob", job_id=job_id) + "#post-ob-card"),
@@ -111,7 +111,7 @@ def build_tb_stages(
     back_map = {
         STAGE_UPLOAD:  ("Back to Step 1: Setup", u("cutover_setup", "/cutover")),
         STAGE_MATCH:   ("Back to Step 2: Upload reports", u("job_detail", f"/jobs/{job_id}", job_id=job_id)),
-        STAGE_REVIEW:  ("Back to Step 3: Match accounts", u("ob_account_mapping", f"/jobs/{job_id}/ob-account-mapping", job_id=job_id)),
+        STAGE_REVIEW:  ("Back to Step 3: Match accounts", u("account_mapping", f"/jobs/{job_id}/account-mapping", job_id=job_id)),
         STAGE_POST:    ("Back to Step 4: Review", u("opening_balance_preview", f"/jobs/{job_id}/opening-balance", job_id=job_id)),
     }
 

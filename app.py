@@ -3129,13 +3129,20 @@ def migration_nexus():
         if (job.get("report_type") or "") == "trial_balance":
             _ob_posted    = bool(job.get("opening_balance_history"))
             _realm        = (qbo_connections.get(job["id"]) or {}).get("realm_id")
-            _has_mappings = bool(db.list_account_mappings(firm_id, _realm)) if _realm else False
+            _has_mappings = bool(db.list_account_mappings(firm_id, _realm, source_type="tb")) if _realm else False
             job["tb_ob_posted"]    = _ob_posted
             job["tb_has_mappings"] = _has_mappings
-            # Route to post_ob for all TB jobs — ob_account_mapping is not yet
-            # ported to cutovr. Both paths use post_ob until the OB mapping
-            # flow is fully synced in a dedicated session.
-            job["tb_next_url"] = url_for("post_ob", job_id=job["id"])
+            # Build TB stages to find the current stage and use its CTA URL
+            from tb_workflow import build_tb_stages
+            _tb_stages = build_tb_stages(
+                job,
+                url_for=url_for,
+                mapping_saved=_has_mappings,
+                plan_ready=(_ob_posted or False),  # OB posted means plan passed review
+                cutover_done=True,
+            )
+            _current_stage = next((s for s in _tb_stages if s.status == "current"), None)
+            job["tb_next_url"] = (_current_stage.cta_url if _current_stage and _current_stage.cta_url else url_for("post_ob", job_id=job["id"]))
         else:
             job["tb_next_url"] = None
             job["tb_ob_posted"]    = False
@@ -9434,6 +9441,7 @@ def _render_account_mapping_error(*, job, qbo_conn, category, status_code, intui
 def account_mapping_undo(job_id):
     """Clear a saved account mapping so the user can re-do it."""
     job, user = _job_or_403(job_id)
+    _map_source = "tb" if (job.get("report_type") == REPORT_TRIAL_BALANCE) else "gl"
     qbo_conn = _get_qbo_connection(job_id)
     if not qbo_conn:
         flash("Connect QuickBooks to this job first.", "error")
@@ -9452,6 +9460,7 @@ def account_mapping_undo(job_id):
             realm_id=qbo_conn["realm_id"],
             pclaw_account_number=pclaw_number,
             pclaw_account_name=pclaw_name,
+            source_type=_map_source,
         )
         _audit(
             "account_mapping_undo",
@@ -9492,6 +9501,7 @@ def account_mapping(job_id):
         their saved selections render as "Saved" and remain editable.
     """
     job, user = _job_or_403(job_id)
+    _map_source = "tb" if (job.get("report_type") == REPORT_TRIAL_BALANCE) else "gl"
     qbo_conn = _get_qbo_connection(job_id)
     if not qbo_conn:
         # No connection on this specific job. Check if the firm has any QBO
@@ -9633,6 +9643,7 @@ def account_mapping(job_id):
                     qbo_account_id=qbo_acct_id,
                     qbo_account_name=qbo_match.get("Name") if qbo_match else None,
                     qbo_account_type=qbo_match.get("AccountType") if qbo_match else None,
+                    source_type=_map_source,
                 )
                 saved += 1
         except Exception as e:  # noqa: BLE001
@@ -9694,7 +9705,7 @@ def account_mapping(job_id):
         return redirect(url_for("job_detail", job_id=job_id))
 
     # Existing saved mappings keyed for fast template lookup.
-    saved_mappings = db.list_account_mappings(user["firm_id"], realm_id)
+    saved_mappings = db.list_account_mappings(user["firm_id"], realm_id, source_type=_map_source)
     saved_by_key = {(m["pclaw_account_number"], m["pclaw_account_name"]): m for m in saved_mappings}
 
     # Run a dry-run create-plan so we can annotate each unmatched row
