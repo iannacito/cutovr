@@ -8329,6 +8329,17 @@ def _import_to_qbo_impl(job_id):
         flash("QuickBooks connection not found. Connect to QuickBooks first.", "error")
         return redirect(url_for("job_detail", job_id=job_id))
 
+    # If this job already has a completed import_summary, the user is
+    # re-submitting (browser refresh or double-click). Redirect to
+    # results instead of showing a confusing "Duplicate blocked" error.
+    if job.get("import_summary"):
+        flash(
+            "This file has already been sent to QuickBooks. "
+            "Scroll down to Step 6 to review the results.",
+            "info",
+        )
+        return redirect(url_for("job_detail", job_id=job_id))
+
     if not QBO_REAL_IMPORT:
         job["status"] = "Import to QBO initiated (demo mode)"
         _save_job(job_id)
@@ -8339,35 +8350,6 @@ def _import_to_qbo_impl(job_id):
             "info",
         )
         return redirect(url_for("job_detail", job_id=job_id))
-
-    # Production-mode final confirmation. The job-detail page surfaces a
-    # two-step flow: the first POST (no confirm_import) lands on the
-    # confirmation card showing connected company + file summary; the
-    # user must re-submit with confirm_import=IMPORT to actually post.
-    # Sandbox-mode imports skip this so existing beta flows are unchanged.
-    if QBO_ENVIRONMENT == "production":
-        confirmation = (request.form.get("confirm_import") or "").strip().upper()
-        if confirmation != "IMPORT":
-            job["pending_production_confirm"] = True
-            _save_job(job_id)
-            _audit(
-                "import_confirmation_shown",
-                target_type="job", target_id=job_id,
-                details=f"realm={qbo_conn.get('realm_id')} company={qbo_conn.get('company_name') or ''}",
-            )
-            flash(
-                "Production safety check: this will post real journal entries to "
-                f"QuickBooks Online company '"
-                f"{qbo_conn.get('company_name') or qbo_conn.get('realm_id')}'. "
-                "Review the import summary and type IMPORT in the confirmation "
-                "box to proceed.",
-                "info",
-            )
-            return redirect(url_for("job_detail", job_id=job_id))
-        # Clear the pending flag once confirmed.
-        if job.get("pending_production_confirm"):
-            job["pending_production_confirm"] = False
-            _save_job(job_id)
 
     user = current_user()
     try:

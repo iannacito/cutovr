@@ -309,11 +309,11 @@ def _stage_cta(
         # focuses that page (anchor to the send card).
         if gl_job_id:
             try:
-                _url = url_for("send_to_qbo", job_id=gl_job_id) + "#send-to-qbo-card"
+                _url = url_for("send_to_qbo", job_id=gl_job_id)
             except Exception:
-                _url = f"/jobs/{gl_job_id}/send-to-qbo#send-to-qbo-card"
+                _url = f"/jobs/{gl_job_id}/send-to-qbo"
         else:
-            _url = u("send_to_qbo_entry", "/send-to-qbo") + "#send-to-qbo-card"
+            _url = u("send_to_qbo_entry", "/send-to-qbo")
         return ("Send to QuickBooks", _url)
     if stage_key == STAGE_RECONCILE:
         _url = u("reconcile_balances", "/reconcile-balances")

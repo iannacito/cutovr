@@ -166,12 +166,6 @@
       <form id="gl-send-form"
             action="{{ url_for('import_to_qbo', job_id=job.id) }}" method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        {% if not qbo_is_sandbox and qbo_real_import %}
-          <label style="display:block;margin:var(--space-4) 0;">
-            <span>Type <code>IMPORT</code> to confirm</span>
-            <input type="text" name="confirm_import" placeholder="IMPORT" autocomplete="off" required>
-          </label>
-        {% endif %}
         <div class="actions-row" style="margin-top:var(--space-4);">
           <button id="send-to-qbo-btn" class="btn btn-primary btn-lg" type="submit"
                   data-testid="send-to-qbo-cta">
