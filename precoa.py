@@ -21,10 +21,12 @@ def is_ready_to_import(job_id: str, firm_id: str, db) -> bool:
     if not this_job:
         return False
     checkpoint = this_job.get("checkpoint") or "uploaded"
-    if checkpoint not in ("matched", "reviewed", "needs_attention"):
+    # Only offer the direct-import shortcut once the user has explicitly
+    # reviewed the preview (checkpoint "reviewed"). A job at "matched" has
+    # completed account-mapping but hasn't confirmed the import plan yet —
+    # send it through the stepper so Step 4 (preview_import) is not skipped.
+    if checkpoint != "reviewed":
         return False
-    if checkpoint == "needs_attention":
-        return False  # something went wrong — send to stepper
 
     # Firm needs at least one completed GL batch (proves accounts are set up)
     # OR a completed chart_of_accounts job
