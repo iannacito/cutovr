@@ -67,6 +67,9 @@ STATUS_NEEDS_ACCOUNT_TYPE = "needs_account_type"
 STATUS_NEEDS_QBO_MATCH = "needs_qbo_match"
 STATUS_TYPE_MISMATCH = "type_mismatch"
 STATUS_CREATED_IN_QBO = "created_in_qbo"
+# AR/AP/Retained Earnings/Net Income → will post via -PCLaw accounts.
+# Treated as ready from the COA validation gate perspective.
+STATUS_PCLAW_RESERVED = "pclaw_reserved"
 
 
 STATUS_LABELS = {
@@ -76,11 +79,35 @@ STATUS_LABELS = {
     STATUS_NEEDS_QBO_MATCH: "Needs QBO match",
     STATUS_TYPE_MISMATCH: "Type mismatch",
     STATUS_CREATED_IN_QBO: "Created in QBO",
+    STATUS_PCLAW_RESERVED: "Will use -PCLaw account",
 }
 
 # Statuses that allow the Trial Balance step to proceed. Anything else
 # blocks posting; the operator must resolve on the COA step.
-READY_STATUSES = frozenset({STATUS_READY, STATUS_CREATED_IN_QBO})
+READY_STATUSES = frozenset({
+    STATUS_READY,
+    STATUS_CREATED_IN_QBO,
+    STATUS_PCLAW_RESERVED,
+})
+
+
+# Mirrors opening_balance.py reserved constants (kept local — no circular import).
+_TB_RESERVED_QBO_TYPES: frozenset[str] = frozenset({
+    "Accounts Receivable",
+    "Accounts Payable",
+})
+_TB_RESERVED_NAME_FRAGMENTS: tuple[str, ...] = (
+    "retained earnings",
+    "net income",
+)
+
+
+def _tb_is_reserved(name: str, qbo_type: Optional[str]) -> bool:
+    """True for any account that gets -PCLaw routing in the opening balance plan."""
+    if qbo_type and qbo_type in _TB_RESERVED_QBO_TYPES:
+        return True
+    name_l = (name or "").lower()
+    return any(f in name_l for f in _TB_RESERVED_NAME_FRAGMENTS)
 
 
 # Special accounts that the email called out as the highest-risk
@@ -315,7 +342,7 @@ def validate_tb_against_coa(
     coa_create_history = coa_create_history or []
     coa_type_overrides = coa_type_overrides or {}
 
-    has_coa = bool(coa_rows)
+    has_coa = bool(coa_rows) or bool(account_mappings)
     has_qbo = bool(
         (qbo_accounts_response or {}).get("QueryResponse", {}).get("Account")
     )
@@ -400,6 +427,31 @@ def validate_tb_against_coa(
                 "Chart of Accounts (or add an Account Mapping) before "
                 "posting the opening balance."
             )
+
+        # Reserved-account check (AR/AP/Retained Earnings/Net Income).
+        # These get -PCLaw routing in the opening balance, so they're considered
+        # "ready" even without a direct QBO mapping.
+        qbo_type_resolved = (
+            (qbo_account.get("AccountType") or "").strip() if qbo_account else ""
+        )
+        if status not in (STATUS_MISSING_FROM_COA, STATUS_NEEDS_ACCOUNT_TYPE) and \
+                _tb_is_reserved(name, qbo_type_resolved):
+            status = STATUS_PCLAW_RESERVED
+            pclaw_target = f"{(name or '').strip()}-PCLaw"
+            if "net income" in (name or "").lower():
+                reason = (
+                    f"Net Income will be posted to '{pclaw_target}' and "
+                    "immediately closed into 'Retained Earnings-PCLaw' via "
+                    "the opening balance journal entry (not directly to "
+                    "QuickBooks' auto-calculated Net Income account)."
+                )
+            else:
+                reason = (
+                    f"This account will be posted to '{pclaw_target}' in the "
+                    "opening balance journal entry (not directly to the "
+                    "QuickBooks account with this name, since QuickBooks "
+                    "manages that account automatically)."
+                )
 
         # 4. AR/AP/Trust/Bank/Equity/etc. special-account guard.
         # If the *name* says "Accounts Payable" but the resolved QBO type
