@@ -2954,7 +2954,10 @@ def hub_bulk_revert():
             job["qbo_results"] = None
             job["checkpoint"] = "reviewed"
             job["status"] = "Reverted — ready to re-import"
-            _save_job(jid)
+            db.save_job_state(jid, job)
+            # Also invalidate the in-memory cache so the next request to this
+            # worker sees the updated checkpoint rather than the stale copy.
+            jobs.pop(jid, None)
             _audit("import_reverted", target_type="job", target_id=jid, details="bulk_revert")
             reverted += 1
         except Exception as exc:  # noqa: BLE001
@@ -3063,9 +3066,87 @@ def dev_reset_migration():
 @app.route("/jobs/<job_id>/push-entity-list", methods=["POST"])
 @login_required
 def push_entity_list(job_id):
-    """Stub — full QBO entity push not yet deployed; redirects to job detail."""
-    flash("Entity push is coming soon. Use the job detail page to continue.", "info")
-    return redirect(url_for("job_detail", job_id=job_id))
+    """Bulk-push vendor or customer list to QuickBooks.
+
+    Re-decrypts the uploaded file, re-parses every row, and calls
+    get_or_create_vendor / get_or_create_customer for each name.
+    Safe to re-run — get_or_create_* is idempotent.
+    """
+    import time as _time
+    job, user = _job_or_403(job_id)
+    report_type = job.get("report_type") or ""
+    if report_type not in (REPORT_VENDOR_LIST, REPORT_CUSTOMER_LIST):
+        flash("Push to QBO is only available for Vendor List and Customer List jobs.", "error")
+        return redirect(url_for("migration_nexus"))
+
+    qbo_conn = _get_qbo_connection(job_id)
+    if not qbo_conn:
+        flash("Connect QuickBooks before pushing the entity list.", "error")
+        return redirect(url_for("migration_nexus"))
+
+    rows = _reparse_report_rows(job, report_type)
+    if not rows:
+        flash("Could not read the uploaded file. Please re-upload and try again.", "error")
+        return redirect(url_for("migration_nexus"))
+
+    try:
+        qbo, qbo_conn = _get_qbo_client(job_id, user)
+    except QBOAuthExpired:
+        flash(
+            "Your QuickBooks connection has expired. Reconnect from the "
+            "migration dashboard, then try again.",
+            "error",
+        )
+        return redirect(url_for("migration_nexus"))
+    if not qbo:
+        flash("QuickBooks is not connected.", "error")
+        return redirect(url_for("migration_nexus"))
+
+    is_vendor = report_type == REPORT_VENDOR_LIST
+    name_key = "vendor_name" if is_vendor else "customer_name"
+    entity_label = "Vendor" if is_vendor else "Customer"
+
+    pushed, skipped, errors = 0, 0, 0
+    _QBO_BATCH = 25
+    for i, row in enumerate(rows):
+        name = (row.get(name_key) or "").strip()
+        if not name:
+            skipped += 1
+            continue
+        try:
+            if is_vendor:
+                qbo.get_or_create_vendor(name)
+            else:
+                qbo.get_or_create_customer(name)
+            pushed += 1
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("push_entity_list: %s %r failed: %s", entity_label, name, exc)
+            errors += 1
+        if (i + 1) % _QBO_BATCH == 0:
+            _time.sleep(0.5)
+
+    db.save_job_state(job_id, {"status": "completed", "checkpoint": "completed"})
+    jobs.pop(job_id, None)  # invalidate stale in-memory cache
+    _audit(
+        "entity_list_pushed",
+        target_type="job", target_id=job_id,
+        details=(
+            f"report_type={report_type} pushed={pushed} "
+            f"skipped={skipped} errors={errors}"
+        ),
+    )
+    if errors:
+        flash(
+            f"Pushed {pushed} {entity_label.lower()}s to QuickBooks "
+            f"({errors} failed — check logs). Safe to re-push.",
+            "warning",
+        )
+    else:
+        flash(
+            f"Pushed {pushed} {entity_label.lower()}s to QuickBooks successfully.",
+            "success",
+        )
+    return redirect(url_for("migration_nexus"))
 
 
 def _resolve_entity_hints(qbo, payloads, customer_index=None, vendor_index=None,
@@ -6112,6 +6193,10 @@ def _reparse_report_rows(job: dict, report_type: str):
             rows, _fn, _missing = parse_trial_balance(temp_path)
         elif report_type == REPORT_TRUST_LISTING:
             rows, _fn, _missing = parse_trust_listing(temp_path)
+        elif report_type == REPORT_VENDOR_LIST:
+            rows, _fn, _missing = parse_vendor_list(temp_path)
+        elif report_type == REPORT_CUSTOMER_LIST:
+            rows, _fn, _missing = parse_customer_list(temp_path)
         else:
             rows = []
         return rows
