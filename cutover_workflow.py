@@ -156,10 +156,17 @@ def _has_any_report(jobs: Iterable[dict], report_type: str) -> bool:
 
 
 def _has_imported_gl(jobs: Iterable[dict]) -> bool:
-    """True if at least one GL job has reached the 'Imported' status."""
+    """True if at least one GL job has successfully imported to QuickBooks.
+
+    Checks import_summary first (the authoritative signal — survives status
+    overwrites like "Duplicate blocked" from accidental re-submissions).
+    Falls back to the status string for legacy jobs without import_summary.
+    """
     for j in jobs:
         if (j.get("report_type") or "general_ledger") != "general_ledger":
             continue
+        if j.get("import_summary"):
+            return True
         status = (j.get("status") or "").lower()
         if "imported" in status and "not" not in status:
             return True
@@ -309,7 +316,9 @@ def build_checklist(
                if (j.get("report_type") or "general_ledger") == "general_ledger"]
     if _has_imported_gl(jobs):
         imported_count = sum(
-            1 for j in gl_jobs if "imported" in (j.get("status") or "").lower()
+            1 for j in gl_jobs
+            if j.get("import_summary")
+            or "imported" in (j.get("status") or "").lower()
         )
         items.append(ChecklistItem(
             STEP_GL_UPLOAD, "General Ledger uploaded / imported",

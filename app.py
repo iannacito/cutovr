@@ -6111,6 +6111,10 @@ def job_detail(job_id):
         )
         extra_ctx = tb_workflow.tb_stages_context(_tb_stages)
 
+    _gl_already_imported = (
+        bool((job or {}).get("import_summary"))
+        and (job.get("report_type") or "general_ledger") == "general_ledger"
+    )
     return render_template(
         "job-detail.html",
         job=job,
@@ -6131,6 +6135,9 @@ def job_detail(job_id):
                 job_id
                 if (job.get("report_type") or "") == "general_ledger"
                 else None
+            ),
+            force_current_stage=(
+                customer_workflow.STAGE_RECONCILE if _gl_already_imported else None
             ),
         )),
     )
