@@ -788,6 +788,32 @@ def _get_qbo_connection(job_id):
         return conn
     row = db.get_qbo_connection(job_id)
     if not row or not row.get("access_token_enc") or not row.get("refresh_token_enc"):
+        # No connection for this specific job — check if another job in the same
+        # firm has a valid QBO token we can inherit. This covers the case where
+        # the user connected QBO on batch A and then navigates to batch B's
+        # send_to_qbo page via the stepper: batch B inherits the existing token
+        # rather than triggering a second OAuth round-trip.
+        try:
+            job_meta = db.hydrate_job(job_id) or {}
+            firm_id = job_meta.get("firm_id")
+            if firm_id:
+                for sibling in db.list_qbo_connections_for_firm(int(firm_id)):
+                    if sibling["job_id"] == job_id:
+                        continue
+                    sib_row = (
+                        qbo_connections.get(sibling["job_id"])
+                        or db.get_qbo_connection(sibling["job_id"])
+                    )
+                    if (
+                        sib_row
+                        and sib_row.get("access_token_enc")
+                        and sib_row.get("refresh_token_enc")
+                    ):
+                        # Cache under this job_id so future requests skip the scan
+                        qbo_connections[job_id] = sib_row
+                        return sib_row
+        except Exception:  # noqa: BLE001
+            pass
         return None
     rehydrated = {
         "realm_id": row["realm_id"],
