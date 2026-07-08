@@ -91,11 +91,7 @@ def build_tb_stages(
         STAGE_UPLOAD:  u("job_detail", f"/jobs/{job_id}", job_id=job_id),
         STAGE_MATCH:   u("ob_account_mapping", f"/jobs/{job_id}/ob-account-mapping", job_id=job_id),
         STAGE_REVIEW:  u("opening_balance_preview", f"/jobs/{job_id}/opening-balance", job_id=job_id),
-        STAGE_POST:    (
-            u("reconcile_ob", f"/jobs/{job_id}/reconcile-ob", job_id=job_id)
-            if ob_posted
-            else u("post_ob", f"/jobs/{job_id}/post-ob", job_id=job_id)
-        ),
+        STAGE_POST: u("post_ob", f"/jobs/{job_id}/post-ob", job_id=job_id),
     }
 
     # CTA for the current stage
