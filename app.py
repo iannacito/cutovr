@@ -9139,6 +9139,66 @@ def preview_import(job_id):
             preview["would_post"] = True
             preview["balanced"] = True
 
+        # Case 3: global imbalance with no per-txn blockers and no saved auto rows.
+        # The file's transactions individually balance, but the overall debits ≠
+        # credits sum. Synthesise one adjustment row using the mapped bank account
+        # to restore global balance, exactly like Case 1 but without needing a
+        # still_blocked list.
+        if (
+            not preview.get("blocked_transactions")
+            and not preview.get("balanced")
+            and not job.get("auto_balance_rows")
+            and qbo_conn
+            and saved_mappings
+        ):
+            from decimal import Decimal as _Decimal
+            try:
+                _raw_dr = (preview.get("total_debits") or "0").replace(",", "")
+                _raw_cr = (preview.get("total_credits") or "0").replace(",", "")
+                _global_dr = _Decimal(_raw_dr)
+                _global_cr = _Decimal(_raw_cr)
+                _diff = _global_dr - _global_cr  # positive = excess debits
+                if _diff:
+                    from gl_grouping import auto_balance_by_token_group
+                    _bank2, _exp2 = _detect_accounts_for_auto_balance(
+                        [], rows, saved_mappings
+                    )
+                    if _bank2["name"]:
+                        # Build one synthetic still_blocked entry representing
+                        # the global imbalance so auto_balance_by_token_group
+                        # can produce the adjustment row.
+                        _synthetic_blocked = [{
+                            "transaction_id": "GLOBAL-BALANCE-ADJ",
+                            "line_count": 1,
+                            "reasons": ["global debit/credit imbalance"],
+                            "token": None,
+                            "debits": str(abs(_diff)) if _diff > 0 else "0.00",
+                            "credits": str(abs(_diff)) if _diff < 0 else "0.00",
+                        }]
+                        _synthetic2 = auto_balance_by_token_group(
+                            still_blocked=_synthetic_blocked,
+                            original_rows=rows,
+                            bank_account_name=_bank2["name"],
+                            bank_account_number=_bank2["number"],
+                            expense_offset_name=_exp2["name"],
+                            expense_offset_number=_exp2["number"],
+                        )
+                        if _synthetic2:
+                            job["auto_balance_rows"] = _synthetic2
+                            jobs[job_id] = job
+                            db.save_job_state(job_id, job)
+                            logging.getLogger("app").info(
+                                "auto_balance(global): added %d synthetic rows for job %s "
+                                "diff=%s bank=%r",
+                                len(_synthetic2), job_id, _diff, _bank2["name"],
+                            )
+                            preview["balanced"] = True
+                            preview["would_post"] = True
+            except Exception:  # noqa: BLE001
+                logging.getLogger("app").warning(
+                    "auto_balance(global): failed for job %s", job_id, exc_info=True
+                )
+
     _audit("import_preview", target_type="job", target_id=job_id,
            details=(f"je={preview['journal_entry_count']} unmapped={preview['unmapped_account_count']}"
                     if preview else preview_error or "no preview"))
