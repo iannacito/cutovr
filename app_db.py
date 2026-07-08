@@ -442,6 +442,52 @@ class AppDB:
         # webhook can be recognised as already-applied (idempotency).
         add_col("intake_submissions", "paid_at TEXT")
 
+        # account_mappings: scope by source type (gl vs tb).
+        # GL routes store mappings as source_type='gl'; TB routes as 'tb'.
+        # Existing rows default to 'gl' so their behavior is unchanged.
+        add_col("account_mappings", "source_type TEXT NOT NULL DEFAULT 'gl'")
+
+        # Rebuild account_mappings with source_type inside the UNIQUE key.
+        # Guard: skip if the sentinel index already exists (idempotent).
+        _existing_idx = {
+            r[1] for r in c.execute(
+                "PRAGMA index_list(account_mappings)"
+            ).fetchall()
+        }
+        if "idx_acctmap_source" not in _existing_idx:
+            c.executescript("""
+                CREATE TABLE account_mappings_v2 (
+                    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+                    firm_id               INTEGER NOT NULL REFERENCES firms(id),
+                    realm_id              TEXT    NOT NULL,
+                    pclaw_account_number  TEXT,
+                    pclaw_account_name    TEXT,
+                    qbo_account_id        TEXT    NOT NULL,
+                    qbo_account_name      TEXT,
+                    qbo_account_type      TEXT,
+                    source_type           TEXT    NOT NULL DEFAULT 'gl',
+                    created_at            TEXT    NOT NULL,
+                    updated_at            TEXT    NOT NULL,
+                    UNIQUE (firm_id, realm_id, pclaw_account_number,
+                            pclaw_account_name, source_type)
+                );
+                INSERT OR IGNORE INTO account_mappings_v2
+                    (id, firm_id, realm_id, pclaw_account_number,
+                     pclaw_account_name, qbo_account_id, qbo_account_name,
+                     qbo_account_type, source_type, created_at, updated_at)
+                SELECT id, firm_id, realm_id, pclaw_account_number,
+                       pclaw_account_name, qbo_account_id, qbo_account_name,
+                       qbo_account_type, COALESCE(source_type, 'gl'),
+                       created_at, updated_at
+                FROM account_mappings;
+                DROP TABLE account_mappings;
+                ALTER TABLE account_mappings_v2 RENAME TO account_mappings;
+                CREATE INDEX IF NOT EXISTS idx_acctmap_firm_realm
+                    ON account_mappings(firm_id, realm_id);
+                CREATE INDEX IF NOT EXISTS idx_acctmap_source
+                    ON account_mappings(firm_id, realm_id, source_type);
+            """)
+
         # Calendly lead: first-class columns derived from the discovery-call
         # form answers, added after the initial calendly_leads schema. All
         # nullable so existing lead rows stay valid; the webhook/sync write
@@ -1049,13 +1095,23 @@ class AppDB:
 
     # --- account mappings --------------------------------------------------
 
-    def list_account_mappings(self, firm_id: int, realm_id: str) -> list:
+    def list_account_mappings(
+        self, firm_id: int, realm_id: str, source_type: str | None = "gl"
+    ) -> list:
         with self._conn() as c:
-            rows = c.execute(
-                "SELECT * FROM account_mappings WHERE firm_id = ? AND realm_id = ? "
-                "ORDER BY pclaw_account_number, pclaw_account_name",
-                (firm_id, realm_id),
-            ).fetchall()
+            if source_type is None:
+                rows = c.execute(
+                    "SELECT * FROM account_mappings WHERE firm_id = ? AND realm_id = ? "
+                    "ORDER BY pclaw_account_number, pclaw_account_name",
+                    (firm_id, realm_id),
+                ).fetchall()
+            else:
+                rows = c.execute(
+                    "SELECT * FROM account_mappings WHERE firm_id = ? AND realm_id = ? "
+                    "AND source_type = ? "
+                    "ORDER BY pclaw_account_number, pclaw_account_name",
+                    (firm_id, realm_id, source_type),
+                ).fetchall()
             return [dict(r) for r in rows]
 
     def save_account_mapping(
@@ -1067,29 +1123,31 @@ class AppDB:
         qbo_account_id: str,
         qbo_account_name: Optional[str] = None,
         qbo_account_type: Optional[str] = None,
+        source_type: str = "gl",
     ) -> None:
         """Insert or update one mapping row.
 
         The unique key is (firm_id, realm_id, pclaw_account_number,
-        pclaw_account_name). Either of the PCLaw columns can be NULL — most
-        sandboxes have account numbers but some don't, so the route should
-        pass whichever value the source CSV row supplied.
+        pclaw_account_name, source_type). Use source_type='gl' for GL routes
+        and source_type='tb' for Trial Balance routes so their mappings never
+        collide even when the PCLaw account key is identical.
         """
         with self._conn() as c:
             c.execute(
                 "INSERT INTO account_mappings "
                 "(firm_id, realm_id, pclaw_account_number, pclaw_account_name, "
-                " qbo_account_id, qbo_account_name, qbo_account_type, "
+                " qbo_account_id, qbo_account_name, qbo_account_type, source_type, "
                 " created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(firm_id, realm_id, pclaw_account_number, pclaw_account_name) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(firm_id, realm_id, pclaw_account_number, "
+                "            pclaw_account_name, source_type) "
                 "DO UPDATE SET qbo_account_id = excluded.qbo_account_id, "
                 "              qbo_account_name = excluded.qbo_account_name, "
                 "              qbo_account_type = excluded.qbo_account_type, "
                 "              updated_at = excluded.updated_at",
                 (
                     firm_id, realm_id, pclaw_account_number, pclaw_account_name,
-                    qbo_account_id, qbo_account_name, qbo_account_type,
+                    qbo_account_id, qbo_account_name, qbo_account_type, source_type,
                     _now(), _now(),
                 ),
             )
@@ -1097,12 +1155,15 @@ class AppDB:
     def delete_account_mapping(
         self, firm_id: int, realm_id: str,
         pclaw_account_number: Optional[str], pclaw_account_name: Optional[str],
+        source_type: str = "gl",
     ) -> None:
         with self._conn() as c:
             c.execute(
                 "DELETE FROM account_mappings WHERE firm_id = ? AND realm_id = ? "
-                "AND pclaw_account_number IS ? AND pclaw_account_name IS ?",
-                (firm_id, realm_id, pclaw_account_number, pclaw_account_name),
+                "AND pclaw_account_number IS ? AND pclaw_account_name IS ? "
+                "AND source_type = ?",
+                (firm_id, realm_id, pclaw_account_number, pclaw_account_name,
+                 source_type),
             )
 
     # --- entity map (resolved QBO customers / vendors) ---------------------
