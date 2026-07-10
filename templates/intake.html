@@ -88,26 +88,6 @@ href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_bla
 
         <hr style="border:none;border-top:1px solid var(--line);margin:0;">
 
-        {# Section 1b — Which migration (service lane) #}
-        <section class="stack-sm" data-testid="intake-section-service">
-          <h2 style="font-size:1.1rem;margin:0;">Which migration?</h2>
-          <p class="note" style="margin:0;">Pick the move that fits your firm. Not sure? Choose the closest and we'll confirm on the call.</p>
-          <div class="stack-sm" role="radiogroup" aria-label="Migration service">
-            {% for opt in service_lane_options %}
-            <label class="card card--inset" style="display:block;cursor:pointer;"
-                   data-testid="intake-service-option"
-                   data-service-lane="{{ opt.slug }}">
-              <input type="radio" name="service_lane" value="{{ opt.slug }}"
-                     {% if opt.slug == selected_service_lane %}checked{% endif %}>
-              <strong>{{ opt.discovery_label }}</strong>
-              <br><small class="muted">{{ opt.blurb }}</small>
-            </label>
-            {% endfor %}
-          </div>
-        </section>
-
-        <hr style="border:none;border-top:1px solid var(--line);margin:0;">
-
         {# Section 2 — Migration date #}
         <section class="stack-sm" data-testid="intake-section-migration-date">
           <h2 style="font-size:1.1rem;margin:0;">Migration date</h2>

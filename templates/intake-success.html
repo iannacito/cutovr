@@ -14,13 +14,6 @@
       You can always send us more files later. The more complete your files
       are, the smoother your migration will be.
     </p>
-    {% if is_clio_accounting %}
-    <p class="note" data-testid="intake-success-clio-readiness">
-      You chose <strong>{{ service_lane_label }}</strong>. See exactly what we
-      collect and prepare for your
-      <a href="{{ url_for('clio_accounting_readiness', lane=service_lane) }}">Clio Accounting cutover package</a>.
-    </p>
-    {% endif %}
     {% if payment_paid %}
     <p class="note" data-testid="intake-success-payment">
       <strong>Payment received.</strong> This is your confirmation of payment.

@@ -4,25 +4,34 @@ Run from project root:
 
     python3 tests/smoke_clio_readiness.py
 
-Covers the two new service lanes (PC Law -> Clio Accounting Readiness and
-QuickBooks Online -> Clio Accounting Readiness) alongside the preserved
-PC Law -> QuickBooks default:
+The two Clio lanes (PC Law -> Clio Accounting Readiness and QuickBooks Online ->
+Clio Accounting Readiness) are an INTERNAL, not-yet-public foundation: they must
+never be exposed on the public website/intake, while the preserved PC Law ->
+QuickBooks default lane stays completely untouched.
 
   T1  service_lanes: constants, normalize/default, is_clio_accounting,
       uses_qbo_posting gating, free-text detection.
   T2  clio_accounting.ClioAccountingIntegrationStatus: not enabled by default,
       flips with CLIO_ACCOUNTING_API_ENABLED, never leaks scary customer copy.
-  T3  /intake renders all three selectable service-lane options.
-  T4  Intake submit with a Clio lane persists service_lane and the success
-      page links to the Clio readiness page (no QBO posting language).
+  T3  Public /intake does NOT expose a service-lane selector or any Clio option.
+  T4  Intake submit with a Clio lane (programmatic) still captures service_lane
+      internally, but the public success page does NOT link to the readiness
+      page and shows no QBO posting language.
   T5  Intake submit with NO lane defaults to the PCLaw->QBO flow (service_lane
       stored NULL, no Clio readiness link) — backward compatible.
-  T6  /clio-accounting-readiness renders lane-specific document checklists that
-      DIFFER between the two lanes, the readiness stages, and never shows a
+  T6  /clio-accounting-readiness is login-gated (logged-out -> /login), carries
+      a noindex directive, and for a signed-in user renders lane-specific
+      document checklists that DIFFER between the two lanes and never show a
       "Send to QuickBooks" action.
-  T7  Operator intake list shows a Service column + the lane label.
+  T7  Operator intake list shows a Service column + the lane label (internal).
   T8  Calendly webhook derives service_lane from the event/answers, and the
-      operator leads view surfaces it.
+      operator leads view surfaces it (internal).
+  T9  QBO posting gate: PCLaw->QBO passes; both Clio lanes fail-closed at every
+      posting entry point.
+  T10 firms.service_lane migration is idempotent.
+  T11 Operator firm-detail surfaces the resolved lane + source + posting status.
+  T12 JSON gate returns a friendly message + redirect.
+  T13 Public landing page has no Clio exposure; PCLaw->QBO positioning intact.
 """
 
 import json
@@ -119,21 +128,25 @@ def t2_integration_status_placeholder():
     print("T2 OK: ClioAccountingIntegrationStatus not-enabled default + safe copy")
 
 
-def t3_intake_renders_service_options():
+def t3_intake_does_not_expose_clio_publicly():
+    """The two Clio lanes are an INTERNAL foundation — the public intake form
+    must NOT surface a service-lane selector or any Clio Accounting option."""
     c = appmod.app.test_client()
     body = c.get("/intake").get_data(as_text=True)
-    assert "Which migration?" in body
-    for label in (
-        "PC Law to QuickBooks Online migration",
+    assert "Which migration?" not in body
+    assert 'name="service_lane"' not in body
+    for banned in (
         "PC Law to Clio Accounting Readiness",
         "QuickBooks Online to Clio Accounting Readiness",
+        "Clio Accounting Cutover Readiness",
     ):
-        assert label in body, f"intake missing service option: {label!r}"
-    assert 'name="service_lane"' in body
-    print("T3 OK: /intake renders all three service-lane options")
+        assert banned not in body, f"intake publicly exposes Clio lane: {banned!r}"
+    print("T3 OK: /intake does not publicly expose Clio lanes/selector")
 
 
-def t4_intake_submit_clio_lane_persists_and_links():
+def t4_intake_submit_clio_lane_persists_but_not_public():
+    """A lane supplied programmatically is still captured (foundation intact),
+    but the public success page never links to the internal readiness page."""
     c = appmod.app.test_client()
     r = c.post(
         "/intake",
@@ -145,12 +158,13 @@ def t4_intake_submit_clio_lane_persists_and_links():
     assert r.status_code == 200, r.status_code
     body = r.get_data(as_text=True)
     assert "You're all set" in body
-    # Success page routes the firm to the Clio readiness page, not QBO posting.
-    assert "/clio-accounting-readiness" in body
+    # Internal readiness page must NOT be exposed on the public success page.
+    assert "/clio-accounting-readiness" not in body
     assert "Send to QuickBooks" not in body
+    # But the lane is still captured behind the scenes for internal use.
     rec = appmod.db.recent_intake_submissions(limit=1)[0]
     assert rec["service_lane"] == sl.PCLAW_TO_CLIO_ACCOUNTING, rec["service_lane"]
-    print("T4 OK: Clio-lane intake persists service_lane + links to readiness")
+    print("T4 OK: Clio lane captured internally, not exposed on public success page")
 
 
 def t5_intake_submit_default_is_backward_compatible():
@@ -173,13 +187,25 @@ def t5_intake_submit_default_is_backward_compatible():
     print("T5 OK: no-lane intake defaults to PCLaw->QBO (backward compatible)")
 
 
-def t6_readiness_page_checklists_differ_no_qbo():
+def t6_readiness_page_internal_only_and_checklists_differ():
+    # Logged-OUT users must not reach the internal readiness page — it is
+    # login-gated and not publicly discoverable.
+    anon = appmod.app.test_client()
+    r = anon.get("/clio-accounting-readiness?lane=pclaw_to_clio_accounting",
+                 follow_redirects=False)
+    assert r.status_code in (301, 302), f"readiness page not login-gated: {r.status_code}"
+    assert "/login" in r.headers.get("Location", ""), r.headers.get("Location", "")
+
+    # A signed-in user can reach it (this is where the QBO gate redirects a
+    # Clio-lane firm). The page must carry a noindex directive.
     c = appmod.app.test_client()
+    _signup(c, "readiness-viewer@meridian.test", "Readiness Viewer")
     pclaw = c.get("/clio-accounting-readiness?lane=pclaw_to_clio_accounting")
     qbo = c.get("/clio-accounting-readiness?lane=qbo_to_clio_accounting")
     assert pclaw.status_code == 200 and qbo.status_code == 200
     pbody = pclaw.get_data(as_text=True)
     qbody = qbo.get_data(as_text=True)
+    assert 'name="robots"' in pbody and "noindex" in pbody, "readiness page missing noindex"
     # Framed as preparing a cutover package, not importing into Clio.
     assert "prepare your Clio Accounting cutover package" in pbody
     assert "import directly into Clio" not in pbody.lower().replace("&nbsp;", " ")
@@ -355,6 +381,63 @@ def t9_qbo_posting_gate():
     print("T9 OK: QBO posting gate — PCLaw->QBO passes, Clio lanes fail-closed")
 
 
+def t11_operator_firm_detail_shows_lane():
+    """Operator firm-detail surfaces the resolved lane, posting status, and the
+    source/fallback note so a mis-resolved lane can be spotted."""
+    c = appmod.app.test_client()
+    # Operator session (op account created in T7).
+    c.post("/login", data={"email": "op@cutovr.test", "password": "passw0rd!1234"})
+
+    # A Clio-lane firm: detail must show it does NOT post to QBO.
+    u = _signup(appmod.app.test_client(), "opdetail-clio@meridian.test", "Op Detail Clio")
+    appmod.db.set_firm_service_lane(u["firm_id"], sl.QBO_TO_CLIO_ACCOUNTING)
+    body = c.get(f"/operator/firm/{u['firm_id']}").get_data(as_text=True)
+    assert "Service lane" in body
+    assert "QuickBooks Online to Clio Accounting Readiness" in body
+    assert "QBO posting blocked" in body
+    assert "Stored on the firm record." in body
+
+    # A default/NULL-lane firm: detail must show it DOES post + the fallback note.
+    u2 = _signup(appmod.app.test_client(), "opdetail-default@meridian.test", "Op Detail Default")
+    body2 = c.get(f"/operator/firm/{u2['firm_id']}").get_data(as_text=True)
+    assert "No lane captured" in body2
+    assert "Not specified" in body2
+    print("T11 OK: operator firm-detail shows resolved lane + source + posting status")
+
+
+def t12_json_gate_message():
+    """The JSON gate for initialpost carries a friendly human-readable message."""
+    c = appmod.app.test_client()
+    u = _signup(c, "json-gate@meridian.test", "JSON Gate Firm")
+    appmod.db.set_firm_service_lane(u["firm_id"], sl.PCLAW_TO_CLIO_ACCOUNTING)
+    _make_gl_job(u["firm_id"], u["id"], "job-json-gate")
+    r = c.post("/initialpost/start/job-json-gate")
+    assert r.status_code == 403
+    body = r.get_json() or {}
+    assert body.get("blocked") is True
+    assert "doesn’t post to QuickBooks" in (body.get("message") or "")
+    assert "/clio-accounting-readiness" in (body.get("redirect") or "")
+    print("T12 OK: JSON gate returns friendly message + redirect")
+
+
+def t13_landing_page_has_no_public_clio_exposure():
+    """The public landing page must not promote the internal Clio lanes."""
+    c = appmod.app.test_client()  # logged-out prospect
+    body = c.get("/").get_data(as_text=True)
+    assert c.get("/").status_code == 200
+    for banned in (
+        "Clio Accounting Readiness",
+        "Clio Accounting Cutover",
+        "/clio-accounting-readiness",
+        "landing-pclaw-clio-readiness",
+        "landing-qbo-clio-readiness",
+    ):
+        assert banned not in body, f"landing page publicly exposes Clio: {banned!r}"
+    # The existing PC Law -> QuickBooks positioning is untouched.
+    assert "QuickBooks" in body
+    print("T13 OK: landing page has no public Clio exposure; PCLaw->QBO intact")
+
+
 def t10_firm_lane_migration_idempotent():
     """firms.service_lane migration is safe to run repeatedly on an existing DB."""
     import app_db
@@ -373,13 +456,16 @@ if __name__ == "__main__":
     try:
         t1_service_lanes_module()
         t2_integration_status_placeholder()
-        t3_intake_renders_service_options()
-        t4_intake_submit_clio_lane_persists_and_links()
+        t3_intake_does_not_expose_clio_publicly()
+        t4_intake_submit_clio_lane_persists_but_not_public()
         t5_intake_submit_default_is_backward_compatible()
-        t6_readiness_page_checklists_differ_no_qbo()
+        t6_readiness_page_internal_only_and_checklists_differ()
         t7_operator_intake_shows_service()
         t8_calendly_lead_service_lane()
         t9_qbo_posting_gate()
+        t11_operator_firm_detail_shows_lane()
+        t12_json_gate_message()
+        t13_landing_page_has_no_public_clio_exposure()
         t10_firm_lane_migration_idempotent()
         print("\nALL CLIO READINESS SMOKE TESTS PASSED")
     finally:

@@ -1,6 +1,9 @@
 {% extends "_base.html" %}
 {% block title %}{{ lane_label }} &mdash; {{ app_name }}{% endblock %}
 {% block meta_description %}Prepare your accounting data for a clean, guided transition into Clio Accounting. {{ app_name }} collects, validates, and packages your cutover data for review.{% endblock %}
+{# Internal foundation — the Clio Accounting readiness lanes are not public yet.
+   Keep this page out of search indexes while it is behind-the-scenes only. #}
+{% block head_extra %}<meta name="robots" content="noindex,nofollow">{% endblock %}
 {% block content %}
 
 {% macro discovery_attrs() -%}

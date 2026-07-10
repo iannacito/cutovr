@@ -2172,6 +2172,11 @@ def _clio_readiness_gate_json(firm_id):
     return jsonify({
         "blocked": True,
         "reason": "clio_readiness",
+        "message": (
+            "This is a Clio Accounting cutover-readiness engagement, so it "
+            "doesn’t post to QuickBooks. We’ll take you to your Clio Accounting "
+            "cutover package instead."
+        ),
         "redirect": url_for("clio_accounting_readiness", lane=readiness_lane),
     }), 403
 
@@ -4720,11 +4725,6 @@ def _render_intake_form(plan_slug, *, form, prefill_email="", prefill_firm="",
             {"slug": s, "label": intake.PLAN_LABELS[s]}
             for s in intake.SELECTABLE_PLANS
         ],
-        service_lane_options=service_lanes.selectable_options(),
-        selected_service_lane=(
-            service_lanes.normalize(form.get("service_lane"))
-            or service_lanes.DEFAULT_LANE
-        ),
         prefill_email=form.get("email", "") or prefill_email,
         prefill_firm=form.get("firm_name", "") or prefill_firm,
         form=form,
@@ -4756,8 +4756,11 @@ def intake_submit():
     email = _f("email", 254)
     clio_date = _f("clio_migration_date", 40)
     plan_slug = intake.normalize_plan(_f("plan", 60)) or _intake_plan_from_request()
-    service_lane = service_lanes.normalize(_f("service_lane", 60)) \
-        or service_lanes.DEFAULT_LANE
+    # Service lane is an INTERNAL foundation: the public intake form does not
+    # expose a lane selector, so this is normally None (legacy PCLaw -> QBO
+    # default). It stays capturable for internal/programmatic callers and is
+    # never forced to a default, preserving the original NULL-lane behavior.
+    service_lane = service_lanes.normalize(_f("service_lane", 60))
 
     form = {
         "firm_name": firm_name, "first_name": first_name,
@@ -4914,28 +4917,31 @@ def intake_success():
     """Clean confirmation page after a successful intake submission."""
     reference = (session.get("intake_done_ref") or "").strip()[:32]
     payment_status = intake.PAYMENT_PENDING
-    service_lane = None
     if reference:
         rec = db.get_intake_by_reference(reference)
         if rec:
             payment_status = intake.normalize_payment_status(
                 rec.get("payment_status")
             )
-            service_lane = service_lanes.normalize(rec.get("service_lane"))
     return render_template(
         "intake-success.html",
         reference=reference,
         payment_paid=intake.is_paid(payment_status),
         payment_status_label=intake.payment_status_label(payment_status),
-        service_lane=service_lane,
-        service_lane_label=service_lanes.label(service_lane, default=""),
-        is_clio_accounting=service_lanes.is_clio_accounting(service_lane),
     )
 
 
 @app.route("/clio-accounting-readiness")
+@login_required
 def clio_accounting_readiness():
-    """Customer-facing Clio Accounting cutover-readiness overview.
+    """INTERNAL, not-yet-public Clio Accounting cutover-readiness overview.
+
+    The two Clio Accounting readiness lanes are a behind-the-scenes foundation
+    and are NOT offered on the public website yet. This page is therefore
+    login-gated and carries a noindex directive; it is not linked from any
+    public marketing, nav, or intake surface. Its only inbound path today is
+    the fail-closed QBO posting gate, which redirects an already-signed-in
+    Clio-lane firm here to explain why it doesn't post to QuickBooks.
 
     Explains, without pricing or alarming language, what Cutovr collects and
     prepares so a firm can complete a clean, guided setup in Clio Accounting.
@@ -13034,6 +13040,24 @@ def operator_firm_detail(firm_id):
     detail = operator_panel.firm_detail(db, history, firm_id)
     if not detail:
         abort(404)
+    # Explain how the firm's service lane is resolved and whether it posts to
+    # QuickBooks — read-only, so an operator can spot a mis-resolved lane (e.g.
+    # a Clio firm that signed up under an email that didn't match its intake).
+    stored_lane = (detail["firm"] or {}).get("service_lane")
+    resolved_lane = db.resolve_service_lane_for_firm(firm_id)
+    if stored_lane:
+        lane_source = "Stored on the firm record."
+    elif resolved_lane:
+        lane_source = "Resolved from intake/lead by email (not yet stored on the firm)."
+    else:
+        lane_source = (
+            "No lane captured — treated as the PC Law → QuickBooks default. "
+            "If this is a Clio Accounting readiness firm, capture its lane at "
+            "intake so QuickBooks posting is blocked."
+        )
+    detail["service_lane_resolved_label"] = service_lanes.label(resolved_lane)
+    detail["service_lane_source"] = lane_source
+    detail["service_lane_posts_to_qbo"] = service_lanes.uses_qbo_posting(resolved_lane)
     return render_template("operator-firm.html", **detail)
 
 
