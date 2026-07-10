@@ -17,6 +17,7 @@
             <th>Reference</th>
             <th>Firm</th>
             <th>Contact</th>
+            <th>Service</th>
             <th>Plan</th>
             <th>Payment</th>
             <th>Clio date</th>
@@ -35,6 +36,7 @@
               {% if s.position %}<small class="muted">{{ s.position }}</small><br>{% endif %}
               <small class="muted">{{ s.email }}{% if s.phone %} &middot; {{ s.phone }}{% endif %}</small>
             </td>
+            <td data-testid="operator-intake-service">{{ s.service_lane_label }}</td>
             <td>
               {{ s.plan_label }}
               {% if s.plan_price %}<br><small class="muted">{{ s.plan_price }}</small>{% endif %}

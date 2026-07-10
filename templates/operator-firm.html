@@ -18,6 +18,17 @@
     </ul>
   </section>
 
+  <section class="card" data-testid="operator-firm-service-lane">
+    <p class="eyebrow">Service lane</p>
+    <ul class="stack-sm">
+      <li>Resolved: <strong data-testid="operator-firm-lane-label">{{ service_lane_resolved_label }}</strong></li>
+      <li>Posts to QuickBooks:
+        {% if service_lane_posts_to_qbo %}<code>yes</code>{% else %}<code>no (Clio readiness — QBO posting blocked)</code>{% endif %}
+      </li>
+      <li class="muted" data-testid="operator-firm-lane-source">{{ service_lane_source }}</li>
+    </ul>
+  </section>
+
   <section class="card">
     <p class="eyebrow">Users ({{ users|length }})</p>
     <div class="table-wrap">

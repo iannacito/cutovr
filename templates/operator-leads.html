@@ -33,6 +33,7 @@
             <th>Meeting time</th>
             <th>Prospect</th>
             <th>Firm</th>
+            <th>Service</th>
             <th>Clio migration</th>
             <th>Status</th>
             <th>Booked</th>
@@ -52,6 +53,7 @@
               <small class="muted">{{ lead.email }}{% if lead.phone %} &middot; {{ lead.phone }}{% endif %}</small>
             </td>
             <td>{{ lead.firm_name or '—' }}</td>
+            <td data-testid="operator-lead-service">{{ lead.service_lane_label }}</td>
             <td>
               {% if lead.migration_date %}{{ lead.migration_date }}
               {% elif lead.role %}<small class="muted">{{ lead.role }}</small>

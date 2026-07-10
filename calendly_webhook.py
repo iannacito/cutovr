@@ -60,6 +60,8 @@ from typing import Optional
 
 import requests
 
+import service_lanes
+
 
 log = logging.getLogger("calendly_webhook")
 
@@ -430,6 +432,17 @@ def extract_lead_fields(payload: dict, enriched_invitee: Optional[dict] = None) 
         fields["questions_json"] = json.dumps(qa)
         for field, value in classify_qa_fields(qa).items():
             fields.setdefault(field, value)
+
+    # Which migration service lane? Calendly forms and event names are free
+    # text, so map the answers + event name onto a stable lane slug when they
+    # clearly name a source and Clio Accounting (or PCLaw -> QuickBooks). Left
+    # unset when unclear so a human can classify it.
+    lane_texts = [fields.get("event_name")] + [
+        item.get("answer") for item in qa
+    ]
+    detected_lane = service_lanes.detect_service_lane(*lane_texts)
+    if detected_lane:
+        fields["service_lane"] = detected_lane
 
     # Calendly also exposes a dedicated text_reminder_number / phone field.
     if "phone" not in fields:

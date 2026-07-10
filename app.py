@@ -128,6 +128,8 @@ import final_report
 import bulk_upload
 import stripe_checkout
 import intake
+import service_lanes
+import clio_accounting
 from rate_limit import RateLimiter, client_ip
 import csv as _csv
 from io import StringIO
@@ -1120,6 +1122,15 @@ def signup():
         except ValueError as e:
             flash(str(e), "error")
             return render_template("signup.html", firm_name=firm_name, email=email)
+        # Carry any service lane captured at intake/lead time onto the new firm
+        # so the migration workflow can gate QuickBooks posting for Clio
+        # readiness lanes. No match -> stays NULL -> treated as PCLaw->QBO.
+        try:
+            resolved_lane = db.resolve_service_lane_for_firm(firm_id)
+            if resolved_lane:
+                db.set_firm_service_lane(firm_id, resolved_lane)
+        except Exception:  # noqa: BLE001 — lane stamping must never block signup
+            pass
         session.clear()
         session["user_id"] = user_id
         session["firm_id"] = firm_id
@@ -2041,6 +2052,9 @@ def initialpost_start(job_id):
     """
     job, user = _job_or_403(job_id)
     firm_id     = user["firm_id"]
+    _gate = _clio_readiness_gate_json(firm_id)
+    if _gate is not None:
+        return _gate
     real_import = QBO_REAL_IMPORT
 
     all_jobs = db.list_jobs_for_firm(firm_id, limit=200) or []
@@ -2076,6 +2090,9 @@ def initialpost_retry(job_id, step_key):
     """Retry a single failed step and restart the sequence."""
     job, user = _job_or_403(job_id)
     firm_id     = user["firm_id"]
+    _gate = _clio_readiness_gate_json(firm_id)
+    if _gate is not None:
+        return _gate
     real_import = QBO_REAL_IMPORT
 
     all_jobs = db.list_jobs_for_firm(firm_id, limit=200) or []
@@ -2108,6 +2125,62 @@ def _gl_period_key(j):
     return (1, _dt.max, j.get("created_at") or "")
 
 
+def _clio_readiness_blocks_qbo(firm_id):
+    """Return the firm's readiness lane slug when QBO posting must be blocked.
+
+    Clio Accounting readiness lanes must never post to QuickBooks. Returns the
+    resolved readiness lane slug when posting is blocked, or None when the firm
+    is on a QBO-posting lane. Unknown/NULL lanes resolve to the PCLaw ->
+    QuickBooks default (which DOES post), so legacy firms are unaffected.
+    """
+    lane = db.resolve_service_lane_for_firm(firm_id)
+    if service_lanes.uses_qbo_posting(lane):
+        return None
+    return service_lanes.effective_lane(lane)
+
+
+def _clio_readiness_gate(firm_id):
+    """Fail-closed guard for the QuickBooks posting flow (page routes).
+
+    When the firm's resolved lane does not use QBO posting, return a redirect to
+    the calm readiness page; otherwise return None so the caller proceeds.
+    """
+    readiness_lane = _clio_readiness_blocks_qbo(firm_id)
+    if readiness_lane is None:
+        return None
+    flash(
+        "This is a Clio Accounting cutover-readiness engagement, so it "
+        "doesn’t post to QuickBooks. Here’s exactly what we collect and "
+        "prepare for your Clio Accounting cutover package.",
+        "info",
+    )
+    return redirect(
+        url_for("clio_accounting_readiness", lane=readiness_lane)
+    )
+
+
+def _clio_readiness_gate_json(firm_id):
+    """Fail-closed guard for the QuickBooks posting flow (JSON/AJAX routes).
+
+    Returns a JSON response (with a ``redirect`` URL the client can follow) when
+    posting is blocked, or None so the caller proceeds. Mirrors
+    ``_clio_readiness_gate`` for endpoints called by JS.
+    """
+    readiness_lane = _clio_readiness_blocks_qbo(firm_id)
+    if readiness_lane is None:
+        return None
+    return jsonify({
+        "blocked": True,
+        "reason": "clio_readiness",
+        "message": (
+            "This is a Clio Accounting cutover-readiness engagement, so it "
+            "doesn’t post to QuickBooks. We’ll take you to your Clio Accounting "
+            "cutover package instead."
+        ),
+        "redirect": url_for("clio_accounting_readiness", lane=readiness_lane),
+    }), 403
+
+
 @app.route("/send-to-qbo")
 @login_required
 def send_to_qbo_entry():
@@ -2123,6 +2196,9 @@ def send_to_qbo_entry():
     """
     user = current_user()
     firm_id = user["firm_id"]
+    _gate = _clio_readiness_gate(firm_id)
+    if _gate is not None:
+        return _gate
     gl_jobs = _firm_latest_jobs_by_type(firm_id, REPORT_GENERAL_LEDGER, limit=500)
     if not gl_jobs:
         flash(
@@ -2168,6 +2244,9 @@ def send_to_qbo(job_id: str):
     """
     user = current_user()
     firm_id = user["firm_id"]
+    _gate = _clio_readiness_gate(firm_id)
+    if _gate is not None:
+        return _gate
 
     # Load the specific job from the URL — no heuristic selection needed.
     primary, _u = _job_or_403(job_id)
@@ -2304,6 +2383,9 @@ def send_to_qbo(job_id: str):
 def post_ob(job_id):
     """Step 5: Post opening balance to QBO."""
     job, user = _job_or_403(job_id)
+    _gate = _clio_readiness_gate(user["firm_id"])
+    if _gate is not None:
+        return _gate
     if (job.get("report_type") or REPORT_GENERAL_LEDGER) != REPORT_TRIAL_BALANCE:
         flash("This is not a Trial Balance job.", "error")
         return redirect(url_for("job_detail", job_id=job_id))
@@ -3424,6 +3506,9 @@ def push_entity_list(job_id):
     """
     import time as _time
     job, user = _job_or_403(job_id)
+    _gate = _clio_readiness_gate(user["firm_id"])
+    if _gate is not None:
+        return _gate
     report_type = job.get("report_type") or ""
     if report_type not in (REPORT_VENDOR_LIST, REPORT_CUSTOMER_LIST):
         flash("Push to QBO is only available for Vendor List and Customer List jobs.", "error")
@@ -4671,12 +4756,18 @@ def intake_submit():
     email = _f("email", 254)
     clio_date = _f("clio_migration_date", 40)
     plan_slug = intake.normalize_plan(_f("plan", 60)) or _intake_plan_from_request()
+    # Service lane is an INTERNAL foundation: the public intake form does not
+    # expose a lane selector, so this is normally None (legacy PCLaw -> QBO
+    # default). It stays capturable for internal/programmatic callers and is
+    # never forced to a default, preserving the original NULL-lane behavior.
+    service_lane = service_lanes.normalize(_f("service_lane", 60))
 
     form = {
         "firm_name": firm_name, "first_name": first_name,
         "last_name": last_name, "position": position,
         "phone": phone, "email": email,
         "clio_migration_date": clio_date,
+        "service_lane": service_lane,
     }
 
     missing = [
@@ -4723,13 +4814,17 @@ def intake_submit():
         firm_id=(user["firm_id"] if user else None),
         user_id=(user["id"] if user else None),
         payment_status=payment_status,
+        service_lane=service_lane,
     )
 
     _audit(
         "intake_submitted",
         target_type="intake",
         target_id=reference,
-        details=f"plan={plan_slug or 'none'} files={len(staged)} payment={payment_status}",
+        details=(
+            f"plan={plan_slug or 'none'} lane={service_lane} "
+            f"files={len(staged)} payment={payment_status}"
+        ),
     )
 
     email_status = _send_intake_emails(
@@ -4833,6 +4928,53 @@ def intake_success():
         reference=reference,
         payment_paid=intake.is_paid(payment_status),
         payment_status_label=intake.payment_status_label(payment_status),
+    )
+
+
+@app.route("/clio-accounting-readiness")
+@login_required
+def clio_accounting_readiness():
+    """INTERNAL, not-yet-public Clio Accounting cutover-readiness overview.
+
+    The two Clio Accounting readiness lanes are a behind-the-scenes foundation
+    and are NOT offered on the public website yet. This page is therefore
+    login-gated and carries a noindex directive; it is not linked from any
+    public marketing, nav, or intake surface. Its only inbound path today is
+    the fail-closed QBO posting gate, which redirects an already-signed-in
+    Clio-lane firm here to explain why it doesn't post to QuickBooks.
+
+    Explains, without pricing or alarming language, what Cutovr collects and
+    prepares so a firm can complete a clean, guided setup in Clio Accounting.
+    Shows the lane-specific document checklist and the readiness stages. This
+    path is intentionally separate from the QuickBooks posting workflow — it
+    never renders a "Send to QuickBooks" action.
+
+    ``?lane=`` selects PCLaw or QuickBooks as the source; an unknown/missing
+    value defaults to the PCLaw lane while still linking to the other.
+    """
+    lane = service_lanes.normalize(request.args.get("lane"))
+    if not lane or not service_lanes.is_clio_accounting(lane):
+        lane = service_lanes.PCLAW_TO_CLIO_ACCOUNTING
+    other = (
+        service_lanes.QBO_TO_CLIO_ACCOUNTING
+        if lane == service_lanes.PCLAW_TO_CLIO_ACCOUNTING
+        else service_lanes.PCLAW_TO_CLIO_ACCOUNTING
+    )
+    # Operator/developer-only integration context. Customers never see the
+    # "API not enabled" phrasing; they see the calm customer_message.
+    status = clio_accounting.integration_status()
+    return render_template(
+        "clio-readiness.html",
+        lane=lane,
+        lane_label=service_lanes.label(lane),
+        lane_meta=service_lanes.meta(lane),
+        other_lane=other,
+        other_lane_label=service_lanes.label(other),
+        documents=service_lanes.readiness_documents(lane),
+        documents_tagline=service_lanes.READINESS_DOCS_TAGLINE,
+        stages=service_lanes.readiness_stages(),
+        integration_status=status.to_dict(),
+        is_operator=_is_operator(),
     )
 
 
@@ -8415,6 +8557,13 @@ def import_to_qbo(job_id):
 
 def _import_to_qbo_impl(job_id):
     job, _user = _job_or_403(job_id)
+
+    # Fail-closed: a Clio Accounting readiness firm must never post to QBO,
+    # even if a stale UI or direct POST reaches this route.
+    _gate = _clio_readiness_gate(job.get("firm_id"))
+    if _gate is not None:
+        return _gate
+
     qbo_conn = _get_qbo_connection(job_id)
 
     # Multi-report safety gate. Trial Balance and Trust Listing are
@@ -12891,6 +13040,24 @@ def operator_firm_detail(firm_id):
     detail = operator_panel.firm_detail(db, history, firm_id)
     if not detail:
         abort(404)
+    # Explain how the firm's service lane is resolved and whether it posts to
+    # QuickBooks — read-only, so an operator can spot a mis-resolved lane (e.g.
+    # a Clio firm that signed up under an email that didn't match its intake).
+    stored_lane = (detail["firm"] or {}).get("service_lane")
+    resolved_lane = db.resolve_service_lane_for_firm(firm_id)
+    if stored_lane:
+        lane_source = "Stored on the firm record."
+    elif resolved_lane:
+        lane_source = "Resolved from intake/lead by email (not yet stored on the firm)."
+    else:
+        lane_source = (
+            "No lane captured — treated as the PC Law → QuickBooks default. "
+            "If this is a Clio Accounting readiness firm, capture its lane at "
+            "intake so QuickBooks posting is blocked."
+        )
+    detail["service_lane_resolved_label"] = service_lanes.label(resolved_lane)
+    detail["service_lane_source"] = lane_source
+    detail["service_lane_posts_to_qbo"] = service_lanes.uses_qbo_posting(resolved_lane)
     return render_template("operator-firm.html", **detail)
 
 
@@ -12929,6 +13096,7 @@ def operator_intake_list():
             "email": r.get("email"),
             "plan_label": intake.plan_label(r.get("plan")),
             "plan_price": intake.plan_price_display(r.get("plan")),
+            "service_lane_label": service_lanes.label(r.get("service_lane")),
             "payment_status": intake.normalize_payment_status(r.get("payment_status")),
             "payment_status_label": intake.payment_status_label(r.get("payment_status")),
             "clio_migration_date": r.get("clio_migration_date"),
@@ -13211,6 +13379,8 @@ def _calendly_lead_view(row: dict) -> dict:
         "phone": row.get("phone"),
         "firm_name": row.get("firm_name"),
         "role": row.get("role"),
+        "service_lane": service_lanes.normalize(row.get("service_lane")),
+        "service_lane_label": service_lanes.label(row.get("service_lane")),
         "migration_date": row.get("migration_date"),
         "years_history": row.get("years_history"),
         "volume": row.get("volume"),

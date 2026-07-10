@@ -421,6 +421,12 @@ class AppDB:
         add_col("qbo_connections", "company_info_error TEXT")
         add_col("qbo_connections", "updated_at TEXT")
 
+        # Which migration service lane a firm is on (see service_lanes). Nullable;
+        # resolved lazily from intake/lead by email when unset, and stamped at
+        # signup. Existing/NULL rows are treated as the PCLaw -> QuickBooks
+        # default, so legacy firms keep posting to QuickBooks unchanged.
+        add_col("firms", "service_lane TEXT")
+
         # Post-purchase intake: payment status. We are Stripe-ready but do not
         # collect cards at intake time, so existing/new rows default to
         # 'pending' and are only flipped to 'paid' by a real Stripe path.
@@ -438,6 +444,10 @@ class AppDB:
         add_col("intake_submissions", "stripe_payment_intent_id TEXT")
         add_col("intake_submissions", "username TEXT")
         add_col("intake_submissions", "employees TEXT")
+        # Which migration service lane this intake is for (see service_lanes).
+        # Nullable: existing rows without it default to the PCLaw -> QuickBooks
+        # flow at read time, preserving original behavior.
+        add_col("intake_submissions", "service_lane TEXT")
         # When this record was last touched by a Stripe event, so a replayed
         # webhook can be recognised as already-applied (idempotency).
         add_col("intake_submissions", "paid_at TEXT")
@@ -497,6 +507,10 @@ class AppDB:
         add_col("calendly_leads", "years_history TEXT")
         add_col("calendly_leads", "volume TEXT")
         add_col("calendly_leads", "notes TEXT")
+        # Which migration service lane the lead is interested in (see
+        # service_lanes). Nullable; filled from the Calendly form answers /
+        # event name when they clearly name a lane.
+        add_col("calendly_leads", "service_lane TEXT")
 
     @contextmanager
     def _conn(self):
@@ -755,6 +769,66 @@ class AppDB:
         with self._conn() as c:
             row = c.execute("SELECT * FROM firms WHERE id = ?", (firm_id,)).fetchone()
             return dict(row) if row else None
+
+    def set_firm_service_lane(self, firm_id: int, service_lane: Optional[str]) -> None:
+        """Stamp a firm's service lane. No-op for blank/None so we never clear
+        an already-resolved lane by accident."""
+        lane = (service_lane or "").strip() or None
+        if not lane:
+            return
+        with self._conn() as c:
+            c.execute(
+                "UPDATE firms SET service_lane = ? WHERE id = ?", (lane, firm_id)
+            )
+
+    def resolve_service_lane_for_firm(self, firm_id: int) -> Optional[str]:
+        """Best-effort service lane for a firm, or None if unknown.
+
+        Resolution order (first hit wins):
+          1. the firm's own stamped ``service_lane``;
+          2. the most recent intake submission for this ``firm_id``;
+          3. the most recent intake submission for any of the firm's user emails;
+          4. the most recent Calendly lead for any of the firm's user emails.
+
+        Returns None when nothing captured a lane — callers treat None as the
+        default PCLaw -> QuickBooks lane, so legacy firms are unaffected.
+        """
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT service_lane FROM firms WHERE id = ?", (firm_id,)
+            ).fetchone()
+            if row and row["service_lane"]:
+                return row["service_lane"]
+
+            row = c.execute(
+                "SELECT service_lane FROM intake_submissions "
+                "WHERE firm_id = ? AND service_lane IS NOT NULL "
+                "ORDER BY created_at DESC LIMIT 1",
+                (firm_id,),
+            ).fetchone()
+            if row and row["service_lane"]:
+                return row["service_lane"]
+
+            emails = [
+                r["email"].strip().lower()
+                for r in c.execute(
+                    "SELECT email FROM users WHERE firm_id = ?", (firm_id,)
+                ).fetchall()
+                if r["email"]
+            ]
+            if emails:
+                placeholders = ",".join("?" * len(emails))
+                for table in ("intake_submissions", "calendly_leads"):
+                    row = c.execute(
+                        f"SELECT service_lane FROM {table} "
+                        f"WHERE lower(email) IN ({placeholders}) "
+                        f"AND service_lane IS NOT NULL "
+                        f"ORDER BY created_at DESC LIMIT 1",
+                        emails,
+                    ).fetchone()
+                    if row and row["service_lane"]:
+                        return row["service_lane"]
+        return None
 
     # --- jobs --------------------------------------------------------------
 
@@ -1366,6 +1440,7 @@ class AppDB:
         currency: Optional[str] = None,
         username: Optional[str] = None,
         employees: Optional[str] = None,
+        service_lane: Optional[str] = None,
     ) -> int:
         """Persist a post-purchase onboarding intake record. Returns its id."""
         with self._conn() as c:
@@ -1374,8 +1449,8 @@ class AppDB:
                 "  reference, firm_id, user_id, firm_name, first_name, last_name, "
                 "  position, phone, email, plan, clio_migration_date, uploads_json, "
                 "  job_id, email_status, payment_status, payment_amount_cents, "
-                "  currency, username, employees, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)",
+                "  currency, username, employees, service_lane, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     reference, firm_id, user_id, firm_name.strip(),
                     first_name.strip(), last_name.strip(),
@@ -1390,6 +1465,7 @@ class AppDB:
                     (currency or "").strip().lower() or None,
                     (username or "").strip() or None,
                     (employees or "").strip() or None,
+                    (service_lane or "").strip() or None,
                     _now(),
                 ),
             )
@@ -1543,6 +1619,7 @@ class AppDB:
             "clio_rep_email", "meeting_start", "meeting_end", "timezone",
             "status", "cancel_reason", "canceled_by", "rescheduled",
             "questions_json", "enrichment_status", "raw_payload_json",
+            "service_lane",
         )
         with self._conn() as c:
             existing = c.execute(
