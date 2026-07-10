@@ -333,6 +333,14 @@ href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_bla
         <h3><a href="{{ url_for('pc_law_reports_for_migration') }}">PC Law reports you need first</a></h3>
         <p class="muted">Which reports to prepare before a QuickBooks migration, explained plainly.</p>
       </article>
+      <article class="card" data-testid="landing-pclaw-clio-readiness">
+        <h3><a href="{{ url_for('clio_accounting_readiness', lane='pclaw_to_clio_accounting') }}">PC Law to Clio Accounting Readiness</a></h3>
+        <p class="muted">We validate your PC Law data and prepare a clean Clio Accounting cutover package for a guided setup.</p>
+      </article>
+      <article class="card" data-testid="landing-qbo-clio-readiness">
+        <h3><a href="{{ url_for('clio_accounting_readiness', lane='qbo_to_clio_accounting') }}">QuickBooks Online to Clio Accounting Readiness</a></h3>
+        <p class="muted">We collect and validate your QuickBooks data and prepare a clean Clio Accounting cutover package for a guided setup.</p>
+      </article>
     </div>
   </div>
 </section>

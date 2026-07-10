@@ -438,6 +438,10 @@ class AppDB:
         add_col("intake_submissions", "stripe_payment_intent_id TEXT")
         add_col("intake_submissions", "username TEXT")
         add_col("intake_submissions", "employees TEXT")
+        # Which migration service lane this intake is for (see service_lanes).
+        # Nullable: existing rows without it default to the PCLaw -> QuickBooks
+        # flow at read time, preserving original behavior.
+        add_col("intake_submissions", "service_lane TEXT")
         # When this record was last touched by a Stripe event, so a replayed
         # webhook can be recognised as already-applied (idempotency).
         add_col("intake_submissions", "paid_at TEXT")
@@ -497,6 +501,10 @@ class AppDB:
         add_col("calendly_leads", "years_history TEXT")
         add_col("calendly_leads", "volume TEXT")
         add_col("calendly_leads", "notes TEXT")
+        # Which migration service lane the lead is interested in (see
+        # service_lanes). Nullable; filled from the Calendly form answers /
+        # event name when they clearly name a lane.
+        add_col("calendly_leads", "service_lane TEXT")
 
     @contextmanager
     def _conn(self):
@@ -1366,6 +1374,7 @@ class AppDB:
         currency: Optional[str] = None,
         username: Optional[str] = None,
         employees: Optional[str] = None,
+        service_lane: Optional[str] = None,
     ) -> int:
         """Persist a post-purchase onboarding intake record. Returns its id."""
         with self._conn() as c:
@@ -1374,8 +1383,8 @@ class AppDB:
                 "  reference, firm_id, user_id, firm_name, first_name, last_name, "
                 "  position, phone, email, plan, clio_migration_date, uploads_json, "
                 "  job_id, email_status, payment_status, payment_amount_cents, "
-                "  currency, username, employees, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)",
+                "  currency, username, employees, service_lane, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     reference, firm_id, user_id, firm_name.strip(),
                     first_name.strip(), last_name.strip(),
@@ -1390,6 +1399,7 @@ class AppDB:
                     (currency or "").strip().lower() or None,
                     (username or "").strip() or None,
                     (employees or "").strip() or None,
+                    (service_lane or "").strip() or None,
                     _now(),
                 ),
             )
@@ -1543,6 +1553,7 @@ class AppDB:
             "clio_rep_email", "meeting_start", "meeting_end", "timezone",
             "status", "cancel_reason", "canceled_by", "rescheduled",
             "questions_json", "enrichment_status", "raw_payload_json",
+            "service_lane",
         )
         with self._conn() as c:
             existing = c.execute(

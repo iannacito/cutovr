@@ -1,0 +1,102 @@
+{% extends "_base.html" %}
+{% block title %}{{ lane_label }} &mdash; {{ app_name }}{% endblock %}
+{% block meta_description %}Prepare your accounting data for a clean, guided transition into Clio Accounting. {{ app_name }} collects, validates, and packages your cutover data for review.{% endblock %}
+{% block content %}
+
+{% macro discovery_attrs() -%}
+href="{{ discovery_call_href }}"{% if discovery_call_is_external %} target="_blank" rel="noopener"{% endif %}
+{%- endmacro %}
+
+<section class="page" data-testid="clio-readiness-page" data-service-lane="{{ lane }}">
+  <div class="stack">
+
+    <header class="stack-sm" style="max-width:44rem;">
+      <p class="eyebrow">Clio Accounting Cutover Readiness</p>
+      <h1 class="display" data-testid="clio-readiness-heading">{{ lane_label }}</h1>
+      <p class="lede">
+        {{ app_name }} helps law firms prepare their accounting data for a
+        clean transition into Clio Accounting. We extract and collect your
+        source data, validate the balances, and prepare a cutover package your
+        team and accountant can review with confidence.
+      </p>
+    </header>
+
+    {# What we do — calm, no overpromising of direct automated posting. #}
+    <article class="card" data-testid="clio-readiness-what-we-do">
+      <h2 style="font-size:1.15rem;margin-top:0;">What we prepare for you</h2>
+      <ul style="margin:0;padding-left:1.2rem;line-height:1.7;">
+        <li>Extract and collect your source accounting data.</li>
+        <li>Validate balances and flag anything that needs a decision.</li>
+        <li>Prepare a clean Clio Accounting cutover package.</li>
+        <li>Prepare Clio-compatible bank CSVs, where applicable.</li>
+        <li>Organize your historical archive files.</li>
+        <li>Give your accountant and team clear review instructions.</li>
+      </ul>
+    </article>
+
+    {# Readiness stages (Task E). Deliberately NOT the QuickBooks posting
+       stepper — this lane is never routed through "Send to QuickBooks". #}
+    <article class="card" data-testid="clio-readiness-stages">
+      <h2 style="font-size:1.15rem;margin-top:0;">Your cutover readiness path</h2>
+      <ol style="margin:0;padding-left:1.2rem;line-height:1.7;">
+        {% for stage in stages %}
+        <li data-testid="clio-readiness-stage" data-stage-key="{{ stage.key }}">
+          <strong>{{ stage.label }}</strong>
+          <br><small class="muted">{{ stage.blurb }}</small>
+        </li>
+        {% endfor %}
+      </ol>
+    </article>
+
+    {# Document checklist (Task D) — framed as "to prepare your package". #}
+    <article class="card" data-testid="clio-readiness-documents">
+      <h2 style="font-size:1.15rem;margin-top:0;">What we need to prepare your Clio Accounting cutover package</h2>
+      <p class="note">{{ documents_tagline }}</p>
+      <ul style="margin:0;padding-left:1.2rem;line-height:1.7;">
+        {% for doc in documents %}
+        <li data-testid="clio-readiness-doc" data-doc-key="{{ doc.key }}">
+          <strong>{{ doc.title }}</strong>{% if doc.optional %} <span class="muted">(if used / if available)</span>{% endif %}
+          <br><small class="muted">{{ doc.help }}</small>
+        </li>
+        {% endfor %}
+      </ul>
+    </article>
+
+    {# Cross-link to the other Clio lane so both are discoverable. #}
+    <p class="note" data-testid="clio-readiness-other-lane">
+      Migrating from a different system?
+      <a href="{{ url_for('clio_accounting_readiness', lane=other_lane) }}">{{ other_lane_label }}</a>.
+    </p>
+
+    <article class="card card--inset" data-testid="clio-readiness-cta">
+      <p style="margin-top:0;font-weight:600;">Ready to scope your cutover?</p>
+      <p style="margin-bottom:.5rem;">
+        <a class="btn btn-primary" {{ discovery_attrs() }}
+           data-testid="clio-readiness-book-discovery">Book a discovery call</a>
+        <a class="btn btn-secondary" href="{{ url_for('intake_form') }}"
+           data-testid="clio-readiness-send-details">Send your details</a>
+      </p>
+      <p class="note" style="margin-bottom:0;">
+        On a short discovery call we review your data and scope the cutover.
+        Once your Clio Accounting setup is ready, your team completes a clean,
+        guided transition.
+      </p>
+    </article>
+
+    {# Operator/developer-only integration status. Prospects never see the
+       "API not enabled" phrasing — only operators logged into the panel. #}
+    {% if is_operator %}
+    <article class="card" data-testid="clio-readiness-operator-status"
+             style="border-left:3px solid var(--line);">
+      <p class="eyebrow">Internal &middot; Operator note</p>
+      <p style="margin:0;"><strong>Clio Accounting integration:</strong>
+        <code data-testid="clio-integration-status">{{ integration_status.status }}</code></p>
+      <p class="note" style="margin-bottom:0;" data-testid="clio-integration-operator-message">
+        {{ integration_status.operator_message }}
+      </p>
+    </article>
+    {% endif %}
+
+  </div>
+</section>
+{% endblock %}

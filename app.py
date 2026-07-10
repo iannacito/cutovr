@@ -128,6 +128,8 @@ import final_report
 import bulk_upload
 import stripe_checkout
 import intake
+import service_lanes
+import clio_accounting
 from rate_limit import RateLimiter, client_ip
 import csv as _csv
 from io import StringIO
@@ -4640,6 +4642,11 @@ def _render_intake_form(plan_slug, *, form, prefill_email="", prefill_firm="",
             {"slug": s, "label": intake.PLAN_LABELS[s]}
             for s in intake.SELECTABLE_PLANS
         ],
+        service_lane_options=service_lanes.selectable_options(),
+        selected_service_lane=(
+            service_lanes.normalize(form.get("service_lane"))
+            or service_lanes.DEFAULT_LANE
+        ),
         prefill_email=form.get("email", "") or prefill_email,
         prefill_firm=form.get("firm_name", "") or prefill_firm,
         form=form,
@@ -4671,12 +4678,15 @@ def intake_submit():
     email = _f("email", 254)
     clio_date = _f("clio_migration_date", 40)
     plan_slug = intake.normalize_plan(_f("plan", 60)) or _intake_plan_from_request()
+    service_lane = service_lanes.normalize(_f("service_lane", 60)) \
+        or service_lanes.DEFAULT_LANE
 
     form = {
         "firm_name": firm_name, "first_name": first_name,
         "last_name": last_name, "position": position,
         "phone": phone, "email": email,
         "clio_migration_date": clio_date,
+        "service_lane": service_lane,
     }
 
     missing = [
@@ -4723,13 +4733,17 @@ def intake_submit():
         firm_id=(user["firm_id"] if user else None),
         user_id=(user["id"] if user else None),
         payment_status=payment_status,
+        service_lane=service_lane,
     )
 
     _audit(
         "intake_submitted",
         target_type="intake",
         target_id=reference,
-        details=f"plan={plan_slug or 'none'} files={len(staged)} payment={payment_status}",
+        details=(
+            f"plan={plan_slug or 'none'} lane={service_lane} "
+            f"files={len(staged)} payment={payment_status}"
+        ),
     )
 
     email_status = _send_intake_emails(
@@ -4822,17 +4836,61 @@ def intake_success():
     """Clean confirmation page after a successful intake submission."""
     reference = (session.get("intake_done_ref") or "").strip()[:32]
     payment_status = intake.PAYMENT_PENDING
+    service_lane = None
     if reference:
         rec = db.get_intake_by_reference(reference)
         if rec:
             payment_status = intake.normalize_payment_status(
                 rec.get("payment_status")
             )
+            service_lane = service_lanes.normalize(rec.get("service_lane"))
     return render_template(
         "intake-success.html",
         reference=reference,
         payment_paid=intake.is_paid(payment_status),
         payment_status_label=intake.payment_status_label(payment_status),
+        service_lane=service_lane,
+        service_lane_label=service_lanes.label(service_lane, default=""),
+        is_clio_accounting=service_lanes.is_clio_accounting(service_lane),
+    )
+
+
+@app.route("/clio-accounting-readiness")
+def clio_accounting_readiness():
+    """Customer-facing Clio Accounting cutover-readiness overview.
+
+    Explains, without pricing or alarming language, what Cutovr collects and
+    prepares so a firm can complete a clean, guided setup in Clio Accounting.
+    Shows the lane-specific document checklist and the readiness stages. This
+    path is intentionally separate from the QuickBooks posting workflow — it
+    never renders a "Send to QuickBooks" action.
+
+    ``?lane=`` selects PCLaw or QuickBooks as the source; an unknown/missing
+    value defaults to the PCLaw lane while still linking to the other.
+    """
+    lane = service_lanes.normalize(request.args.get("lane"))
+    if not lane or not service_lanes.is_clio_accounting(lane):
+        lane = service_lanes.PCLAW_TO_CLIO_ACCOUNTING
+    other = (
+        service_lanes.QBO_TO_CLIO_ACCOUNTING
+        if lane == service_lanes.PCLAW_TO_CLIO_ACCOUNTING
+        else service_lanes.PCLAW_TO_CLIO_ACCOUNTING
+    )
+    # Operator/developer-only integration context. Customers never see the
+    # "API not enabled" phrasing; they see the calm customer_message.
+    status = clio_accounting.integration_status()
+    return render_template(
+        "clio-readiness.html",
+        lane=lane,
+        lane_label=service_lanes.label(lane),
+        lane_meta=service_lanes.meta(lane),
+        other_lane=other,
+        other_lane_label=service_lanes.label(other),
+        documents=service_lanes.readiness_documents(lane),
+        documents_tagline=service_lanes.READINESS_DOCS_TAGLINE,
+        stages=service_lanes.readiness_stages(),
+        integration_status=status.to_dict(),
+        is_operator=_is_operator(),
     )
 
 
@@ -12929,6 +12987,7 @@ def operator_intake_list():
             "email": r.get("email"),
             "plan_label": intake.plan_label(r.get("plan")),
             "plan_price": intake.plan_price_display(r.get("plan")),
+            "service_lane_label": service_lanes.label(r.get("service_lane")),
             "payment_status": intake.normalize_payment_status(r.get("payment_status")),
             "payment_status_label": intake.payment_status_label(r.get("payment_status")),
             "clio_migration_date": r.get("clio_migration_date"),
@@ -13211,6 +13270,8 @@ def _calendly_lead_view(row: dict) -> dict:
         "phone": row.get("phone"),
         "firm_name": row.get("firm_name"),
         "role": row.get("role"),
+        "service_lane": service_lanes.normalize(row.get("service_lane")),
+        "service_lane_label": service_lanes.label(row.get("service_lane")),
         "migration_date": row.get("migration_date"),
         "years_history": row.get("years_history"),
         "volume": row.get("volume"),
