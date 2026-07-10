@@ -1122,6 +1122,15 @@ def signup():
         except ValueError as e:
             flash(str(e), "error")
             return render_template("signup.html", firm_name=firm_name, email=email)
+        # Carry any service lane captured at intake/lead time onto the new firm
+        # so the migration workflow can gate QuickBooks posting for Clio
+        # readiness lanes. No match -> stays NULL -> treated as PCLaw->QBO.
+        try:
+            resolved_lane = db.resolve_service_lane_for_firm(firm_id)
+            if resolved_lane:
+                db.set_firm_service_lane(firm_id, resolved_lane)
+        except Exception:  # noqa: BLE001 — lane stamping must never block signup
+            pass
         session.clear()
         session["user_id"] = user_id
         session["firm_id"] = firm_id
@@ -2043,6 +2052,9 @@ def initialpost_start(job_id):
     """
     job, user = _job_or_403(job_id)
     firm_id     = user["firm_id"]
+    _gate = _clio_readiness_gate_json(firm_id)
+    if _gate is not None:
+        return _gate
     real_import = QBO_REAL_IMPORT
 
     all_jobs = db.list_jobs_for_firm(firm_id, limit=200) or []
@@ -2078,6 +2090,9 @@ def initialpost_retry(job_id, step_key):
     """Retry a single failed step and restart the sequence."""
     job, user = _job_or_403(job_id)
     firm_id     = user["firm_id"]
+    _gate = _clio_readiness_gate_json(firm_id)
+    if _gate is not None:
+        return _gate
     real_import = QBO_REAL_IMPORT
 
     all_jobs = db.list_jobs_for_firm(firm_id, limit=200) or []
@@ -2110,6 +2125,57 @@ def _gl_period_key(j):
     return (1, _dt.max, j.get("created_at") or "")
 
 
+def _clio_readiness_blocks_qbo(firm_id):
+    """Return the firm's readiness lane slug when QBO posting must be blocked.
+
+    Clio Accounting readiness lanes must never post to QuickBooks. Returns the
+    resolved readiness lane slug when posting is blocked, or None when the firm
+    is on a QBO-posting lane. Unknown/NULL lanes resolve to the PCLaw ->
+    QuickBooks default (which DOES post), so legacy firms are unaffected.
+    """
+    lane = db.resolve_service_lane_for_firm(firm_id)
+    if service_lanes.uses_qbo_posting(lane):
+        return None
+    return service_lanes.effective_lane(lane)
+
+
+def _clio_readiness_gate(firm_id):
+    """Fail-closed guard for the QuickBooks posting flow (page routes).
+
+    When the firm's resolved lane does not use QBO posting, return a redirect to
+    the calm readiness page; otherwise return None so the caller proceeds.
+    """
+    readiness_lane = _clio_readiness_blocks_qbo(firm_id)
+    if readiness_lane is None:
+        return None
+    flash(
+        "This is a Clio Accounting cutover-readiness engagement, so it "
+        "doesn’t post to QuickBooks. Here’s exactly what we collect and "
+        "prepare for your Clio Accounting cutover package.",
+        "info",
+    )
+    return redirect(
+        url_for("clio_accounting_readiness", lane=readiness_lane)
+    )
+
+
+def _clio_readiness_gate_json(firm_id):
+    """Fail-closed guard for the QuickBooks posting flow (JSON/AJAX routes).
+
+    Returns a JSON response (with a ``redirect`` URL the client can follow) when
+    posting is blocked, or None so the caller proceeds. Mirrors
+    ``_clio_readiness_gate`` for endpoints called by JS.
+    """
+    readiness_lane = _clio_readiness_blocks_qbo(firm_id)
+    if readiness_lane is None:
+        return None
+    return jsonify({
+        "blocked": True,
+        "reason": "clio_readiness",
+        "redirect": url_for("clio_accounting_readiness", lane=readiness_lane),
+    }), 403
+
+
 @app.route("/send-to-qbo")
 @login_required
 def send_to_qbo_entry():
@@ -2125,6 +2191,9 @@ def send_to_qbo_entry():
     """
     user = current_user()
     firm_id = user["firm_id"]
+    _gate = _clio_readiness_gate(firm_id)
+    if _gate is not None:
+        return _gate
     gl_jobs = _firm_latest_jobs_by_type(firm_id, REPORT_GENERAL_LEDGER, limit=500)
     if not gl_jobs:
         flash(
@@ -2170,6 +2239,9 @@ def send_to_qbo(job_id: str):
     """
     user = current_user()
     firm_id = user["firm_id"]
+    _gate = _clio_readiness_gate(firm_id)
+    if _gate is not None:
+        return _gate
 
     # Load the specific job from the URL — no heuristic selection needed.
     primary, _u = _job_or_403(job_id)
@@ -2306,6 +2378,9 @@ def send_to_qbo(job_id: str):
 def post_ob(job_id):
     """Step 5: Post opening balance to QBO."""
     job, user = _job_or_403(job_id)
+    _gate = _clio_readiness_gate(user["firm_id"])
+    if _gate is not None:
+        return _gate
     if (job.get("report_type") or REPORT_GENERAL_LEDGER) != REPORT_TRIAL_BALANCE:
         flash("This is not a Trial Balance job.", "error")
         return redirect(url_for("job_detail", job_id=job_id))
@@ -3426,6 +3501,9 @@ def push_entity_list(job_id):
     """
     import time as _time
     job, user = _job_or_403(job_id)
+    _gate = _clio_readiness_gate(user["firm_id"])
+    if _gate is not None:
+        return _gate
     report_type = job.get("report_type") or ""
     if report_type not in (REPORT_VENDOR_LIST, REPORT_CUSTOMER_LIST):
         flash("Push to QBO is only available for Vendor List and Customer List jobs.", "error")
@@ -8473,6 +8551,13 @@ def import_to_qbo(job_id):
 
 def _import_to_qbo_impl(job_id):
     job, _user = _job_or_403(job_id)
+
+    # Fail-closed: a Clio Accounting readiness firm must never post to QBO,
+    # even if a stale UI or direct POST reaches this route.
+    _gate = _clio_readiness_gate(job.get("firm_id"))
+    if _gate is not None:
+        return _gate
+
     qbo_conn = _get_qbo_connection(job_id)
 
     # Multi-report safety gate. Trial Balance and Trust Listing are

@@ -421,6 +421,12 @@ class AppDB:
         add_col("qbo_connections", "company_info_error TEXT")
         add_col("qbo_connections", "updated_at TEXT")
 
+        # Which migration service lane a firm is on (see service_lanes). Nullable;
+        # resolved lazily from intake/lead by email when unset, and stamped at
+        # signup. Existing/NULL rows are treated as the PCLaw -> QuickBooks
+        # default, so legacy firms keep posting to QuickBooks unchanged.
+        add_col("firms", "service_lane TEXT")
+
         # Post-purchase intake: payment status. We are Stripe-ready but do not
         # collect cards at intake time, so existing/new rows default to
         # 'pending' and are only flipped to 'paid' by a real Stripe path.
@@ -763,6 +769,66 @@ class AppDB:
         with self._conn() as c:
             row = c.execute("SELECT * FROM firms WHERE id = ?", (firm_id,)).fetchone()
             return dict(row) if row else None
+
+    def set_firm_service_lane(self, firm_id: int, service_lane: Optional[str]) -> None:
+        """Stamp a firm's service lane. No-op for blank/None so we never clear
+        an already-resolved lane by accident."""
+        lane = (service_lane or "").strip() or None
+        if not lane:
+            return
+        with self._conn() as c:
+            c.execute(
+                "UPDATE firms SET service_lane = ? WHERE id = ?", (lane, firm_id)
+            )
+
+    def resolve_service_lane_for_firm(self, firm_id: int) -> Optional[str]:
+        """Best-effort service lane for a firm, or None if unknown.
+
+        Resolution order (first hit wins):
+          1. the firm's own stamped ``service_lane``;
+          2. the most recent intake submission for this ``firm_id``;
+          3. the most recent intake submission for any of the firm's user emails;
+          4. the most recent Calendly lead for any of the firm's user emails.
+
+        Returns None when nothing captured a lane — callers treat None as the
+        default PCLaw -> QuickBooks lane, so legacy firms are unaffected.
+        """
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT service_lane FROM firms WHERE id = ?", (firm_id,)
+            ).fetchone()
+            if row and row["service_lane"]:
+                return row["service_lane"]
+
+            row = c.execute(
+                "SELECT service_lane FROM intake_submissions "
+                "WHERE firm_id = ? AND service_lane IS NOT NULL "
+                "ORDER BY created_at DESC LIMIT 1",
+                (firm_id,),
+            ).fetchone()
+            if row and row["service_lane"]:
+                return row["service_lane"]
+
+            emails = [
+                r["email"].strip().lower()
+                for r in c.execute(
+                    "SELECT email FROM users WHERE firm_id = ?", (firm_id,)
+                ).fetchall()
+                if r["email"]
+            ]
+            if emails:
+                placeholders = ",".join("?" * len(emails))
+                for table in ("intake_submissions", "calendly_leads"):
+                    row = c.execute(
+                        f"SELECT service_lane FROM {table} "
+                        f"WHERE lower(email) IN ({placeholders}) "
+                        f"AND service_lane IS NOT NULL "
+                        f"ORDER BY created_at DESC LIMIT 1",
+                        emails,
+                    ).fetchone()
+                    if row and row["service_lane"]:
+                        return row["service_lane"]
+        return None
 
     # --- jobs --------------------------------------------------------------
 

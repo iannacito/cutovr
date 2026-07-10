@@ -251,6 +251,124 @@ def t8_calendly_lead_service_lane():
     print("T8 OK: calendly lead captures + operator leads shows service lane")
 
 
+def _signup(client, email, firm="Gate Firm"):
+    client.post("/signup", data={
+        "firm_name": firm, "email": email,
+        "password": "passw0rd!1234", "confirm_password": "passw0rd!1234",
+    })
+    return appmod.db.get_user_by_email(email)
+
+
+def _make_gl_job(firm_id, user_id, job_id):
+    appmod.db.upsert_job(
+        job_id=job_id, firm_id=firm_id, user_id=user_id, company="Co",
+        source_file="gl.csv", encrypted_file="gl.csv.enc",
+        file_sha256="deadbeef", status="ready",
+    )
+
+
+def t9_qbo_posting_gate():
+    """The QBO posting flow must be reachable for PCLaw->QBO firms and blocked
+    (fail-closed) for Clio readiness firms, at every entry point."""
+    # --- (4) Default/NULL-lane firm resolves to PCLaw->QBO: gate lets it pass.
+    c_def = appmod.app.test_client()
+    u_def = _signup(c_def, "gate-default@meridian.test", "Default Firm")
+    assert appmod.db.resolve_service_lane_for_firm(u_def["firm_id"]) is None
+    assert sl.uses_qbo_posting(
+        appmod.db.resolve_service_lane_for_firm(u_def["firm_id"])
+    ) is True
+    # (1) /send-to-qbo for the default firm must NOT divert to Clio readiness
+    # (no GL jobs yet -> it redirects to the dashboard, which is fine).
+    r = c_def.get("/send-to-qbo", follow_redirects=False)
+    assert r.status_code in (301, 302), r.status_code
+    assert "/clio-accounting-readiness" not in r.headers.get("Location", ""), \
+        "default PCLaw->QBO firm was wrongly diverted to Clio readiness"
+    # With a GL job present, the entry resolves to the job-scoped Step 5 page
+    # (connect-qbo / step5), still never the Clio readiness page.
+    _make_gl_job(u_def["firm_id"], u_def["id"], "job-default-gl")
+    r = c_def.get("/send-to-qbo", follow_redirects=False)
+    assert "/clio-accounting-readiness" not in r.headers.get("Location", "")
+
+    # --- (2)+(3) Clio readiness firms are blocked at all three entry points.
+    for email, lane in (
+        ("gate-pclaw-clio@meridian.test", sl.PCLAW_TO_CLIO_ACCOUNTING),
+        ("gate-qbo-clio@meridian.test", sl.QBO_TO_CLIO_ACCOUNTING),
+    ):
+        c = appmod.app.test_client()
+        u = _signup(c, email, "Clio Firm")
+        appmod.db.set_firm_service_lane(u["firm_id"], lane)
+        assert appmod.db.resolve_service_lane_for_firm(u["firm_id"]) == lane
+        assert sl.uses_qbo_posting(lane) is False
+
+        # Firm-level Step 5 entry -> readiness page for this lane.
+        r = c.get("/send-to-qbo", follow_redirects=False)
+        assert r.status_code in (301, 302), r.status_code
+        loc = r.headers.get("Location", "")
+        assert "/clio-accounting-readiness" in loc and lane in loc, loc
+
+        # Job-scoped Step 5 page -> readiness page.
+        jid = f"job-{lane}"
+        _make_gl_job(u["firm_id"], u["id"], jid)
+        r = c.get(f"/jobs/{jid}/send-to-qbo", follow_redirects=False)
+        loc = r.headers.get("Location", "")
+        assert "/clio-accounting-readiness" in loc and lane in loc, loc
+
+        # The actual posting POST is fail-closed -> readiness page, never posts.
+        r = c.post(f"/jobs/{jid}/import-to-qbo", follow_redirects=False)
+        loc = r.headers.get("Location", "")
+        assert "/clio-accounting-readiness" in loc and lane in loc, \
+            f"import-to-qbo POST not gated for {lane}: {loc!r}"
+
+        # post-ob and push-entity-list (other real QBO-write routes) redirect too.
+        for path in (f"/jobs/{jid}/post-ob", f"/jobs/{jid}/push-entity-list"):
+            r = c.post(path, follow_redirects=False)
+            loc = r.headers.get("Location", "")
+            assert "/clio-accounting-readiness" in loc and lane in loc, \
+                f"{path} not gated for {lane}: {loc!r}"
+
+        # The JS-driven initialpost endpoints are fail-closed too: they return a
+        # JSON block (403 + redirect) instead of starting a QBO posting sequence.
+        r = c.post(f"/initialpost/start/{jid}")
+        assert r.status_code == 403, r.status_code
+        body = r.get_json() or {}
+        assert body.get("blocked") is True
+        assert "/clio-accounting-readiness" in (body.get("redirect") or "")
+        assert lane in (body.get("redirect") or "")
+        r = c.post(f"/initialpost/retry/{jid}/some_step")
+        assert r.status_code == 403, r.status_code
+        assert "/clio-accounting-readiness" in ((r.get_json() or {}).get("redirect") or "")
+
+    # --- Signup propagation: a lane captured at intake time (by email) is
+    # stamped onto the firm at signup, so the gate fires without a manual set.
+    appmod.db.create_intake_submission(
+        reference="GATEPROP1", firm_name="Propagate Firm", first_name="Pat",
+        last_name="Lee", email="gate-propagate@meridian.test",
+        service_lane=sl.QBO_TO_CLIO_ACCOUNTING,
+    )
+    c_prop = appmod.app.test_client()
+    u_prop = _signup(c_prop, "gate-propagate@meridian.test", "Propagate Firm")
+    firm = appmod.db.get_firm(u_prop["firm_id"])
+    assert firm.get("service_lane") == sl.QBO_TO_CLIO_ACCOUNTING, \
+        f"signup did not stamp lane from intake: {firm.get('service_lane')!r}"
+    r = c_prop.get("/send-to-qbo", follow_redirects=False)
+    assert "/clio-accounting-readiness" in r.headers.get("Location", "")
+    print("T9 OK: QBO posting gate — PCLaw->QBO passes, Clio lanes fail-closed")
+
+
+def t10_firm_lane_migration_idempotent():
+    """firms.service_lane migration is safe to run repeatedly on an existing DB."""
+    import app_db
+    # Re-open the same app DB twice more; add_col must swallow duplicate column.
+    app_db.AppDB(os.environ["APP_DB"])
+    app_db.AppDB(os.environ["APP_DB"])
+    import sqlite3
+    con = sqlite3.connect(os.environ["APP_DB"])
+    cols = [r[1] for r in con.execute("PRAGMA table_info(firms)").fetchall()]
+    con.close()
+    assert "service_lane" in cols, "firms.service_lane column missing"
+    print("T10 OK: firms.service_lane migration is idempotent")
+
+
 if __name__ == "__main__":
     try:
         t1_service_lanes_module()
@@ -261,6 +379,8 @@ if __name__ == "__main__":
         t6_readiness_page_checklists_differ_no_qbo()
         t7_operator_intake_shows_service()
         t8_calendly_lead_service_lane()
+        t9_qbo_posting_gate()
+        t10_firm_lane_migration_idempotent()
         print("\nALL CLIO READINESS SMOKE TESTS PASSED")
     finally:
         for path in (APP_DB, HIST_DB):
