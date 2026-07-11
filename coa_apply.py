@@ -692,7 +692,17 @@ def map_pclaw_account_to_qbo_type(row: dict) -> dict:
         ("accountsreceivable", "Accounts Receivable", "AccountsReceivable"),
     )
     for keyword, expected_type, expected_detail in special_name_expectations:
-        if keyword in name_norm_for_check and (
+        if keyword not in name_norm_for_check:
+            continue
+        # Guard only fires for the actual AP/AR control account — not for
+        # sub-accounts like "Accounts Payable Disc" or "AP Discount" that
+        # merely contain the keyword as a prefix. If the name has more than
+        # 3 extra alphanumeric characters beyond the keyword, it is a
+        # distinct sub-account and should resolve with its PCLaw type.
+        _remainder = name_norm_for_check.replace(keyword, "", 1)
+        if len(_remainder) > 3:
+            continue
+        if (
             resolved_type != expected_type
             or (resolved_detail and resolved_detail != expected_detail)
         ):
