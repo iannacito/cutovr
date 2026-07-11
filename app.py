@@ -5240,11 +5240,16 @@ def _extract_pclaw_accounts_from_gl_rows(gl_rows):
     survive loss of the encrypted source CSV (e.g. ephemeral storage on a
     redeployed Render instance). Without it the user would be told to
     re-upload — but every account they care about is already known.
+
+    Names are normalized via mapping_readiness.normalize_account_name before
+    deduplication so PCLaw's page-break '-Continued' suffix variants collapse
+    to a single entry instead of two (2026-07-11 hotfix).
     """
+    from mapping_readiness import normalize_account_name
     seen = {}
     for r in gl_rows or []:
         num = (r.get("account_number") or "").strip() or None
-        name = (r.get("account_name") or "").strip() or None
+        name = normalize_account_name(r.get("account_name") or "") or None
         if num is None and name is None:
             continue
         key = (num, name)
@@ -10454,6 +10459,15 @@ def account_mapping(job_id):
         pclaw_accounts=pclaw_accounts,
         saved_mappings=saved_mappings,
         live_accounts=qbo_accounts,
+    )
+    _log.info(
+        "account_mapping readiness: total=%d resolved=%d unmatched=%d stale=%d ready=%s job=%s",
+        readiness["counts"]["total"],
+        readiness["counts"]["resolved"],
+        readiness["counts"]["unmatched"],
+        readiness["counts"]["stale"],
+        readiness["ready"],
+        job_id,
     )
 
     return render_template(
