@@ -157,8 +157,8 @@
       </p>
     </div>
     <button class="btn btn-primary"
-            onclick="document.getElementById('upload-file-modal').showModal()"
-            type="button">
+            type="button"
+            id="upload-modal-trigger">
       Upload File
     </button>
   </div>
@@ -468,45 +468,45 @@
     </div>
   </section>
 
-  {# Upload File modal #}
-  <dialog id="upload-file-modal"
-          style="border:none;border-radius:var(--radius,8px);padding:0;
-                 box-shadow:0 8px 32px rgba(0,0,0,.18);max-width:540px;width:95vw;">
-    <div style="padding:var(--space-6,1.5rem);">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-4,1rem);">
-        <p class="eyebrow" style="margin:0;">Upload File</p>
-        <button type="button" class="btn btn-link"
-                onclick="document.getElementById('upload-file-modal').close()"
-                aria-label="Close"
-                style="font-size:1.25rem;line-height:1;padding:0 var(--space-2);">&times;</button>
-      </div>
-
-      <div style="margin-top:var(--space-4,1rem);">
-        <p class="muted" style="margin-bottom:var(--space-3);">
-          Upload any PCLaw export — GL, COA, Trial Balance, Vendor List, Customer List,
-          or Trust Listing. Report type is detected automatically from the file.
-        </p>
-
-        <form action="{{ url_for('upload_bulk') }}" method="post" enctype="multipart/form-data">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <input type="hidden" name="company_name" value="{{ firm.name if firm else '' }}">
-          <input type="hidden" name="return_to" value="migration_hub">
-          <label>
-            <span>File(s)
-              <small class="muted">(.csv, .xls, .xlsx — hold Ctrl / &#8984; to select multiple)</small>
-            </span>
-            <input type="file" name="ledger_files" accept=".csv,.xls,.xlsx" multiple required
-                   style="margin-top:var(--space-2);display:block;width:100%;">
-          </label>
-          <div style="margin-top:var(--space-4);">
-            <button class="btn btn-primary" type="submit" id="upload-submit-btn">Upload file(s)</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  </dialog>
-
 </div>
+
+{# Upload File modal — outside hub-page to avoid stacking context issues #}
+<dialog id="upload-file-modal"
+        style="border:none;border-radius:var(--radius,8px);padding:0;
+               box-shadow:0 8px 32px rgba(0,0,0,.18);max-width:540px;width:95vw;">
+  <div style="padding:var(--space-6,1.5rem);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-4,1rem);">
+      <p class="eyebrow" style="margin:0;">Upload File</p>
+      <button type="button" class="btn btn-link"
+              onclick="document.getElementById('upload-file-modal').close()"
+              aria-label="Close"
+              style="font-size:1.25rem;line-height:1;padding:0 var(--space-2);">&times;</button>
+    </div>
+
+    <div style="margin-top:var(--space-4,1rem);">
+      <p class="muted" style="margin-bottom:var(--space-3);">
+        Upload any PCLaw export — GL, COA, Trial Balance, Vendor List, Customer List,
+        or Trust Listing. Report type is detected automatically from the file.
+      </p>
+
+      <form action="{{ url_for('upload_bulk') }}" method="post" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="company_name" value="{{ firm.name if firm else '' }}">
+        <input type="hidden" name="return_to" value="migration_nexus">
+        <label>
+          <span>File(s)
+            <small class="muted">(.csv, .xls, .xlsx — hold Ctrl / &#8984; to select multiple)</small>
+          </span>
+          <input type="file" name="ledger_files" accept=".csv,.xls,.xlsx" multiple required
+                 style="margin-top:var(--space-2);display:block;width:100%;">
+        </label>
+        <div style="margin-top:var(--space-4);">
+          <button class="btn btn-primary" type="submit" id="upload-submit-btn">Upload file(s)</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</dialog>
 
 <script>
 (function () {
@@ -562,6 +562,28 @@ if (uploadForm && uploadBtn) {
     uploadBtn.textContent = 'Uploading…';
   });
 }
+
+// Upload modal trigger — event listener with error logging for resilience
+document.addEventListener('DOMContentLoaded', function () {
+  var trigger = document.getElementById('upload-modal-trigger');
+  var modal   = document.getElementById('upload-file-modal');
+  if (!trigger || !modal) {
+    console.warn('[upload-modal] trigger or modal not found', trigger, modal);
+    return;
+  }
+  trigger.addEventListener('click', function () {
+    try {
+      if (typeof modal.showModal === 'function') {
+        modal.showModal();
+      } else {
+        modal.setAttribute('open', '');
+        console.warn('[upload-modal] showModal not available, used open attribute fallback');
+      }
+    } catch (e) {
+      console.error('[upload-modal] showModal() failed:', e);
+    }
+  });
+});
 </script>
 
 {% endblock %}
