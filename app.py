@@ -6262,6 +6262,7 @@ def job_detail(job_id):
         "job-detail.html",
         job=job,
         qbo_connection=qbo_conn,
+        overwrite_prompt=request.args.get("overwrite_prompt") == "1",
         qbo_configured=QBO_CLIENT_ID != "your-client-id-here",
         qbo_real_import=QBO_REAL_IMPORT,
         job_history=job_history,
@@ -8726,23 +8727,33 @@ def _import_to_qbo_impl(job_id):
             # this exact realm successfully. We also check transaction_ids in
             # case the user re-exported the same period to a slightly
             # different file but with the same JEs.
+            force_overwrite = request.form.get("force_overwrite") == "1"
             file_sha = job.get("file_sha256")
             if file_sha:
                 prior = history.has_completed_import(file_sha, realm_id)
                 if prior:
-                    job["status"] = "Duplicate blocked"
-                    _save_job(job_id)
-                    _audit("import_blocked", target_type="job", target_id=job_id,
-                           details=f"file_sha256 already imported (#{prior['id']})")
-                    flash(
-                        f"Duplicate import blocked: this exact file was already imported "
-                        f"to this QuickBooks company on {prior['created_at'][:19].replace('T', ' ')} UTC "
-                        f"(import #{prior['id']}, {prior['transaction_count']} JEs). "
-                        "Delete the prior import in QuickBooks if you really want to re-post, "
-                        "or use a different ledger file.",
-                        "error",
-                    )
-                    return redirect(url_for("job_detail", job_id=job_id))
+                    if force_overwrite:
+                        # Operator confirmed they want to re-import the same file.
+                        # Delete the prior history record so this run is not blocked.
+                        history.delete_import_record(prior["id"])
+                        _audit("import_overwrite", target_type="job", target_id=job_id,
+                               details=f"operator overwrote prior import #{prior['id']}")
+                    else:
+                        # First pass: redirect to job_detail with a prompt to confirm.
+                        job["status"] = "Duplicate blocked"
+                        _save_job(job_id)
+                        _audit("import_blocked", target_type="job", target_id=job_id,
+                               details=f"file_sha256 already imported (#{prior['id']})")
+                        flash(
+                            f"This file was already imported on "
+                            f"{prior['created_at'][:10]} "
+                            f"(import #{prior['id']}, {prior['transaction_count']} JEs). "
+                            "See the confirmation below to re-import.",
+                            "warning",
+                        )
+                        return redirect(url_for(
+                            "job_detail", job_id=job_id, overwrite_prompt="1"
+                        ))
 
             grouped_for_check = group_rows_by_transaction(rows)
             already = history.has_completed_transactions(
