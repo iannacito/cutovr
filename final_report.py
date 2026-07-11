@@ -248,6 +248,23 @@ def _trust_status(
 def _import_status(jobs: Iterable[dict]) -> ReconcileLine:
     imported = _imported_gl_jobs(jobs)
     if imported:
+        # Tally skipped JEs across all completed GL jobs (set by M1 patch).
+        # A partial import with skipped groups must not show as "completed" —
+        # the balance check will never pass until every group is posted.
+        total_skipped = sum(
+            int((j.get("import_summary") or {}).get("skipped_je_count") or 0)
+            for j in imported
+        )
+        if total_skipped > 0:
+            return ReconcileLine(
+                "import",
+                "Transaction history imported",
+                STATUS_BLOCKED,
+                f"{total_skipped} journal entry group(s) were skipped due to "
+                "QuickBooks errors and are not yet in QuickBooks. Resolve the "
+                "skipped groups in Step 5 before reconciling — the balance "
+                "check cannot pass until all entries are posted.",
+            )
         return ReconcileLine(
             "import",
             "Transaction history imported",
