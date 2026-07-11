@@ -8794,6 +8794,8 @@ def _import_to_qbo_impl(job_id):
             # a long batch resumes on Step 5 rather than looking idle.
             _record_checkpoint(job, job_id, job_checkpoints.IMPORTING)
             _save_job(job_id)
+            tx_audit: list[dict] = []  # per-JE error log (skipped groups only)
+            qbo_error_count = 0
             try:
                 for txn_id, payload in zip(txn_ids, payloads):
                     # Idempotency probe: if a previous attempt's POST
@@ -8817,8 +8819,24 @@ def _import_to_qbo_impl(job_id):
                             details=f"reused existing JE for DocNumber {doc_number}",
                         )
                     else:
-                        resp = qbo.create_journal_entry(payload)
-                        je = resp.get("JournalEntry", {})
+                        try:
+                            resp = qbo.create_journal_entry(payload)
+                            je = resp.get("JournalEntry", {})
+                        except QBOError as _je_err:  # noqa: BLE001
+                            logging.getLogger("app").warning(
+                                "import: QBOError on DocNumber=%s txn_id=%s — %s",
+                                doc_number, txn_id, _je_err,
+                            )
+                            tx_audit.append({
+                                "txn_id": txn_id,
+                                "doc_number": doc_number,
+                                "outcome": "qbo_error",
+                                "status_code": _je_err.status_code,
+                                "error_body": str(_je_err.body)[:500],
+                                "intuit_tid": _je_err.intuit_tid,
+                            })
+                            qbo_error_count += 1
+                            continue
                     created.append({
                         "Id": je.get("Id"),
                         "DocNumber": je.get("DocNumber"),
@@ -8892,7 +8910,15 @@ def _import_to_qbo_impl(job_id):
                         logging.getLogger("app").exception(
                             "Failed to record partial import for job=%s", job_id,
                         )
+                # Save any per-JE error entries collected before the failure.
+                if tx_audit:
+                    job["tx_audit"] = tx_audit
                 raise partial_e
+
+            # Persist the per-JE error log so skipped groups are visible
+            # in job state (even if zero errors, clear any stale tx_audit).
+            job["tx_audit"] = tx_audit
+            _save_job(job_id)
 
             # Record the import in history immediately. Even if verification
             # below fails, the JEs ARE in QBO and we want a permanent record
@@ -8923,6 +8949,7 @@ def _import_to_qbo_impl(job_id):
             job["import_summary"] = {
                 "source_transaction_count": len(txn_ids),
                 "qbo_je_count": len(created),
+                "skipped_je_count": qbo_error_count,
                 "source_debit_total": str(source_debit),
                 "source_credit_total": str(source_credit),
                 "balanced": source_debit == source_credit,
@@ -8935,10 +8962,15 @@ def _import_to_qbo_impl(job_id):
             _save_job(job_id)
             _audit("import_success", target_type="job", target_id=job_id,
                    details=f"{len(created)} JEs, debit=${source_debit}, credit=${source_credit}")
+            _skip_note = (
+                f" {qbo_error_count} JE group(s) were skipped due to QBO errors"
+                f" — check the job import log for details."
+                if qbo_error_count else ""
+            )
             flash(
-                "Your migration is in QuickBooks. "
+                f"Your migration is in QuickBooks.{_skip_note} "
                 "Open the final balance check when you're ready.",
-                "success",
+                "success" if not qbo_error_count else "warning",
             )
 
             # Run verification automatically (best-effort). Failure does not
