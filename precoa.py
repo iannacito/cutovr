@@ -96,6 +96,18 @@ def is_equity_account(account_name: str) -> bool:
     return "retained earnings" in name_lower or "net income" in name_lower
 
 
+def is_reserved_account(account_name: str) -> bool:
+    """Return True for accounts that QBO reserves and cannot be created directly.
+
+    These accounts (Retained Earnings, Net Income/Loss) must be posted with a
+    "-PCLaw" suffix so they don't collide with QBO's built-in system accounts.
+    They are handled automatically during the Opening Balance push; operators
+    should not configure them in COA Consolidation.
+    """
+    name_lower = str(account_name).casefold()
+    return "retained earnings" in name_lower or "net income" in name_lower
+
+
 def get_coa_consolidation_status(firm_id: int, db) -> dict:
     """Assess COA consolidation status for the firm.
 
@@ -170,6 +182,7 @@ def get_coa_consolidation_status(firm_id: int, db) -> dict:
                             "raw_names":      [raw_name],
                             "is_consolidated": False,
                             "is_equity":      is_equity_account(norm),
+                            "is_reserved":    is_reserved_account(norm),
                         }
                     elif raw_name not in pclaw_accounts[key]["raw_names"]:
                         pclaw_accounts[key]["raw_names"].append(raw_name)
@@ -196,6 +209,35 @@ def get_coa_consolidation_status(firm_id: int, db) -> dict:
                             "raw_names":      [raw_name],
                             "is_consolidated": False,
                             "is_equity":      is_equity_account(norm),
+                            "is_reserved":    is_reserved_account(norm),
+                        }
+                    elif raw_name not in pclaw_accounts[key]["raw_names"]:
+                        pclaw_accounts[key]["raw_names"].append(raw_name)
+                        if raw_name != norm:
+                            pclaw_accounts[key]["is_consolidated"] = True
+
+            elif report_type == "trial_balance" and job.get("parsed_trial_balance_json"):
+                # TB rows stored in parsed_trial_balance_json by save_job_state
+                # (app_db.py line 885-889). Field names: "account_number" / "account_name"
+                # (confirmed in opening_balance.py lines 316-317, 368-369).
+                raw_tb = job.get("parsed_trial_balance_json", "[]")
+                tb_list = _json.loads(raw_tb) if isinstance(raw_tb, str) else (raw_tb or [])
+                _dbg.debug("[precoa] TB job %s: %d rows", job.get("id"), len(tb_list))
+                for row in tb_list:
+                    gl       = normalize_gl_number(row.get("account_number", ""))
+                    raw_name = row.get("account_name", "")
+                    norm     = normalize_account_name(raw_name)
+                    if not (gl and norm):
+                        continue
+                    key = (gl, norm)
+                    if key not in pclaw_accounts:
+                        pclaw_accounts[key] = {
+                            "gl_number":      gl,
+                            "account_name":   norm,
+                            "raw_names":      [raw_name],
+                            "is_consolidated": False,
+                            "is_equity":      is_equity_account(norm),
+                            "is_reserved":    is_reserved_account(norm),
                         }
                     elif raw_name not in pclaw_accounts[key]["raw_names"]:
                         pclaw_accounts[key]["raw_names"].append(raw_name)
