@@ -1,0 +1,252 @@
+{% extends "_base.html" %}
+{% block title %}Chart of Accounts Consolidation &mdash; {{ firm.name if firm else 'cutovr' }}{% endblock %}
+{% block content %}
+
+<style>
+  .coa-page          { max-width:1080px; margin:0 auto; padding:var(--space-8) var(--space-6); }
+  .coa-header        { margin-bottom:var(--space-6); }
+  .coa-header h1     { margin:0 0 var(--space-2); font-size:1.5rem; font-weight:700; }
+  .coa-header p      { margin:0; color:var(--ink-muted); font-size:.95rem; }
+  .coa-status        { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:var(--space-5); margin-bottom:var(--space-6); }
+  .coa-status__title { font-size:.95rem; font-weight:700; margin:0 0 var(--space-2); }
+  .coa-status__desc  { font-size:.875rem; color:var(--ink-muted); margin:0 0 var(--space-3); }
+  .coa-status__stat  { display:flex; gap:var(--space-6); margin-top:var(--space-4); }
+  .coa-stat          { flex:1; }
+  .coa-stat__label   { font-size:.75rem; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-muted); }
+  .coa-stat__value   { font-size:1.75rem; font-weight:700; margin-top:var(--space-1); color:var(--accent); }
+  .coa-table         { width:100%; border-collapse:collapse; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; margin-bottom:var(--space-6); }
+  .coa-table th      { text-align:left; font-size:.72rem; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-muted); padding:var(--space-3) var(--space-4); border-bottom:1px solid var(--line); background:var(--bg-2); }
+  .coa-table td      { padding:var(--space-3) var(--space-4); font-size:.875rem; border-bottom:1px solid var(--line); vertical-align:middle; }
+  .coa-table tr:last-child td { border-bottom:none; }
+  .coa-table tr:hover td { background:var(--bg-2); }
+  .coa-primary       { font-weight:600; }
+  .coa-sub           { font-size:.78rem; color:var(--ink-muted); margin-top:2px; }
+  .coa-badge         { display:inline-flex; align-items:center; gap:4px; padding:3px 10px; border-radius:20px; font-size:.75rem; font-weight:600; white-space:nowrap; }
+  .coa-badge--warning { background:var(--warning-soft); color:var(--warning); }
+  .coa-badge--muted  { background:var(--bg-3); color:var(--ink-muted); }
+  .coa-actions       { display:flex; gap:var(--space-3); margin-top:var(--space-2); }
+  @media(max-width:600px) { .coa-status__stat { flex-direction:column; } }
+</style>
+
+<div class="coa-page">
+
+  <div style="margin-bottom:var(--space-6);">
+    <a href="{{ url_for('migration_nexus') }}"
+       style="color:var(--accent);text-decoration:none;font-size:.875rem;">
+      &larr; Back to Migration Nexus
+    </a>
+  </div>
+
+  <div class="coa-header">
+    <h1>Chart of Accounts Consolidation</h1>
+    <p>
+      Auto-detected PCLaw accounts from uploaded files. Assign a QuickBooks Account
+      Type to each account, then continue to account matching (Step&nbsp;3) where
+      you can confirm what&rsquo;s already in QuickBooks and create what&rsquo;s missing.
+    </p>
+  </div>
+
+  {# Load button — triggers a fresh scan of all uploaded files #}
+  <div style="margin-bottom:var(--space-6);">
+    <form method="post" action="{{ url_for('coa_consolidation_load') }}" style="display:inline;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-sm" title="Re-scan all uploaded files for account data">
+        &#8635; Load from Files
+      </button>
+    </form>
+  </div>
+
+  {# Status card #}
+  {% if coa_status.pclaw_accounts %}
+  <div class="coa-status">
+    {% if coa_status.status == 'needs_consolidation' %}
+      <div class="coa-status__title">&#9888;&#65039; Consolidation needed</div>
+      <p class="coa-status__desc">
+        Some accounts have &ldquo;&#8209;Continued&rdquo; variants that will be merged.
+        Assign a QBO Account Type to each account below, then continue to account matching.
+      </p>
+    {% elif coa_status.status == 'needs_mapping' %}
+      <div class="coa-status__title">&#128203; Type assignment needed</div>
+      <p class="coa-status__desc">
+        These PCLaw accounts need a QBO Account Type before they can be created in QuickBooks.
+        Assign types below, then click &ldquo;Continue to Account Matching&rdquo;.
+      </p>
+    {% else %}
+      <div class="coa-status__title">&#10003; Ready</div>
+      <p class="coa-status__desc">
+        All {{ coa_status.pclaw_accounts|length }} account(s) are prepared.
+      </p>
+    {% endif %}
+
+    <div class="coa-status__stat">
+      <div class="coa-stat">
+        <div class="coa-stat__label">Total Accounts</div>
+        <div class="coa-stat__value">{{ coa_status.pclaw_accounts|length }}</div>
+      </div>
+      <div class="coa-stat">
+        <div class="coa-stat__label">Merged (-Continued)</div>
+        <div class="coa-stat__value" style="color:var(--warning);">{{ coa_status.consolidated_count }}</div>
+      </div>
+      <div class="coa-stat">
+        <div class="coa-stat__label">Need Type</div>
+        <div class="coa-stat__value" style="color:var(--accent);">{{ coa_status.unmapped_count }}</div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {# Empty state #}
+  {% if not coa_status.pclaw_accounts %}
+  <div style="text-align:center;padding:var(--space-10) var(--space-5);color:var(--ink-muted);background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:var(--space-6);">
+    <p style="margin:0 0 var(--space-4);font-size:.95rem;">No account data found</p>
+    <p style="margin:0 0 var(--space-5);font-size:.875rem;">
+      Click &ldquo;Load from Files&rdquo; to scan existing uploads, or upload a COA or GL file
+      from the <a href="{{ url_for('migration_nexus') }}" style="color:var(--accent);">Migration Nexus</a>.
+    </p>
+  </div>
+
+  {% else %}
+  {# Account table + submit wrapped in one form so all type selections post together #}
+  <form method="post" action="{{ url_for('coa_add_missing_accounts') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <div style="margin-bottom:var(--space-4);">
+      <h2 style="font-size:1rem;font-weight:700;margin:0 0 var(--space-2);">Account List</h2>
+      <p style="font-size:.85rem;color:var(--ink-muted);margin:0;">
+        Leave &ldquo;auto-match&rdquo; to let the stepper resolve the account automatically,
+        or pick a QBO Account Type to set it explicitly. Sub-type is optional.
+      </p>
+    </div>
+
+    <table class="coa-table">
+      <thead>
+        <tr>
+          <th style="width:9%;">GL #</th>
+          <th style="width:26%;">PCLaw Account Name</th>
+          <th style="width:9%;">Flag</th>
+          <th style="width:24%;">QBO Account Type</th>
+          <th style="width:22%;">QBO Sub-Type</th>
+          <th style="width:10%;">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for account in coa_status.pclaw_accounts %}
+        <tr>
+          <input type="hidden" name="gl_number"    value="{{ account.gl_number }}">
+          <input type="hidden" name="account_name" value="{{ account.account_name }}">
+
+          <td style="font-family:monospace;font-size:.8rem;font-weight:600;">
+            {{ account.gl_number }}
+          </td>
+          <td>
+            <div class="coa-primary">{{ account.account_name }}</div>
+            {% if account.raw_names|length > 1 %}
+            <div class="coa-sub">
+              {{ account.raw_names|length }} variant(s):
+              {% for rn in account.raw_names %}
+                {% if rn != account.account_name %}
+                  &ldquo;{{ rn }}&rdquo;{% if not loop.last %},{% endif %}
+                {% endif %}
+              {% endfor %}
+            </div>
+            {% endif %}
+          </td>
+          <td>
+            {% if account.is_equity %}
+              <span class="coa-badge coa-badge--muted">Equity</span>
+            {% elif account.is_consolidated %}
+              <span class="coa-badge coa-badge--warning">Merged</span>
+            {% else %}
+              <span class="coa-badge coa-badge--muted">Standard</span>
+            {% endif %}
+          </td>
+          <td>
+            <select name="account_type"
+                    data-detail-target="coa-sub-{{ loop.index0 }}"
+                    style="width:100%;max-width:16rem;font-size:.82rem;">
+              <option value="">&mdash; auto-match &mdash;</option>
+              {% for at in coa_override_account_types %}
+                <option value="{{ at }}">{{ at }}</option>
+              {% endfor %}
+            </select>
+          </td>
+          <td>
+            <select id="coa-sub-{{ loop.index0 }}"
+                    name="detail_type"
+                    style="width:100%;max-width:16rem;font-size:.82rem;"
+                    disabled>
+              <option value="">&mdash; default &mdash;</option>
+            </select>
+          </td>
+          <td>
+            {% if account.is_consolidated %}
+              <span class="coa-badge coa-badge--warning">&#128260; Merged</span>
+            {% else %}
+              <span class="coa-badge coa-badge--muted">Review</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div class="coa-actions">
+      <button type="submit" class="btn btn-primary">
+        Continue to Account Matching &rarr;
+      </button>
+      <a href="{{ url_for('migration_nexus') }}" class="btn btn-secondary">
+        Skip for Now
+      </a>
+    </div>
+  </form>
+  {% endif %}
+
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var ACCT_DETAIL_TYPES = {
+    "Bank": ["Checking","Savings","MoneyMarket","CashOnHand","TrustAccounts"],
+    "Accounts Receivable": ["AccountsReceivable"],
+    "Other Current Asset": ["AllowanceForBadDebts","DevelopmentCosts","EmployeeCashAdvances","OtherCurrentAssets","PrepaidExpenses","Retainage","UndepositedFunds"],
+    "Fixed Asset": ["AccumulatedDepreciation","Buildings","DepletableAssets","FurnitureAndFixtures","Land","LeaseholdImprovements","MachineryAndEquipment","OtherFixedAssets","Vehicles"],
+    "Other Asset": ["LeaseBuyout","OtherLongTermAssets","SecurityDeposits"],
+    "Accounts Payable": ["AccountsPayable"],
+    "Credit Card": ["CreditCard"],
+    "Other Current Liability": ["DirectDepositPayable","InsurancePayable","LineOfCredit","LoanPayable","OtherCurrentLiabilities","PayrollClearing","SalesTaxPayable","TrustAccountsLiabilities"],
+    "Long Term Liability": ["NotesPayable","OtherLongTermLiabilities"],
+    "Equity": ["AccumulatedAdjustment","CommonStock","EstimatedTaxes","HealthInsurancePremium","HealthSavingsAccountContribution","OpeningBalanceEquity","OwnersEquity","PaidInCapitalOrSurplus","PartnerContributions","PartnerDistributions","PartnerEquity","PersonalExpense","PersonalIncome","PreferredStock","RetainedEarnings"],
+    "Income": ["NonProfitIncome","OtherPrimaryIncome","SalesOfProductIncome","ServiceFeeIncome","UnappliedCashPaymentIncome"],
+    "Other Income": ["DividendIncome","InterestEarned","OtherInvestmentIncome","OtherMiscellaneousIncome","TaxExemptInterest"],
+    "Cost of Goods Sold": ["CostOfLabor","EquipmentRentalCOGS","GoodsCostOfGoodsSold","OtherCostsOfServicesCOGS","ShippingFreightAndDeliveryCogs"],
+    "Expense": ["AdvertisingPromotional","BadDebts","BankCharges","CommissionsAndFees","Entertainment","EntertainmentMeals","EquipmentRental","FilingFees","Insurance","InterestPaid","LegalProfessionalFees","Meals","OfficeExpenses","OtherBusinessExpenses","PenaltiesAndSettlements","Rent","RepairMaintenance","ShippingFreightAndDelivery","Supplies","Taxes","Travel","TravelMeals","Utilities"],
+    "Other Expense": ["Depreciation","ExchangeGainOrLoss","OtherMiscellaneousExpense","PenaltyForEarlyWithdrawal"]
+  };
+
+  function populateSubTypes(typeSelect) {
+    var targetId = typeSelect.getAttribute('data-detail-target');
+    if (!targetId) return;
+    var sub = document.getElementById(targetId);
+    if (!sub) return;
+    var chosen  = typeSelect.value;
+    var options = ACCT_DETAIL_TYPES[chosen] || [];
+    sub.innerHTML = '<option value="">— default —</option>';
+    options.forEach(function (s) {
+      var opt = document.createElement('option');
+      opt.value = s;
+      opt.textContent = s.replace(/([A-Z])/g, ' $1').trim();
+      sub.appendChild(opt);
+    });
+    sub.disabled = options.length === 0;
+  }
+
+  document.querySelectorAll('select[name="account_type"][data-detail-target]').forEach(function (sel) {
+    sel.addEventListener('change', function () { populateSubTypes(sel); });
+    if (sel.value) populateSubTypes(sel);
+  });
+}());
+</script>
+
+{% endblock %}

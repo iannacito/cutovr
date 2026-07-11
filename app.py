@@ -3115,14 +3115,11 @@ def migration_nexus():
         and (j.get("report_type") or "general_ledger") != "unknown"
     ]
 
-    # hub_ready: GL-only signal — shows "Import →" shortcut in Migration Nexus
-    # when the batch is matched, the firm has at least one completed GL (COA
-    # accounts exist in QBO), and vendors + clients have been uploaded.
+    # hub_ready: always False. GL imports go through the stepper (Step 3→4→5→6).
+    # The COA consolidation page (/coa-consolidation) is the pre-flight gate;
+    # precoa.is_ready_to_import() is not called here.
     for j in active_batches:
-        if (j.get("report_type") or "general_ledger") == "general_ledger":
-            j["hub_ready"] = precoa.is_ready_to_import(j["id"], firm_id, db)
-        else:
-            j["hub_ready"] = False
+        j["hub_ready"] = False
 
     # One-time setup detection
     # Account-mapping workflow: any GL job at matched/reviewed/completed means
@@ -3310,6 +3307,129 @@ def hub_bulk_revert():
     else:
         flash(f"Reverted {reverted} batch(es) from QuickBooks.", "success")
     return redirect(url_for("migration_nexus"))
+
+
+# ── COA Consolidation ─────────────────────────────────────────────────────────
+
+
+@app.route("/coa-consolidation/load", methods=["POST"])
+@login_required
+def coa_consolidation_load():
+    """POST: search existing uploaded files for account data, then redirect back."""
+    user = current_user()
+    firm_id = user["firm_id"]
+    try:
+        status = precoa.get_coa_consolidation_status(firm_id, db)
+        n = len(status.get("pclaw_accounts") or [])
+        if n:
+            flash(f"Loaded {n} account(s) from existing files.", "success")
+        else:
+            flash(
+                "No account data found. Upload a COA or GL file to get started.",
+                "info",
+            )
+    except Exception as exc:  # noqa: BLE001
+        _log.exception("coa_consolidation_load: %s", exc)
+        flash(f"Could not load accounts: {exc}", "error")
+    return redirect(url_for("coa_consolidation"))
+
+
+@app.route("/coa-consolidation", methods=["GET"])
+@login_required
+def coa_consolidation():
+    """Render the COA consolidation page — GLCheckr gate A pre-flight."""
+    user    = current_user()
+    firm_id = user["firm_id"]
+    firm    = db.get_firm(firm_id) if firm_id else None
+    try:
+        coa_status = precoa.get_coa_consolidation_status(firm_id, db)
+    except Exception:  # noqa: BLE001
+        coa_status = {
+            "status": "ready", "pclaw_accounts": [],
+            "consolidated_count": 0, "unmapped_count": 0,
+        }
+    return render_template(
+        "coa-consolidation.html",
+        firm=firm,
+        coa_status=coa_status,
+        coa_override_account_types=COA_OVERRIDE_ACCOUNT_TYPES,
+    )
+
+
+@app.route("/coa-consolidation/add-missing-accounts", methods=["POST"])
+@login_required
+def coa_add_missing_accounts():
+    """Save Type/SubType overrides to the active GL job, then go to account-mapping.
+
+    Does NOT call QBO directly. Stores account_type_overrides on the firm's
+    active GL job so Step 3 (account_mapping) can use them in build_create_plan.
+    precoa stays behind the scenes; the stepper owns the QBO write.
+    """
+    user    = current_user()
+    firm_id = user["firm_id"]
+    try:
+        gl_numbers    = request.form.getlist("gl_number")
+        account_names = request.form.getlist("account_name")
+        account_types = request.form.getlist("account_type")
+        detail_types  = request.form.getlist("detail_type")
+
+        if not gl_numbers:
+            flash("No accounts submitted — reload and try again.", "info")
+            return redirect(url_for("coa_consolidation"))
+
+        overrides: dict[str, dict] = {}
+        for gl, name, at, dt in zip(gl_numbers, account_names, account_types, detail_types):
+            if not (at and at in COA_OVERRIDE_ACCOUNT_TYPES):
+                continue  # blank = accept auto-match
+            key = _override_key_for(gl, name)
+            if not key:
+                continue
+            overrides[key] = {
+                "account_type":  at,
+                "detail_type":   dt or None,
+                "account_number": gl,
+                "account_name":  name,
+            }
+
+        if not overrides:
+            flash(
+                "No account types selected — pick a QBO Account Type for "
+                "at least one account before continuing.",
+                "warning",
+            )
+            return redirect(url_for("coa_consolidation"))
+
+        all_jobs = db.list_jobs_for_firm(firm_id, limit=50)
+        gl_job = next(
+            (j for j in all_jobs
+             if (j.get("report_type") or "general_ledger") == "general_ledger"
+             and j.get("checkpoint") not in ("completed",)),
+            None,
+        )
+        if not gl_job:
+            flash(
+                "No active General Ledger job found. Upload a GL file first.",
+                "warning",
+            )
+            return redirect(url_for("coa_consolidation"))
+
+        _save_job_account_type_overrides(gl_job["id"], gl_job, overrides)
+        _audit(
+            "coa_add_missing_accounts",
+            target_type="firm", target_id=firm_id,
+            details=f"Saved {len(overrides)} type override(s) to GL job {gl_job['id'][:12]}",
+        )
+        flash(
+            f"Saved type selections for {len(overrides)} account(s). "
+            "Review and confirm in the account matching step below.",
+            "success",
+        )
+        return redirect(url_for("account_mapping", job_id=gl_job["id"]))
+
+    except Exception as exc:  # noqa: BLE001
+        _log.exception("coa_add_missing_accounts: %s", exc)
+        flash(f"Could not process account types: {exc}", "error")
+    return redirect(url_for("coa_consolidation"))
 
 
 @app.route("/dev/reset-migration", methods=["POST"])
