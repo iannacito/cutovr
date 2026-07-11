@@ -429,28 +429,36 @@
                        calls toggleMappingOverride() to reveal it. #}
                     <div id="mapping-override-{{ r.idx }}"
                          style="display:none;margin:.35rem 0 0;">
-                      <label for="row-category-{{ r.idx }}"
-                             style="display:block;margin:0 0 .25rem;font-size:.8rem;">
+                      <label style="display:block;margin:0 0 .25rem;font-size:.8rem;">
                         What kind of account is this? (to override the auto-match)
                       </label>
-                      <select id="row-category-{{ r.idx }}"
-                              name="category"
-                              form="add-form-{{ r.idx }}"
-                              data-testid="row-category-select-{{ r.idx }}"
-                              style="margin:0 .35rem .35rem 0;max-width:18rem;">
-                        <option value="">&mdash; accept auto-match or pick a category &mdash;</option>
-                        {% for cat in account_mapping_categories %}
-                          <option value="{{ cat[0] }}">{{ cat[1] }}</option>
-                        {% endfor %}
-                      </select>
+                      <div style="display:flex;flex-wrap:wrap;gap:.35rem;align-items:flex-end;margin-bottom:.35rem;">
+                        <select id="row-acct-type-{{ r.idx }}"
+                                name="account_type"
+                                form="add-form-{{ r.idx }}"
+                                data-testid="row-category-select-{{ r.idx }}"
+                                data-detail-target="row-detail-type-{{ r.idx }}"
+                                style="max-width:18rem;">
+                          <option value="">&mdash; accept auto-match or pick a type &mdash;</option>
+                          {% for at in coa_override_account_types %}
+                            <option value="{{ at }}">{{ at }}</option>
+                          {% endfor %}
+                        </select>
+                        <select id="row-detail-type-{{ r.idx }}"
+                                name="detail_type"
+                                form="add-form-{{ r.idx }}"
+                                style="max-width:18rem;">
+                          <option value="">&mdash; default for type &mdash;</option>
+                        </select>
+                      </div>
                       <button class="btn btn-sm" type="submit"
                               form="add-form-{{ r.idx }}"
                               data-testid="row-add-button-{{ r.idx }}">
                         Add to QuickBooks (with selected category)
                       </button>
                       <p class="muted" style="margin:.25rem 0 0;font-size:.75rem;max-width:36ch;">
-                        Leave blank to accept the auto-match, or pick a category
-                        to create this account with a specific type.
+                        Leave blank to accept the auto-match, or pick a type
+                        to create this account with a specific QBO account type.
                       </p>
                     </div>
                   {% else %}
