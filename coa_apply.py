@@ -240,6 +240,12 @@ _TYPE_TABLE: dict[str, tuple[str, str]] = {
     "memberscapital": ("Equity", "OwnersEquity"),
     "partnercapital": ("Equity", "OwnersEquity"),
     "treasurystock": ("Equity", "TreasuryStock"),
+    # "Owner's Draw" is a PCLaw account_type value → _norm = "ownersdraw".
+    # _SAFE_NAME_PATTERNS has "ownersdraw" but only matches account NAMES.
+    # Adding here lets the account_type column resolve it directly.
+    "ownersdraw": ("Equity", "OwnersEquity"),
+    "ownersequity": ("Equity", "OwnersEquity"),
+    "ownerscapital": ("Equity", "OwnersEquity"),
 
     # Income
     "income": ("Income", "ServiceFeeIncome"),
@@ -248,13 +254,17 @@ _TYPE_TABLE: dict[str, tuple[str, str]] = {
     "otherprimaryincome": ("Income", "OtherPrimaryIncome"),
     "recovery": ("Income", "OtherPrimaryIncome"),
 
-    # Expense
+    # Expense — PCLaw COA exports use both "Expense" (singular) and "Expenses" (plural)
     "expense": ("Expense", "OfficeGeneralAdministrativeExpenses"),
+    "expenses": ("Expense", "OfficeGeneralAdministrativeExpenses"),   # PCLaw plural form
     "overhead": ("Expense", "OfficeGeneralAdministrativeExpenses"),
     "office": ("Expense", "OfficeGeneralAdministrativeExpenses"),
     "officegeneraladministrativeexpenses": (
         "Expense", "OfficeGeneralAdministrativeExpenses",
     ),
+    # Other Expense — PCLaw uses "Other Expenses" (plural); QBO type is "Other Expense"
+    "otherexpense": ("Other Expense", "OtherMiscellaneousExpense"),
+    "otherexpenses": ("Other Expense", "OtherMiscellaneousExpense"),
     "rentorleaseofbuildings": ("Expense", "RentOrLeaseOfBuildings"),
     "rent": ("Expense", "RentOrLeaseOfBuildings"),
     "legalprofessionalfees": ("Expense", "LegalAndProfessionalFees"),
