@@ -23,6 +23,7 @@
   .coa-sub           { font-size:.78rem; color:var(--ink-muted); margin-top:2px; }
   .coa-badge         { display:inline-flex; align-items:center; gap:4px; padding:3px 10px; border-radius:20px; font-size:.75rem; font-weight:600; white-space:nowrap; }
   .coa-badge--warning { background:var(--warning-soft); color:var(--warning); }
+  .coa-badge--error   { background: #fef2f2; color: #b91c1c; border-color: #fca5a5; }
   .coa-badge--muted  { background:var(--bg-3); color:var(--ink-muted); }
   .coa-actions       { display:flex; gap:var(--space-3); margin-top:var(--space-2); }
   @media(max-width:600px) { .coa-status__stat { flex-direction:column; } }
@@ -132,10 +133,9 @@
       <tbody>
         {% for account in coa_status.pclaw_accounts %}
         <tr>
-          <input type="hidden" name="gl_number"    value="{{ account.gl_number }}">
-          <input type="hidden" name="account_name" value="{{ account.account_name }}">
-
           <td style="font-family:monospace;font-size:.8rem;font-weight:600;">
+            <input type="hidden" name="gl_number"    value="{{ account.gl_number }}">
+            <input type="hidden" name="account_name" value="{{ account.account_name }}">
             {{ account.gl_number }}
           </td>
           <td>
@@ -152,7 +152,12 @@
             {% endif %}
           </td>
           <td>
-            {% if account.is_equity %}
+            {% if account.is_reserved %}
+              <span class="coa-badge coa-badge--error"
+                    title="QBO reserves this account name. It will be posted as &#39;{{ account.account_name }}-PCLaw&#39; during the Opening Balance push. No action needed here.">
+                &#9888; Reserved
+              </span>
+            {% elif account.is_equity %}
               <span class="coa-badge coa-badge--muted">Equity</span>
             {% elif account.is_consolidated %}
               <span class="coa-badge coa-badge--warning">Merged</span>
@@ -161,22 +166,31 @@
             {% endif %}
           </td>
           <td>
-            <select name="account_type"
-                    data-detail-target="coa-sub-{{ loop.index0 }}"
-                    style="width:100%;max-width:16rem;font-size:.82rem;">
-              <option value="">&mdash; auto-match &mdash;</option>
-              {% for at in coa_override_account_types %}
-                <option value="{{ at }}">{{ at }}</option>
-              {% endfor %}
-            </select>
+            {% if account.is_reserved %}
+              <span class="muted" style="font-size:.78rem;">
+                Will be posted as <em>{{ account.account_name }}-PCLaw</em>
+              </span>
+              {# Hidden inputs still needed so gl_number/account_name stay in form order #}
+            {% else %}
+              <select name="account_type"
+                      data-detail-target="coa-sub-{{ loop.index0 }}"
+                      style="width:100%;max-width:16rem;font-size:.82rem;">
+                <option value="">&mdash; auto-match &mdash;</option>
+                {% for at in coa_override_account_types %}
+                  <option value="{{ at }}">{{ at }}</option>
+                {% endfor %}
+              </select>
+            {% endif %}
           </td>
           <td>
-            <select id="coa-sub-{{ loop.index0 }}"
-                    name="detail_type"
-                    style="width:100%;max-width:16rem;font-size:.82rem;"
-                    disabled>
-              <option value="">&mdash; default &mdash;</option>
-            </select>
+            {% if not account.is_reserved %}
+              <select id="coa-sub-{{ loop.index0 }}"
+                      name="detail_type"
+                      style="width:100%;max-width:16rem;font-size:.82rem;"
+                      disabled>
+                <option value="">&mdash; default &mdash;</option>
+              </select>
+            {% endif %}
           </td>
           <td>
             {% if account.is_consolidated %}

@@ -3377,8 +3377,11 @@ def coa_add_missing_accounts():
             flash("No accounts submitted — reload and try again.", "info")
             return redirect(url_for("coa_consolidation"))
 
+        from itertools import zip_longest as _zip_longest
         overrides: dict[str, dict] = {}
-        for gl, name, at, dt in zip(gl_numbers, account_names, account_types, detail_types):
+        for gl, name, at, dt in _zip_longest(
+            gl_numbers, account_names, account_types, detail_types, fillvalue=""
+        ):
             if not (at and at in COA_OVERRIDE_ACCOUNT_TYPES):
                 continue  # blank = accept auto-match
             key = _override_key_for(gl, name)
