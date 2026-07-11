@@ -500,9 +500,17 @@ class AppDB:
 
     @contextmanager
     def _conn(self):
-        conn = sqlite3.connect(self.db_path)
+        # timeout=15 makes a locked-database wait up to 15s instead of
+        # failing instantly; WAL lets readers proceed while a write is in
+        # flight (writer-vs-reader lock errors disappear entirely).
+        # synchronous=NORMAL is the standard WAL pairing: no corruption
+        # risk, durable at checkpoint.
+        conn = sqlite3.connect(self.db_path, timeout=15)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA busy_timeout = 15000")
+        conn.execute("PRAGMA synchronous = NORMAL")
         try:
             yield conn
             conn.commit()
