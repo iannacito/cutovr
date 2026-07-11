@@ -426,3 +426,22 @@ class ImportHistory:
                 "DELETE FROM imports WHERE realm_id = ?", (realm_id,)
             )
             return cur.rowcount
+
+    def delete_by_job_ids(self, job_ids: list) -> int:
+        """Delete import records whose job_id is in the given list.
+
+        Belt-and-suspenders companion to delete_all_for_firm_realm.
+        Used by /dev/reset-migration when realm_id may be None/missing
+        on the qbo_connections row, which would leave the realm loop empty
+        and orphan import history records.
+        Returns count of deleted rows.
+        """
+        if not job_ids:
+            return 0
+        placeholders = ",".join("?" * len(job_ids))
+        with self._conn() as c:
+            cur = c.execute(
+                f"DELETE FROM imports WHERE job_id IN ({placeholders})",
+                list(job_ids),
+            )
+            return cur.rowcount

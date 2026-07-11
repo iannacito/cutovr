@@ -3491,8 +3491,10 @@ def dev_reset_migration():
                 _log.warning("dev_reset_migration: revert failed for %s: %s", row["id"], exc)
                 qbo_failed += 1
 
-    # Purge all local job data for the firm
+    # Purge all local job data for the firm.
+    # Collect job_ids FIRST — _purge_job_local deletes the DB rows.
     all_rows = db.list_jobs_for_firm(firm_id, limit=200)
+    all_job_ids = [row["id"] for row in all_rows]
     for row in all_rows:
         try:
             job = db.hydrate_job(row["id"]) or {}
@@ -3508,6 +3510,15 @@ def dev_reset_migration():
             hist_deleted += history.delete_all_for_firm_realm(_realm)
         except Exception as exc:  # noqa: BLE001
             _log.warning("dev_reset_migration: history purge failed for realm %s: %s", _realm, exc)
+    # Belt-and-suspenders: also delete by job_id in case realm_id was None
+    # on the qbo_connections row (leaving _realms empty above).
+    try:
+        orphan_deleted = history.delete_by_job_ids(all_job_ids)
+        if orphan_deleted:
+            hist_deleted += orphan_deleted
+            _log.info("dev_reset_migration: deleted %d orphaned history record(s) by job_id", orphan_deleted)
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("dev_reset_migration: job_id history purge failed: %s", exc)
 
     # Belt-and-suspenders: flush any orphaned in-memory state
     keys_to_drop = [k for k, v in list(qbo_connections.items())]
