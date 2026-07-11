@@ -176,16 +176,15 @@ def get_coa_consolidation_status(firm_id: int, db) -> dict:
                         if raw_name != norm:
                             pclaw_accounts[key]["is_consolidated"] = True
 
-            elif report_type == "general_ledger" and job.get("preview"):
-                raw_preview = job.get("preview", "{}")
-                preview = (
-                    _json.loads(raw_preview)
-                    if isinstance(raw_preview, str)
-                    else raw_preview
-                )
-                for acct in preview.get("accounts", []):
-                    gl       = normalize_gl_number(acct.get("gl_number", ""))
-                    raw_name = acct.get("account_name", "")
+            elif report_type == "general_ledger" and job.get("pclaw_accounts_json"):
+                # list_jobs_for_firm returns raw DB rows; pclaw_accounts_json is
+                # the correct column (stored by save_job_state at app_db.py:836).
+                # Format: [{"number": str|None, "name": str|None}]
+                raw_pa = job.get("pclaw_accounts_json", "[]")
+                pa_list = _json.loads(raw_pa) if isinstance(raw_pa, str) else (raw_pa or [])
+                for acct in pa_list:
+                    gl       = normalize_gl_number(acct.get("number", ""))
+                    raw_name = acct.get("name", "")
                     norm     = normalize_account_name(raw_name)
                     if not (gl and norm):
                         continue

@@ -5394,6 +5394,7 @@ def _process_uploaded_csv(
                 "row_count": preflight["account_count"],
                 "format": REPORT_LABELS[REPORT_CHART_OF_ACCOUNTS],
                 "report_type": REPORT_CHART_OF_ACCOUNTS,
+                "rows": coa_rows,
             }
             jobs[job_id]["preflight"] = preflight
             jobs[job_id]["parsed_coa"] = coa_rows
