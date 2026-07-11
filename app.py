@@ -9511,6 +9511,16 @@ def preview_import(job_id):
                             )
                             if _synthetic:
                                 job["auto_balance_rows"] = _synthetic
+                                # Persist the balanced state so send_to_qbo
+                                # reads accurate balance data and doesn't fire
+                                # a stale "not balanced" flash on the next
+                                # page load. Without this, the operator sees
+                                # the flash warning AND the Step 5 button
+                                # simultaneously after a redirect.
+                                if "preview" not in job or job["preview"] is None:
+                                    job["preview"] = {}
+                                job["preview"]["balanced"] = True
+                                job["preview"]["would_post"] = True
                                 jobs[job_id] = job
                                 db.save_job_state(job_id, job)
                                 logging.getLogger("app").info(
@@ -9577,6 +9587,11 @@ def preview_import(job_id):
                         )
                         if _synthetic2:
                             job["auto_balance_rows"] = _synthetic2
+                            # Same stale-preview fix as Case 1 above.
+                            if "preview" not in job or job["preview"] is None:
+                                job["preview"] = {}
+                            job["preview"]["balanced"] = True
+                            job["preview"]["would_post"] = True
                             jobs[job_id] = job
                             db.save_job_state(job_id, job)
                             logging.getLogger("app").info(
@@ -10310,6 +10325,7 @@ def account_mapping(job_id):
         **_workflow_stepper_context(
             job["firm_id"], force_current_stage=customer_workflow.STAGE_MATCH,
             on_match_page=True,
+            gl_job_id=job_id,
         ),
     )
 
@@ -10591,6 +10607,18 @@ def _build_account_mapping_rows(
             if suggestion and not _auto_suggestion_type_safe(pa, suggestion, match_basis):
                 suggestion = None
                 match_basis = None
+            # Selectability gate: a suggestion only counts as matched_auto when
+            # its QBO account Id is present in the selectable qbo_accounts list
+            # (the same list the template iterates to render the row's <select>
+            # options). If the suggested Id is not selectable, downgrade to
+            # unmatched and log a diagnostic.
+            if suggestion and not any(a.get("Id") == suggestion.get("Id") for a in qbo_accounts):
+                logging.getLogger("app").warning(
+                    "account_mapping: suggestion for %r (%s) references QBO id %s "
+                    "not present in selectable accounts — downgraded to unmatched",
+                    name or pa.get("name"), pa.get("number"), suggestion.get("Id"))
+                suggestion = None
+                match_basis = None
         num = (pa.get("number") or "").strip()
         name = (pa.get("name") or "").strip()
         key_num = num
@@ -10654,6 +10682,11 @@ def _build_account_mapping_rows(
         # CTA dominates the page on a fresh demo-style mismatch.
         "many_unmatched": (unmatched > 0 and total > 0 and (unmatched * 4 >= total)),
         "any_unmatched": unmatched > 0,
+        # True when at least one account has an auto-suggestion that the
+        # user has not yet confirmed via Save. The banner and gate copy
+        # soften from "Amazing! Looks good" to "Review and confirm" so the
+        # user knows action is still needed before Step 4.
+        "any_unconfirmed": matched_auto > 0,
     }
     return rows, summary
 
