@@ -43,24 +43,6 @@
     </section>
   {% else %}
 
-  {% if readiness_advisory and not readiness_advisory.ready %}
-  <section class="alert alert-warning" data-testid="readiness-advisory-warning">
-    {% set n_unmatched = readiness_advisory.counts.unmatched %}
-    {% set n_stale = readiness_advisory.counts.stale %}
-    {% if n_unmatched > 0 and n_stale > 0 %}
-      {{ n_unmatched }} account{{ 's' if n_unmatched != 1 }} need mapping and
-      {{ n_stale }} saved mapping{{ 's' if n_stale != 1 }} point{{ '' if n_stale != 1 else 's' }}
-      at deactivated QuickBooks accounts
-    {% elif n_unmatched > 0 %}
-      {{ n_unmatched }} account{{ 's' if n_unmatched != 1 }} still need mapping
-    {% else %}
-      {{ n_stale }} saved mapping{{ 's' if n_stale != 1 }} point{{ '' if n_stale != 1 else 's' }}
-      at deactivated QuickBooks accounts
-    {% endif %}
-    &mdash; <a href="{{ url_for('account_mapping', job_id=job.id) }}">finish Step 3 first</a>.
-  </section>
-  {% endif %}
-
   {% if dead_mappings %}
   <section class="card error-panel" data-testid="dead-mappings-warning">
     <p class="eyebrow" style="color:var(--error);">Account mapping — auto-repair queued</p>
