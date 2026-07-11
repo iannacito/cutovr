@@ -51,11 +51,18 @@
   {% if setup_cards %}
     <section style="margin-top:var(--space-6);" data-testid="hub-setup">
       <p class="eyebrow" style="margin:0 0 var(--space-3);">Migration setup</p>
-      <div class="grid-three">
+      <div class="grid-three" style="grid-template-columns:repeat(auto-fill,minmax(200px,1fr));">
         {% for s in setup_cards %}
+          {% if s.url %}
+          <a href="{{ s.url }}" class="card" data-testid="hub-setup-card"
+             data-setup-key="{{ s.key }}"
+             data-setup-done="{{ 'true' if s.done else 'false' }}"
+             style="text-decoration:none;color:inherit;display:block;">
+          {% else %}
           <article class="card" data-testid="hub-setup-card"
                    data-setup-key="{{ s.key }}"
                    data-setup-done="{{ 'true' if s.done else 'false' }}">
+          {% endif %}
             <div class="flex-between" style="align-items:flex-start;gap:var(--space-3);">
               <h3 style="margin:0;">{{ s.title }}</h3>
               <span class="badge
@@ -64,7 +71,8 @@
                 data-testid="hub-setup-status">{{ s.status_label }}</span>
             </div>
             <p class="muted" style="margin:var(--space-3) 0 0;">{{ s.detail }}</p>
-          </article>
+            {% if s.url %}<p style="margin:var(--space-2) 0 0;font-size:.82rem;color:var(--accent);">Open &rarr;</p>{% endif %}
+          {% if s.url %}</a>{% else %}</article>{% endif %}
         {% endfor %}
       </div>
     </section>

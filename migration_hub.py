@@ -119,6 +119,7 @@ class SetupCard:
     detail: str
     done: bool
     needs_attention: bool = False
+    url: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -128,6 +129,7 @@ class SetupCard:
             "detail": self.detail,
             "done": self.done,
             "needs_attention": self.needs_attention,
+            "url": self.url,
         }
 
 
@@ -209,6 +211,17 @@ def build_setup_cards(*, has_qbo_connection: bool, account_mapping_count: int,
         detail=ob_detail,
         done=ob_done,
         needs_attention=ob_failed,
+    ))
+
+    # 4. COA Consolidation — nav card (done tracking deferred)
+    cards.append(SetupCard(
+        key="coa_consolidation",
+        title="COA Consolidation",
+        status_label="Open",
+        detail="Assign a QBO Account Type to each PCLaw account before the first GL batch.",
+        done=False,
+        needs_attention=False,
+        url="/coa-consolidation",
     ))
 
     return cards
