@@ -35,7 +35,7 @@
   .hub-badge--warning{ background:var(--warning-soft); color:var(--warning); }
   .hub-badge--muted  { background:var(--bg-3);         color:var(--ink-muted); }
   /* Setup cards */
-  .hub-setup-grid    { display:grid; grid-template-columns:repeat(4,1fr); gap:var(--space-4); }
+  .hub-setup-grid    { display:grid; grid-template-columns:repeat(auto-fill,minmax(185px,1fr)); gap:var(--space-4); }
   .hub-setup-card    { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:var(--space-5); border-left:3px solid var(--line); }
   .hub-setup-card--done { border-left-color:var(--accent); }
   .hub-setup-card__title { font-size:.875rem; font-weight:700; margin-bottom:var(--space-2); }
@@ -458,6 +458,13 @@
         <div class="hub-setup-card__desc">Trial balance as of cut-over date posted as a single opening JE.</div>
         <div class="hub-setup-card__status">{% if ob_done %}&#10003; Complete{% else %}Not yet done{% endif %}</div>
       </div>
+      <a href="{{ url_for('coa_consolidation') }}"
+         class="hub-setup-card"
+         style="text-decoration:none;color:inherit;display:block;">
+        <div class="hub-setup-card__title">COA Consolidation</div>
+        <div class="hub-setup-card__desc">Assign QBO Account Type to every PCLaw account before the first GL batch.</div>
+        <div class="hub-setup-card__status" style="color:var(--accent);">Open &rarr;</div>
+      </a>
     </div>
   </section>
 
