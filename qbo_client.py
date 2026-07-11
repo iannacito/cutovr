@@ -20,6 +20,7 @@ from urllib.parse import quote
 import logging
 import time
 import requests
+import re
 
 
 _log = logging.getLogger("qbo_client")
@@ -96,6 +97,46 @@ def extract_intuit_tid(response):
     return value or None
 
 
+# GL Report parsing helpers
+_GL_ACCT_NUM_RE = re.compile(r'^\d[\d\s]*(?:\.\d+)?$')
+
+_GL_REQUIRED_COLS = {"tx_date", "txn_type", "doc_num", "name", "memo", "debt_amt", "credit_amt"}
+
+
+def _build_gl_column_map(header_row: list[str]) -> dict[str, int]:
+    """Map column names to indices by type (tx_date, txn_type, etc.).
+
+    QBO GL export has variable column naming; this normalizes by ColType
+    to the required column set. Raises ValueError if any required column
+    is missing.
+    """
+    col_map = {}
+    for idx, col in enumerate(header_row):
+        col_lower = str(col or "").strip().lower()
+        if col_lower in ("tx date", "date"):
+            col_map["tx_date"] = idx
+        elif col_lower in ("txn type", "type"):
+            col_map["txn_type"] = idx
+        elif col_lower in ("doc num", "doc#", "docnumber"):
+            col_map["doc_num"] = idx
+        elif col_lower in ("name", "payee"):
+            col_map["name"] = idx
+        elif col_lower in ("memo", "description"):
+            col_map["memo"] = idx
+        elif col_lower in ("debt amt", "debit", "amount-debit"):
+            col_map["debt_amt"] = idx
+        elif col_lower in ("credit amt", "credit", "amount-credit"):
+            col_map["credit_amt"] = idx
+    return col_map
+
+
+def _validate_gl_columns(col_map: dict[str, int]) -> None:
+    """Ensure all required GL columns are present. Raises ValueError if any missing."""
+    missing = _GL_REQUIRED_COLS - set(col_map.keys())
+    if missing:
+        raise ValueError(f"GL export missing required columns: {missing}")
+
+
 class QBOClient:
     SANDBOX_BASE = "https://sandbox-quickbooks.api.intuit.com"
     PRODUCTION_BASE = "https://quickbooks.api.intuit.com"
@@ -151,6 +192,60 @@ class QBOClient:
 
     def get_accounts(self):
         return self.query("SELECT Id, Name, AcctNum, AccountType, AccountSubType, Active FROM Account MAXRESULTS 1000")
+
+    def get_general_ledger(self, start_date: str, end_date: str, timeout: int = 60) -> list[dict]:
+        """Fetch GL report rows from QBO (debit-positive signs).
+
+        QBO's GL export has variable column names by ColType. This method:
+        1. Requests the report with columns: tx_date, txn_type, doc_num, name,
+           memo, debt_amt, credit_amt
+        2. Normalizes column indices via _build_gl_column_map
+        3. Validates presence of required columns (hard-fail if missing)
+        4. Parses rows into debit-positive signed dicts
+        5. Never falls back to Amount column — always requires debt_amt/credit_amt
+
+        Returns list of dicts with keys: date, txn_type, doc_number, name, memo,
+        debit, credit (signed debit-positive).
+        """
+        url = (f"{self.base_url}/reports/ReportService/Query"
+               f"?token={self.realm_id}")
+        payload = {
+            "ReportName": "GeneralLedger",
+            "DateMacro": "Custom",
+            "StartDate": start_date,
+            "EndDate": end_date,
+            "Columns": ["tx_date", "txn_type", "doc_num", "name", "memo", "debt_amt", "credit_amt"],
+        }
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+        response = requests.post(url, json=payload, headers=headers, timeout=timeout)
+        self.last_intuit_tid = _capture_intuit_tid(response.headers)
+        response.raise_for_status()
+
+        data = response.json()
+        rows = data.get("Rows", {}).get("Row", [])
+        if not rows:
+            return []
+
+        # Extract header and build column map
+        header = rows[0].get("ColData", [])
+        col_names = [c.get("value", "") for c in header]
+        col_map = _build_gl_column_map(col_names)
+        _validate_gl_columns(col_map)
+
+        # Parse data rows (skip header row at index 0)
+        result = []
+        for row_data in rows[1:]:
+            cols = row_data.get("ColData", [])
+            result.append({
+                "date": cols[col_map["tx_date"]].get("value", ""),
+                "txn_type": cols[col_map["txn_type"]].get("value", ""),
+                "doc_number": cols[col_map["doc_num"]].get("value", ""),
+                "name": cols[col_map["name"]].get("value", ""),
+                "memo": cols[col_map["memo"]].get("value", ""),
+                "debit": cols[col_map["debt_amt"]].get("value", "0"),
+                "credit": cols[col_map["credit_amt"]].get("value", "0"),
+            })
+        return result
 
     def get_company_info(self):
         """Return the connected company's CompanyInfo for the current realmId.
