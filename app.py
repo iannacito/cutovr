@@ -2091,8 +2091,6 @@ def initialpost_retry(job_id, step_key):
     return jsonify(state)
 
 
-@app.route("/send-to-qbo")
-@login_required
 def _gl_period_key(j):
     """Sort key for GL jobs by period (earliest first).
 
@@ -2110,6 +2108,8 @@ def _gl_period_key(j):
     return (1, _dt.max, j.get("created_at") or "")
 
 
+@app.route("/send-to-qbo")
+@login_required
 def send_to_qbo_entry():
     """Firm-level Step 5 entry — redirects to the job-scoped send-to-qbo.
 
