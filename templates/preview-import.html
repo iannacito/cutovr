@@ -45,18 +45,23 @@
 
   {% if dead_mappings %}
   <section class="card error-panel" data-testid="dead-mappings-warning">
-    <p class="eyebrow" style="color:var(--error);">Account mapping issue</p>
+    <p class="eyebrow" style="color:var(--error);">Account mapping — auto-repair queued</p>
     <h2 style="margin-top:.25rem;">{{ dead_mappings|length }} account mapping(s) point at QuickBooks accounts that no longer exist or are inactive.</h2>
-    <p>Sending to QuickBooks will be blocked until these are re-mapped in <a href="{{ url_for('account_mapping', job_id=job.id) }}">Step 3</a>:</p>
-    <ul>
-      {% for d in dead_mappings %}
-      <li>
-        <code>{{ d.pclaw_account_number }}</code> {{ d.pclaw_account_name }}
-        &rarr; QBO account #{{ d.qbo_account_id }}
-        ({{ d.status }}) &mdash; {{ d.action }}
-      </li>
-      {% endfor %}
-    </ul>
+    <p>They will be repaired automatically when you send to QuickBooks:
+      <strong>{{ heal_relink_count }}</strong> relinkable by account number/name,
+      <strong>{{ heal_delete_count }}</strong> will fall back to auto-match or create-new.</p>
+    <details style="margin-top:.5rem;">
+      <summary style="cursor:pointer;font-size:.9rem;color:var(--muted);">Details</summary>
+      <ul style="margin-top:.5rem;">
+        {% for d in dead_mappings %}
+        <li style="font-size:.9rem;">
+          <code>{{ d.pclaw_account_number }}</code> {{ d.pclaw_account_name }}
+          &rarr; QBO account #{{ d.qbo_account_id }}
+          ({{ d.status }})
+        </li>
+        {% endfor %}
+      </ul>
+    </details>
   </section>
   {% endif %}
 
