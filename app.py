@@ -2194,21 +2194,20 @@ def send_to_qbo(job_id: str):
     if match_blocked and blocked_job_id:
         blocked_job = db.hydrate_job(blocked_job_id) or {}
         missing = blocked_job.get("unmapped_accounts") or []
-        if len(missing) == 1:
-            head = (
-                "One QuickBooks account is missing. Create it from your "
-                "PCLaw account list before sending."
-            )
-        else:
-            head = (
-                f"{len(missing)} QuickBooks accounts are missing. "
-                "Create them from your PCLaw account list before sending."
-            )
-        detail = ""
-        if missing:
+        if missing:          # only block when accounts are actually missing
+            if len(missing) == 1:
+                head = (
+                    "One QuickBooks account is missing. Create it from your "
+                    "PCLaw account list before sending."
+                )
+            else:
+                head = (
+                    f"{len(missing)} QuickBooks accounts are missing. "
+                    "Create them from your PCLaw account list before sending."
+                )
             detail = " Missing: " + "; ".join(missing) + "."
-        flash(head + detail, "error")
-        return redirect(url_for("account_mapping", job_id=blocked_job_id))
+            flash(head + detail, "error")
+            return redirect(url_for("account_mapping", job_id=blocked_job_id))
 
     primary_preflight = primary.get("preflight") or {}
     if primary_preflight and not primary_preflight.get("ready", True):
@@ -2248,7 +2247,7 @@ def send_to_qbo(job_id: str):
             # import time (line ~7191), so the file *will* be balanced when
             # posted. Skip the balance block if they are already in place.
             _has_auto_balance = bool(_job_for_balance.get("auto_balance_rows"))
-            if not _preview.get("balanced", False) and not _has_auto_balance:
+            if not _preview.get("balanced", True) and not _has_auto_balance:
                 flash(
                     "Your general-ledger file is not balanced (debits don't "
                     "equal credits). Fix the source CSV and re-upload from "

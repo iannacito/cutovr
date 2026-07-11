@@ -133,6 +133,50 @@
   </section>
   {% endif %}
 
+  {# Skipped-rows warning: surfaces blocked_transactions from Step 4 at Step 5 #}
+  {% set _bt = [] %}
+  {% if job.preview is mapping %}
+    {% set _bt = job.preview.get('blocked_transactions') or [] %}
+  {% endif %}
+  {% if _bt %}
+  <section class="card"
+           style="padding:var(--space-4);margin-bottom:var(--space-5);
+                  border-left:3px solid var(--warning,#f59e0b);
+                  background:var(--warning-soft,#fffbeb);">
+    <details>
+      <summary style="cursor:pointer;font-weight:600;font-size:.9rem;">
+        &#9888;&#65039; {{ _bt|length }} transaction group(s) were skipped &mdash; they won&rsquo;t be sent to QuickBooks
+      </summary>
+      <p style="font-size:.83rem;color:var(--ink-muted);margin:var(--space-2) 0;">
+        These rows had issues during Step&nbsp;4 and were excluded. Go back to Step&nbsp;4 to review.
+      </p>
+      <table style="width:100%;border-collapse:collapse;font-size:.8rem;margin-top:var(--space-2);">
+        <thead>
+          <tr style="text-align:left;border-bottom:1px solid var(--line);">
+            <th style="padding:4px 8px;width:30%;">Transaction / Group</th>
+            <th style="padding:4px 8px;">Reason(s)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for bt in _bt %}
+          <tr style="border-bottom:1px solid var(--line);">
+            <td style="padding:4px 8px;font-family:monospace;">
+              {{ bt.transaction_id or bt.token or '&mdash;' }}
+              {% if bt.line_count %}
+                <span style="color:var(--ink-muted);font-size:.75rem;">({{ bt.line_count }} line{{ 's' if bt.line_count != 1 else '' }})</span>
+              {% endif %}
+            </td>
+            <td style="padding:4px 8px;color:var(--ink-muted);">
+              {% if bt.reasons is iterable and bt.reasons is not string %}{{ bt.reasons | join('; ') }}{% else %}{{ bt.reasons or '&mdash;' }}{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </details>
+  </section>
+  {% endif %}
+
   {% if not already_imported %}
     <section class="card" data-testid="send-to-qbo-card"
              style="padding:var(--space-6);margin-bottom:var(--space-6);">
