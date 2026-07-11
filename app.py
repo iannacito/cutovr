@@ -8653,6 +8653,17 @@ def _import_to_qbo_impl(job_id):
             job["auto_balance_rows"] = auto_rows
             db.save_job_state(job_id, job)
         rows = list(rows) + auto_rows
+        logging.getLogger("app").info(
+            "import_to_qbo: merged %d auto_balance_rows for job %s",
+            len(auto_rows), job_id,
+        )
+    else:
+        logging.getLogger("app").info(
+            "import_to_qbo: no auto_balance_rows for job %s "
+            "(preflight.balanced=%s)",
+            job_id,
+            (job.get("preflight") or {}).get("balanced"),
+        )
 
     try:
         # Always fetch QBO accounts first so we can either map or fall back.
@@ -8696,6 +8707,14 @@ def _import_to_qbo_impl(job_id):
             from gl_row_quality import is_droppable_row as _gate_row_filter
             _rows_for_gate = [r for r in rows if not _gate_row_filter(r)]
             gate_ok, gate_blockers = evaluate_import_gate(_rows_for_gate, fieldnames)
+            # If auto_balance_rows were merged, remove the balance-only blocker.
+            # The synthetic rows handle the imbalance; all other blockers still fire.
+            if auto_rows and not gate_ok:
+                gate_blockers = [
+                    b for b in gate_blockers
+                    if "debits and credits" not in b.get("headline", "")
+                ]
+                gate_ok = len(gate_blockers) == 0
             if not gate_ok:
                 job["status"] = "Needs attention"
                 _record_checkpoint(job, job_id, "needs_attention")
@@ -10880,11 +10899,31 @@ def _firm_coa_gap_analysis(
         for m in saved_mappings
         if m.get("pclaw_account_name") and str(m.get("qbo_account_id")) in valid_ids
     }
+    # "Will be created" mappings have qbo_account_id = None (not yet created).
+    # They're still handled — include them so they don't appear as false positives.
+    saved_any_numbers = {
+        str(m["pclaw_account_number"])
+        for m in saved_mappings
+        if m.get("pclaw_account_number")
+    }
+    saved_any_names_norm = {
+        _norm(m["pclaw_account_name"])
+        for m in saved_mappings
+        if m.get("pclaw_account_name")
+    }
 
     def _in_qbo(number, name):
-        if number and (str(number) in qbo_numbers or str(number) in saved_numbers):
+        if number and (
+            str(number) in qbo_numbers
+            or str(number) in saved_numbers
+            or str(number) in saved_any_numbers
+        ):
             return True
-        return _norm(name) in qbo_names_norm or _norm(name) in saved_names_norm
+        return (
+            _norm(name) in qbo_names_norm
+            or _norm(name) in saved_names_norm
+            or _norm(name) in saved_any_names_norm
+        )
 
     def _is_gl_reserved_gap(row: dict) -> bool:
         return "retained earnings" in ((row or {}).get("account_name") or "").lower()
@@ -11136,16 +11175,18 @@ def ob_account_mapping(job_id):
         type_override_keys=type_override_keys,
     )
 
-    # Sort rows: unmatched first, then suggestions, then saved, then system-calculated
+    # Sort rows: gap-missing first, then unmatched, then suggestions, then saved, then system
     def _sort_key(r):
-        if r.get("is_system_calculated"):
-            return (3, "")
-        elif r.get("is_saved"):
-            return (2, r.get("pclaw_name") or "")
-        elif r.get("is_suggestion"):
-            return (1, r.get("pclaw_name") or "")
-        else:
+        if r.get("is_gap_missing"):
             return (0, r.get("pclaw_name") or "")
+        elif r.get("is_system_calculated"):
+            return (4, "")
+        elif r.get("is_saved"):
+            return (3, r.get("pclaw_name") or "")
+        elif r.get("is_suggestion"):
+            return (2, r.get("pclaw_name") or "")
+        else:
+            return (1, r.get("pclaw_name") or "")
     rows = sorted(rows_raw, key=_sort_key)
 
     # Create missing offer
@@ -11170,6 +11211,24 @@ def ob_account_mapping(job_id):
         qbo_accounts_resp=qbo_accounts_resp,
         saved_mappings=account_mappings,
     )
+    # Tag rows whose account appears in the gap card so they sort to the top.
+    _gap_numbers = {
+        str(v["number"]) for v in coa_gap.get("tb_missing_from_qbo", []) if v.get("number")
+    }
+    _gap_names_lower = {
+        (v.get("name") or "").strip().lower()
+        for v in coa_gap.get("tb_missing_from_qbo", [])
+        if v.get("name")
+    }
+    for _r in rows:
+        _pnum  = str(_r.get("pclaw_number") or _r.get("pclaw_account_number") or "").strip()
+        _pname = (_r.get("pclaw_name") or _r.get("pclaw_account_name") or "").strip().lower()
+        _r["is_gap_missing"] = (
+            (_pnum and _pnum in _gap_numbers)
+            or (_pname and _pname in _gap_names_lower)
+        )
+    # Re-sort now that is_gap_missing flags are set.
+    rows = sorted(rows, key=_sort_key)
 
     return render_template(
         "ob-account-mapping.html",
