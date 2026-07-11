@@ -10102,6 +10102,7 @@ def account_mapping(job_id):
         **_workflow_stepper_context(
             job["firm_id"], force_current_stage=customer_workflow.STAGE_MATCH,
             on_match_page=True,
+            gl_job_id=job["id"],
         ),
     )
 
