@@ -3290,6 +3290,16 @@ def hub_bulk_revert():
             # Also invalidate the in-memory cache so the next request to this
             # worker sees the updated checkpoint rather than the stale copy.
             jobs.pop(jid, None)
+            # Clear import history so re-upload of the same file is not blocked
+            # by the duplicate-import guard (has_completed_import keyed on
+            # file_sha256 + realm_id). This is the same cleanup dev_reset_migration
+            # does — bulk revert must do it per-job at the point of revert.
+            try:
+                _last = history.get_latest_completed_import_for_job(jid)
+                if _last:
+                    history.delete_by_id(_last["id"])
+            except Exception:  # noqa: BLE001
+                pass
             _audit("import_reverted", target_type="job", target_id=jid, details="bulk_revert")
             reverted += 1
         except Exception as exc:  # noqa: BLE001
@@ -12420,8 +12430,12 @@ def revert_import(job_id):
         try:
             je = qbo.get_journal_entry(je_id)
             if not je:
-                failed_entries.append(f"{result.get('DocNumber', je_id)}: not found in QBO")
-                failed_count += 1
+                # JE not found in QBO — treat as already deleted.
+                # This is the expected outcome when the QBO company was
+                # purged directly (all JEs gone) rather than reverted
+                # through the app. Counting these as failures would leave
+                # DB state dirty and block re-import permanently.
+                deleted_count += 1
                 continue
 
             sync_token = je.get("SyncToken")
@@ -12501,25 +12515,36 @@ def force_clear_import_state(job_id):
     force-revert from the operator panel first if they want a clean slate.
     """
     job, user = _job_or_403(job_id)
-    status = job.get("status", "")
-    if "Revert partial" not in status:
-        flash("Nothing to force-clear: job is not in a partial-revert state.", "info")
+    # Accept any job that has import state — not just "Revert partial".
+    # A job whose normal revert stalled (e.g. QBO company purged, all JEs
+    # returned 404) will never reach "Revert partial" status but still needs
+    # this escape hatch.
+    if not job.get("import_summary") and not job.get("qbo_results"):
+        flash("Nothing to force-clear: no import state found on this job.", "info")
         return redirect(url_for("job_detail", job_id=job_id))
     job["import_summary"] = None
     job["qbo_results"] = None
     job["checkpoint"] = "reviewed"
     job["status"] = "Import state cleared — some QBO entries may remain"
     _save_job(job_id)
+    # Also clear import history so re-upload is not blocked
+    try:
+        _last = history.get_latest_completed_import_for_job(job_id)
+        if _last:
+            history.delete_by_id(_last["id"])
+    except Exception:  # noqa: BLE001
+        pass
     _audit(
         "force_clear_import_state",
         target_type="job",
         target_id=job_id,
-        details=f"user {user['email']} force-cleared partial revert state",
+        details=f"user {user['email']} force-cleared import state",
     )
     flash(
         "Import state cleared. Note: QuickBooks may still hold some entries "
-        "from the previous import. Use the Force Revert tool from the operator "
-        "panel to clean those up, or proceed with re-import carefully.",
+        "from the previous import if it was not purged. Use the Force Revert "
+        "tool from the operator panel to clean those up, or proceed if QBO is "
+        "already clean.",
         "warning",
     )
     return redirect(url_for("send_to_qbo", job_id=job_id))
