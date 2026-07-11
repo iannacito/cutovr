@@ -272,21 +272,13 @@
            data-testid="step3-complete-card"
            style="padding:var(--space-6);margin-bottom:var(--space-5);border-color:var(--success,#15803d);background:var(--success-bg,#f0fdf4);">
     <p class="eyebrow" style="margin:0;color:var(--success,#15803d);">
-      Step 3 of 6 &middot; {% if mapping_summary.any_unconfirmed %}In progress{% else %}Complete{% endif %}
+      Step 3 of 6 &middot; Complete
     </p>
     <h2 style="margin:var(--space-2) 0 var(--space-3);">
-      {% if mapping_summary.any_unconfirmed %}
-        Almost there &mdash; confirm your matches.
-      {% else %}
-        Amazing! We&rsquo;ve matched your accounts.
-      {% endif %}
+      Amazing! We&rsquo;ve matched your accounts.
     </h2>
     <p style="max-width:62ch;margin:0 0 var(--space-4);">
-      {% if mapping_summary.any_unconfirmed %}
-        Review the pre-filled selections below, then click Save matches.
-      {% else %}
-        You&rsquo;re now ready to move on to Step 4.
-      {% endif %}
+      You&rsquo;re now ready to move on to Step 4.
     </p>
   </section>
   {% endif %}
@@ -557,28 +549,6 @@
         </div>
       </div>
     </form>
-    <script>
-    (function () {
-      var form = document.getElementById('account-mapping-form');
-      if (!form) return;
-      form.addEventListener('submit', function (e) {
-        var inputs = form.querySelectorAll('select[name^="mapping["]');
-        var emptyCount = 0;
-        inputs.forEach(function (sel) {
-          if (!sel.value) emptyCount++;
-        });
-        if (emptyCount > 0) {
-          var ok = window.confirm(
-            emptyCount + ' account' + (emptyCount === 1 ? '' : 's') +
-            ' still show "— pick an existing QuickBooks account —".\n\n' +
-            'These will be skipped and created as new accounts in QuickBooks.\n\n' +
-            'Click OK to save anyway, or Cancel to go back and fill them in.'
-          );
-          if (!ok) { e.preventDefault(); }
-        }
-      });
-    })();
-    </script>
   </section>
 
   <div class="actions-row" data-testid="step3-nav-footer"

@@ -643,17 +643,9 @@ def build_customer_stages(
                     return fallback
             if review_blocker == "ready":
                 stage.cta_label = "Step 5: Send to QuickBooks"
-                _target_job = review_job_id or gl_job_id
-                if _target_job:
-                    stage.cta_url = _u(
-                        "send_to_qbo",
-                        f"/jobs/{_target_job}/send-to-qbo",
-                        job_id=_target_job,
-                    )
-                else:
-                    stage.cta_url = _u(
-                        "send_to_qbo_entry", "/send-to-qbo"
-                    )
+                stage.cta_url = _u(
+                    "send_to_qbo_entry", "/send-to-qbo"
+                )
             elif review_blocker == "unmatched":
                 if review_job_id:
                     stage.cta_url = _u(

@@ -656,7 +656,7 @@
     </a>
     {% if review_blocker == 'ready' %}
       <a class="btn btn-primary btn-lg"
-         href="{{ url_for('send_to_qbo', job_id=job.id) }}"
+         href="{{ url_for('send_to_qbo_entry') }}"
          data-testid="step4-proceed-to-step5">
         Step 5: Send to QuickBooks &rarr;
       </a>
