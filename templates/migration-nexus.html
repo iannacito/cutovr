@@ -346,19 +346,6 @@
                        color:var(--error,#b91c1c);padding:2px var(--space-1);line-height:1;">
           &#x21BA;
         </button>
-        <button type="button"
-                title="Bulk remove locally (does not affect QBO)"
-                onclick="event.stopPropagation();
-                         var sel=document.querySelectorAll('.hub-row-check:checked');
-                         if(!sel.length)return;
-                         if(!confirm('Remove selected batches locally? This does not affect QBO.'))return;
-                         var f=document.getElementById('bulk-posted-remove-form');
-                         sel.forEach(function(c){var i=document.createElement('input');i.type='hidden';i.name='job_ids';i.value=c.value;f.appendChild(i);});
-                         f.submit();"
-                style="background:none;border:none;cursor:pointer;font-size:1.15rem;
-                       color:var(--error,#b91c1c);padding:2px var(--space-1);line-height:1;">
-          &#x1F5D1;
-        </button>
         <span style="font-size:.8rem;color:var(--ink-faint);margin-left:var(--space-2);">▸ expand</span>
       </div>
     </summary>
@@ -368,16 +355,13 @@
           onsubmit="return confirm('Revert selected batches? This deletes the posted JEs from QBO.');">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     </form>
-    <form id="bulk-posted-remove-form" action="{{ url_for('hub_bulk_remove') }}" method="post">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    </form>
     <table class="hub-table">
       <thead>
         <tr>
           <th style="width:2rem;">
             <input type="checkbox" id="bulk-select-all"
                    title="Select all"
-                   onchange="this.closest('table').querySelectorAll('.hub-row-check').forEach(c=>c.checked=this.checked)">
+                   onchange="document.querySelectorAll('.hub-row-check').forEach(c=>c.checked=this.checked)">
           </th>
           <th>Batch / file</th>
           <th>Step progress</th>
