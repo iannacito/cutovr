@@ -8926,6 +8926,51 @@ def _import_to_qbo_impl(job_id):
                 )
                 return redirect(url_for("job_detail", job_id=job_id))
 
+            # ── Mapping-liveness preflight (Gate A, read side) ──────────────
+            # Every QBO account Id this batch will reference must exist and be
+            # active in the LIVE COA. Otherwise QBO rejects the JE mid-batch
+            # with 400 code 2500 ("Invalid Reference Id") — a silent partial
+            # post. Block with a per-account list instead.
+            import mapping_liveness
+            _extra_ids = []
+            _referenced = mapping_liveness.collect_referenced_account_ids(
+                saved_mappings, extra_ids=_extra_ids,
+            )
+            try:
+                _live = (qbo.get_accounts_including_inactive()
+                         .get("QueryResponse", {}).get("Account", []))
+            except Exception as _e:  # noqa: BLE001
+                flash(
+                    "Could not verify your account mappings against QuickBooks "
+                    f"({_e}). Nothing was posted — try again.",
+                    "error",
+                )
+                return redirect(url_for("send_to_qbo", job_id=job_id))
+            _dead = mapping_liveness.find_dead_mappings(_referenced, _live)
+            if _dead:
+                job["dead_mappings"] = _dead
+                _save_job(job_id)
+                _audit(
+                    "mapping_liveness_blocked", target_type="job",
+                    target_id=job_id,
+                    details=f"{len(_dead)} dead mapping(s): " + ", ".join(
+                        f"{d['pclaw_account_number']} {d['pclaw_account_name']}"
+                        f" -> QBO id {d['qbo_account_id']} ({d['status']})"
+                        for d in _dead[:10]
+                    ),
+                )
+                flash(
+                    f"{len(_dead)} account mapping(s) point at QuickBooks "
+                    "accounts that no longer exist or are inactive in this "
+                    "company. Nothing was posted. Fix them in Step 3 and try "
+                    "again.",
+                    "error",
+                )
+                return redirect(url_for(
+                    "account_mapping", job_id=job_id,
+                ))
+            job["dead_mappings"] = None
+
             type_index = build_account_type_index(qbo_accounts)
             # ``posted_ids`` is the deterministic list of PCLaw transaction
             # references AND merged source-journal group ids (one per
@@ -9623,6 +9668,22 @@ def preview_import(job_id):
     # blocker is transaction-level (or vice versa).
     review_blocker = _review_blocker_kind(preview, preview_error)
 
+    # Mapping-liveness advisory (non-blocking on Step 4): warn about dead
+    # mappings early so the operator sees the issue on review, not first on
+    # Step 5 when the block fires.
+    dead_mappings = None
+    if qbo_conn and saved_mappings:
+        try:
+            import mapping_liveness
+            _ref = mapping_liveness.collect_referenced_account_ids(saved_mappings)
+            _live = (qbo.get_accounts_including_inactive()
+                     .get("QueryResponse", {}).get("Account", []))
+            dead_mappings = mapping_liveness.find_dead_mappings(_ref, _live)
+            job["dead_mappings"] = dead_mappings
+            db.save_job_state(job_id, job)
+        except Exception:  # noqa: BLE001
+            dead_mappings = None
+
     return render_template(
         "preview-import.html",
         job=job,
@@ -9631,6 +9692,7 @@ def preview_import(job_id):
         preview_error=preview_error,
         qbo_real_import=QBO_REAL_IMPORT,
         review_blocker=review_blocker,
+        dead_mappings=dead_mappings,
         **_workflow_stepper_context(
             user["firm_id"],
             force_current_stage=customer_workflow.STAGE_REVIEW,

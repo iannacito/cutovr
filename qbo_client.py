@@ -193,6 +193,19 @@ class QBOClient:
     def get_accounts(self):
         return self.query("SELECT Id, Name, AcctNum, AccountType, AccountSubType, Active FROM Account MAXRESULTS 1000")
 
+    def get_accounts_including_inactive(self):
+        """COA including deactivated accounts.
+
+        A plain QBO query returns Active=true rows only, which would make a
+        deactivated account indistinguishable from a deleted one in the
+        mapping-liveness preflight. Explicit WHERE Active IN (true,false)
+        returns both.
+        """
+        return self.query(
+            "SELECT Id, Name, AcctNum, AccountType, AccountSubType, Active "
+            "FROM Account WHERE Active IN (true,false) MAXRESULTS 1000"
+        )
+
     def get_general_ledger(self, start_date: str, end_date: str, timeout: int = 60) -> list[dict]:
         """Fetch GL report rows from QBO (debit-positive signs).
 
