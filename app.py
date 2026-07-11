@@ -8871,67 +8871,6 @@ def _import_to_qbo_impl(job_id):
             auto_by_name = build_account_mapping_from_names(qbo_accounts)
             saved_mappings = db.list_account_mappings(user["firm_id"], realm_id)
 
-            # ── Mapping-liveness scan + auto-heal ────────────────────────
-            # Fetch live COA early so we can heal before the gates run.
-            try:
-                _live = (qbo.get_accounts_including_inactive()
-                         .get("QueryResponse", {}).get("Account", []))
-            except Exception as _e:  # noqa: BLE001
-                flash(
-                    "Could not verify your account mappings against QuickBooks "
-                    f"({_e}). Nothing was posted — try again.",
-                    "error",
-                )
-                return redirect(url_for("send_to_qbo", job_id=job_id))
-
-            # Auto-heal: relink dead mappings by AcctNum/name, else delete.
-            import mapping_liveness
-            _referenced = mapping_liveness.collect_referenced_account_ids(
-                saved_mappings,
-            )
-            _dead = mapping_liveness.find_dead_mappings(_referenced, _live)
-            if _dead:
-                _plan = mapping_liveness.build_heal_plan(_dead, _live, saved_mappings)
-                _relinked, _deleted = 0, 0
-                for act in _plan:
-                    m = act["mapping"]
-                    if act["action"] == "relink":
-                        db.save_account_mapping(
-                            firm_id=user["firm_id"],
-                            realm_id=realm_id,
-                            pclaw_account_number=m.get("pclaw_account_number"),
-                            pclaw_account_name=m.get("pclaw_account_name"),
-                            qbo_account_id=act["new_qbo_account_id"],
-                            qbo_account_name=act["new_qbo_account_name"],
-                        )
-                        _relinked += 1
-                    else:
-                        db.delete_account_mapping(
-                            firm_id=user["firm_id"],
-                            realm_id=realm_id,
-                            pclaw_account_number=m.get("pclaw_account_number"),
-                            pclaw_account_name=m.get("pclaw_account_name"),
-                        )
-                        _deleted += 1
-                _audit(
-                    "mapping_autoheal", target_type="job", target_id=job_id,
-                    details=(
-                        f"healed {len(_plan)} stale mapping(s): "
-                        f"{_relinked} relinked to live accounts, "
-                        f"{_deleted} removed (no live equivalent; will "
-                        f"fall back to auto-match / create-missing)"
-                    ),
-                )
-                flash(
-                    f"Repaired {_relinked} account mapping(s) that pointed at "
-                    f"QuickBooks accounts that no longer exist (matched to "
-                    f"current accounts by number/name) and removed {_deleted} "
-                    "with no current equivalent — those will be auto-matched "
-                    "or created during import.",
-                    "info",
-                )
-                saved_mappings = db.list_account_mappings(user["firm_id"], realm_id)
-
             # Decide the lookup mode: numbers are preferred when any exist,
             # because they're stable across name renames.
             if auto_by_number or any(m.get("pclaw_account_number") for m in saved_mappings):
@@ -8987,31 +8926,49 @@ def _import_to_qbo_impl(job_id):
                 )
                 return redirect(url_for("job_detail", job_id=job_id))
 
-            # Safety-net: after heal, if any referenced ids are still dead,
-            # block (should not happen post-heal, but catch if it does).
-            _referenced_in_batch = mapping_liveness.collect_referenced_account_ids(
-                saved_mappings,
+            # ── Mapping-liveness preflight (Gate A, read side) ──────────────
+            # Every QBO account Id this batch will reference must exist and be
+            # active in the LIVE COA. Otherwise QBO rejects the JE mid-batch
+            # with 400 code 2500 ("Invalid Reference Id") — a silent partial
+            # post. Block with a per-account list instead.
+            import mapping_liveness
+            _extra_ids = []
+            _referenced = mapping_liveness.collect_referenced_account_ids(
+                saved_mappings, extra_ids=_extra_ids,
             )
-            _still_dead = mapping_liveness.find_dead_mappings(_referenced_in_batch, _live)
-            if _still_dead:
-                job["dead_mappings"] = _still_dead
+            try:
+                _live = (qbo.get_accounts_including_inactive()
+                         .get("QueryResponse", {}).get("Account", []))
+            except Exception as _e:  # noqa: BLE001
+                flash(
+                    "Could not verify your account mappings against QuickBooks "
+                    f"({_e}). Nothing was posted — try again.",
+                    "error",
+                )
+                return redirect(url_for("send_to_qbo", job_id=job_id))
+            _dead = mapping_liveness.find_dead_mappings(_referenced, _live)
+            if _dead:
+                job["dead_mappings"] = _dead
                 _save_job(job_id)
                 _audit(
                     "mapping_liveness_blocked", target_type="job",
                     target_id=job_id,
-                    details=f"{len(_still_dead)} dead mapping(s) after heal: " + ", ".join(
+                    details=f"{len(_dead)} dead mapping(s): " + ", ".join(
                         f"{d['pclaw_account_number']} {d['pclaw_account_name']}"
                         f" -> QBO id {d['qbo_account_id']} ({d['status']})"
-                        for d in _still_dead[:10]
+                        for d in _dead[:10]
                     ),
                 )
                 flash(
-                    f"{len(_still_dead)} account mapping(s) still point at QuickBooks "
-                    "accounts that no longer exist. Nothing was posted. "
-                    "This is unexpected — contact support.",
+                    f"{len(_dead)} account mapping(s) point at QuickBooks "
+                    "accounts that no longer exist or are inactive in this "
+                    "company. Nothing was posted. Fix them in Step 3 and try "
+                    "again.",
                     "error",
                 )
-                return redirect(url_for("account_mapping", job_id=job_id))
+                return redirect(url_for(
+                    "account_mapping", job_id=job_id,
+                ))
             job["dead_mappings"] = None
 
             type_index = build_account_type_index(qbo_accounts)
@@ -9712,11 +9669,9 @@ def preview_import(job_id):
     review_blocker = _review_blocker_kind(preview, preview_error)
 
     # Mapping-liveness advisory (non-blocking on Step 4): warn about dead
-    # mappings early and show the auto-heal plan (X relinkable, Y to delete).
+    # mappings early so the operator sees the issue on review, not first on
+    # Step 5 when the block fires.
     dead_mappings = None
-    heal_plan = []
-    heal_relink_count = 0
-    heal_delete_count = 0
     if qbo_conn and saved_mappings:
         try:
             import mapping_liveness
@@ -9724,15 +9679,10 @@ def preview_import(job_id):
             _live = (qbo.get_accounts_including_inactive()
                      .get("QueryResponse", {}).get("Account", []))
             dead_mappings = mapping_liveness.find_dead_mappings(_ref, _live)
-            if dead_mappings:
-                heal_plan = mapping_liveness.build_heal_plan(dead_mappings, _live, saved_mappings)
-                heal_relink_count = sum(1 for p in heal_plan if p["action"] == "relink")
-                heal_delete_count = sum(1 for p in heal_plan if p["action"] == "delete")
             job["dead_mappings"] = dead_mappings
             db.save_job_state(job_id, job)
         except Exception:  # noqa: BLE001
             dead_mappings = None
-            heal_plan = []
 
     return render_template(
         "preview-import.html",
@@ -9743,8 +9693,6 @@ def preview_import(job_id):
         qbo_real_import=QBO_REAL_IMPORT,
         review_blocker=review_blocker,
         dead_mappings=dead_mappings,
-        heal_relink_count=heal_relink_count,
-        heal_delete_count=heal_delete_count,
         **_workflow_stepper_context(
             user["firm_id"],
             force_current_stage=customer_workflow.STAGE_REVIEW,
@@ -10349,14 +10297,6 @@ def account_mapping(job_id):
 
     # Existing saved mappings keyed for fast template lookup.
     saved_mappings = db.list_account_mappings(user["firm_id"], realm_id, source_type=_map_source)
-
-    # Mark stale saved rows (qbo_account_id not in live COA) so the template
-    # can show "Previously mapped account no longer exists — will be repaired
-    # at import (or pick a new match now)" instead of "Saved".
-    live_qbo_ids = {str(a.get("Id")) for a in qbo_accounts}
-    for m in saved_mappings:
-        m["stale"] = str(m.get("qbo_account_id") or "").strip() not in live_qbo_ids
-
     saved_by_key = {(m["pclaw_account_number"], m["pclaw_account_name"]): m for m in saved_mappings}
 
     # Run a dry-run create-plan so we can annotate each unmatched row

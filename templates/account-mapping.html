@@ -412,15 +412,7 @@
                       Skipped &mdash; calculated by QuickBooks
                     </span>
                   {% elif r.is_saved %}
-                    {% if r.stale %}
-                      <span class="badge error">Stale</span>
-                      <p class="muted" style="margin:.2rem 0 0;font-size:.85rem;">
-                        Previously mapped account no longer exists — will be
-                        repaired at import (or pick a new match now).
-                      </p>
-                    {% else %}
-                      <span class="badge success">Saved</span>
-                    {% endif %}
+                    <span class="badge success">Saved</span>
                     <button class="btn btn-sm"
                             type="submit"
                             form="undo-form-{{ r.idx }}"
