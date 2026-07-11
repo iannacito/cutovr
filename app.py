@@ -774,6 +774,17 @@ def _job_or_403(job_id):
     return job, user
 
 
+def _get_firm_qbo_conn(firm_id: int):
+    """Return (conn_dict, job_id) for the first active QBO connection
+    the firm has, scanning across all its jobs. Returns (None, None) if
+    no active connection exists."""
+    for row in (db.list_qbo_connections_for_firm(int(firm_id)) or []):
+        conn = _get_qbo_connection(row["job_id"])
+        if conn and conn.get("access_token_enc"):
+            return conn, row["job_id"]
+    return None, None
+
+
 def _get_qbo_connection(job_id):
     """Return the live qbo_connection dict (with decrypted access tokens
     available via decrypt_token), rehydrating from the DB if needed.
@@ -3309,6 +3320,165 @@ def hub_bulk_revert():
 
 
 # ── COA Consolidation ─────────────────────────────────────────────────────────
+
+
+@app.route("/coa-consolidation/check-qbo", methods=["GET"])
+@login_required
+def coa_check_qbo():
+    """Query QBO for existing accounts and store names in session.
+
+    PRG: always redirects back to coa_consolidation.
+    """
+    user    = current_user()
+    firm_id = user["firm_id"]
+    conn, qbo_job_id = _get_firm_qbo_conn(firm_id)
+    if not conn:
+        flash(
+            "Connect QuickBooks first — use the stepper (Step 5) to link "
+            "your QBO company before checking accounts.",
+            "info",
+        )
+        return redirect(url_for("coa_consolidation"))
+    try:
+        from qbo_client import QBOClient, QBOError
+        qbo = QBOClient(conn, qbo_job_id)
+        acct_resp = qbo.get_accounts()
+        accounts  = (
+            (acct_resp or {})
+            .get("QueryResponse", {})
+            .get("Account", [])
+        )
+        # Store lowercased names in session for fast template-side lookup
+        session[f"coa_qbo_names_{firm_id}"] = [
+            (a.get("Name") or "").strip().lower() for a in accounts
+            if (a.get("Name") or "").strip()
+        ]
+        flash(
+            f"Found {len(accounts)} account(s) in QuickBooks. "
+            "Rows now show whether each PCLaw account exists.",
+            "success",
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log.exception("coa_check_qbo: %s", exc)
+        flash(f"Could not query QuickBooks: {exc}", "error")
+    return redirect(url_for("coa_consolidation"))
+
+
+@app.route("/coa-consolidation/create-missing-qbo", methods=["POST"])
+@login_required
+def coa_create_missing_qbo():
+    """Create missing QBO accounts from the COA Consolidation page.
+
+    Reads the posted form data (gl_number, account_name, account_type,
+    detail_type per row) and creates accounts that are not yet in QBO.
+    Stores the created list in session for the Saved/Mapped card.
+    PRG: always redirects back to coa_consolidation.
+    """
+    user    = current_user()
+    firm_id = user["firm_id"]
+    conn, qbo_job_id = _get_firm_qbo_conn(firm_id)
+    if not conn:
+        flash("No QuickBooks connection found. Connect QBO first.", "error")
+        return redirect(url_for("coa_consolidation"))
+
+    # Load QBO names from session (must have run check-qbo first)
+    qbo_names_lower = set(
+        session.get(f"coa_qbo_names_{firm_id}") or []
+    )
+
+    # Parse form: zip parallel arrays
+    from itertools import zip_longest as _zipl
+    gl_numbers    = request.form.getlist("gl_number")
+    account_names = request.form.getlist("account_name")
+    account_types = request.form.getlist("account_type")
+    detail_types  = request.form.getlist("detail_type")
+
+    rows_to_create = []
+    for gl, name, atype, dtype in _zipl(
+        gl_numbers, account_names, account_types, detail_types,
+        fillvalue="",
+    ):
+        name  = (name  or "").strip()
+        atype = (atype or "").strip()
+        dtype = (dtype or "").strip()
+        if not name or not atype:
+            continue
+        if name.lower() in qbo_names_lower:
+            continue  # already exists
+        rows_to_create.append({
+            "gl_number":    (gl or "").strip(),
+            "account_name": name,
+            "account_type": atype,
+            "detail_type":  dtype,
+        })
+
+    if not rows_to_create:
+        flash("All accounts already exist in QuickBooks — nothing to create.", "info")
+        return redirect(url_for("coa_consolidation"))
+
+    from qbo_client import QBOClient, QBOError
+    qbo = QBOClient(conn, qbo_job_id)
+    created, failed = [], []
+    for row in rows_to_create:
+        try:
+            payload: dict = {
+                "Name":        row["account_name"],
+                "AccountType": row["account_type"],
+            }
+            if row["detail_type"]:
+                payload["AccountSubType"] = row["detail_type"]
+            resp = qbo.create_account(payload)
+            acct = (resp or {}).get("Account") or {}
+            created.append({
+                "name":       row["account_name"],
+                "type":       row["account_type"],
+                "subtype":    row["detail_type"],
+                "qbo_id":     acct.get("Id"),
+            })
+            _audit(
+                "coa_consolidation_account_created",
+                target_type="firm", target_id=str(firm_id),
+                details=f"name={row['account_name']!r} type={row['account_type']!r}",
+            )
+        except QBOError as e:
+            _log.warning(
+                "coa_create_missing_qbo: failed for %r: %s", row["account_name"], e
+            )
+            failed.append({"name": row["account_name"], "error": str(e)[:120]})
+        except Exception as e:  # noqa: BLE001
+            _log.warning(
+                "coa_create_missing_qbo: unexpected error for %r: %s",
+                row["account_name"], e,
+            )
+            failed.append({"name": row["account_name"], "error": str(e)[:120]})
+
+    # Persist created list in session for Saved/Mapped card
+    existing_created = session.get(f"coa_created_{firm_id}") or []
+    existing_created.extend(created)
+    session[f"coa_created_{firm_id}"] = existing_created
+
+    # Refresh QBO names in session so the badges update immediately
+    if created:
+        new_names = [c["name"].lower() for c in created]
+        existing_names = session.get(f"coa_qbo_names_{firm_id}") or []
+        session[f"coa_qbo_names_{firm_id}"] = list(set(existing_names) | set(new_names))
+
+    if failed and created:
+        flash(
+            f"Created {len(created)} account(s); {len(failed)} failed. "
+            "Retry the failed ones individually.",
+            "warning",
+        )
+    elif failed:
+        flash(
+            f"All {len(failed)} account(s) failed to create. "
+            "Check the QBO connection and try again.",
+            "error",
+        )
+    else:
+        flash(f"Created {len(created)} QuickBooks account(s).", "success")
+
+    return redirect(url_for("coa_consolidation"))
 
 
 @app.route("/coa-consolidation/load", methods=["POST"])
