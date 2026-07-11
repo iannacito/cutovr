@@ -33,6 +33,7 @@ import operator_panel
 import excel_convert
 import io as _io
 import readiness
+import mapping_readiness
 from pclaw_parser import parse_pclaw_csv, export_qbo_csv
 from pclaw_pipeline import (
     load_general_ledger_csv,
@@ -9546,7 +9547,8 @@ def preview_import(job_id):
         # does NOT mutate anything in the customer's QuickBooks company.
         try:
             qbo, _conn = _get_qbo_client(job_id, user)
-            qbo_accounts = qbo.get_accounts()
+            qbo_accounts_resp = qbo.get_accounts_including_inactive()
+            qbo_accounts = qbo_accounts_resp.get("QueryResponse", {}).get("Account", [])
             saved_mappings = db.list_account_mappings(user["firm_id"], qbo_conn["realm_id"])
         except QBOAuthExpired:
             preview_error = (
@@ -9734,6 +9736,21 @@ def preview_import(job_id):
             dead_mappings = None
             heal_plan = []
 
+    # Readiness advisory (unified evaluation for Steps 3/4/5 alignment):
+    # Warn if there are unmatched accounts or stale saved mappings that need attention.
+    readiness_advisory = None
+    if rows is not None and qbo_conn and saved_mappings and not preview_error:
+        try:
+            pclaw_accounts = _extract_pclaw_accounts_from_gl_rows(rows)
+            readiness_advisory = mapping_readiness.evaluate(
+                pclaw_accounts=pclaw_accounts,
+                saved_mappings=saved_mappings,
+                live_accounts=qbo_accounts,
+            )
+        except Exception:  # noqa: BLE001
+            _log.exception("preview_import: readiness evaluation failed")
+            readiness_advisory = None
+
     return render_template(
         "preview-import.html",
         job=job,
@@ -9742,6 +9759,7 @@ def preview_import(job_id):
         preview_error=preview_error,
         qbo_real_import=QBO_REAL_IMPORT,
         review_blocker=review_blocker,
+        readiness_advisory=readiness_advisory,
         dead_mappings=dead_mappings,
         heal_relink_count=heal_relink_count,
         heal_delete_count=heal_delete_count,
@@ -10226,7 +10244,7 @@ def account_mapping(job_id):
         # the page in an error state with the right CTA, rather than the user
         # getting bounced back to a generic flash.
         try:
-            qbo_accounts_resp = qbo.get_accounts()
+            qbo_accounts_resp = qbo.get_accounts_including_inactive()
         except QBOError as e:
             category = qbo_error_hint.classify(e.status_code, e.body)
             _audit(
@@ -10431,6 +10449,13 @@ def account_mapping(job_id):
         rows=rows,
     )
 
+    # Compute unified readiness verdict for Step 3 display + MATCHED checkpoint gate
+    readiness = mapping_readiness.evaluate(
+        pclaw_accounts=pclaw_accounts,
+        saved_mappings=saved_mappings,
+        live_accounts=qbo_accounts,
+    )
+
     return render_template(
         "account-mapping.html",
         job=job,
@@ -10441,6 +10466,7 @@ def account_mapping(job_id):
             key=lambda a: (a.get("AccountType") or "", a.get("Name") or ""),
         ),
         mapping_summary=summary,
+        readiness=readiness,
         create_missing_offer=create_missing_offer,
         account_mapping_categories=ACCOUNT_MAPPING_CATEGORIES,
         coa_override_account_types=COA_OVERRIDE_ACCOUNT_TYPES,
