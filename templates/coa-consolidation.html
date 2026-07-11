@@ -119,10 +119,33 @@
       </p>
     </div>
 
+    <div id="coa-bulk-bar"
+         style="display:none;align-items:center;gap:var(--space-3);
+                padding:var(--space-3) var(--space-4);
+                margin-bottom:var(--space-3);
+                background:var(--bg-2);border:1px solid var(--line);
+                border-radius:var(--radius);font-size:.875rem;">
+      <span id="coa-bulk-count" style="font-weight:600;min-width:6ch;"></span>
+      <select id="coa-bulk-type" style="font-size:.82rem;max-width:18rem;">
+        <option value="">— choose type to apply —</option>
+        {% for at in coa_override_account_types %}
+          <option value="{{ at }}">{{ at }}</option>
+        {% endfor %}
+      </select>
+      <button type="button" id="coa-bulk-apply" class="btn btn-sm btn-primary">
+        Apply to Selected
+      </button>
+    </div>
+
     <table class="coa-table">
       <thead>
         <tr>
-          <th style="width:9%;">GL #</th>
+          <th style="width:9%;">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <input type="checkbox" id="coa-check-all" style="cursor:pointer;">
+              GL #
+            </label>
+          </th>
           <th style="width:26%;">PCLaw Account Name</th>
           <th style="width:9%;">Flag</th>
           <th style="width:24%;">QBO Account Type</th>
@@ -134,6 +157,7 @@
         {% for account in coa_status.pclaw_accounts %}
         <tr>
           <td style="font-family:monospace;font-size:.8rem;font-weight:600;">
+            <input type="checkbox" class="coa-row-check" style="cursor:pointer;margin-right:4px;">
             <input type="hidden" name="gl_number"    value="{{ account.gl_number }}">
             <input type="hidden" name="account_name" value="{{ account.account_name }}">
             {{ account.gl_number }}
@@ -260,6 +284,144 @@
     sel.addEventListener('change', function () { populateSubTypes(sel); });
     if (sel.value) populateSubTypes(sel);
   });
+
+  // ── Auto-hint by account name ─────────────────────────────────────────
+  var COA_HINTS = [
+    // [keyword, type, detail, confidence]  confidence: 'high'|'low'
+    // Checked in order; first match wins.
+    ['trust bank',               'Bank',                     'TrustAccounts',              'high'],
+    ['trust',                    'Other Current Liability',  'TrustAccountsLiabilities',   'high'],
+    ['accounts receivable',      'Accounts Receivable',      'AccountsReceivable',          'high'],
+    ['accounts payable',         'Accounts Payable',         'AccountsPayable',             'high'],
+    ['credit card',              'Credit Card',              'CreditCard',                  'high'],
+    ['cash',                     'Bank',                     'Checking',                    'high'],
+    ['chequing',                 'Bank',                     'Checking',                    'high'],
+    ['checking',                 'Bank',                     'Checking',                    'high'],
+    ['savings',                  'Bank',                     'Savings',                     'high'],
+    ['bank',                     'Bank',                     'Checking',                    'low'],
+    ['accumulated depreciation', 'Fixed Asset',              'AccumulatedDepreciation',     'high'],
+    ['equipment',                'Fixed Asset',              'MachineryAndEquipment',       'high'],
+    ['furniture',                'Fixed Asset',              'FurnitureAndFixtures',        'high'],
+    ['leasehold',                'Fixed Asset',              'LeaseholdImprovements',       'high'],
+    ['vehicle',                  'Fixed Asset',              'Vehicles',                    'high'],
+    ['prepaid',                  'Other Current Asset',      'PrepaidExpenses',             'high'],
+    ['depreciation',             'Other Expense',            'Depreciation',                'high'],
+    ['amortization',             'Other Expense',            'Depreciation',                'low'],
+    ['notes payable',            'Long Term Liability',      'NotesPayable',                'high'],
+    ['mortgage',                 'Long Term Liability',      'NotesPayable',                'high'],
+    ['loan payable',             'Other Current Liability',  'LoanPayable',                 'high'],
+    ['line of credit',           'Other Current Liability',  'LineOfCredit',                'high'],
+    ['gst',                      'Other Current Liability',  'SalesTaxPayable',             'high'],
+    ['hst',                      'Other Current Liability',  'SalesTaxPayable',             'high'],
+    ['sales tax',                'Other Current Liability',  'SalesTaxPayable',             'high'],
+    ['payroll',                  'Expense',                  'Utilities',                   'low'],
+    ['wages',                    'Expense',                  'Utilities',                   'low'],
+    ['salary',                   'Expense',                  'Utilities',                   'low'],
+    ['salaries',                 'Expense',                  'Utilities',                   'low'],
+    ['rent',                     'Expense',                  'Rent',                        'high'],
+    ['insurance',                'Expense',                  'Insurance',                   'high'],
+    ['fees earned',              'Income',                   'ServiceFeeIncome',            'high'],
+    ['fees received',            'Income',                   'ServiceFeeIncome',            'high'],
+    ['legal fees',               'Income',                   'ServiceFeeIncome',            'high'],
+    ['professional fees',        'Income',                   'ServiceFeeIncome',            'high'],
+    ['billings',                 'Income',                   'ServiceFeeIncome',            'high'],
+    ['revenue',                  'Income',                   'OtherPrimaryIncome',          'low'],
+    ['income',                   'Income',                   'OtherPrimaryIncome',          'low'],
+    ['unearned',                 'Other Current Liability',  'OtherCurrentLiabilities',     'high'],
+    ['deferred',                 'Other Current Liability',  'OtherCurrentLiabilities',     'high'],
+    ['retainer',                 'Other Current Liability',  'OtherCurrentLiabilities',     'high'],
+    ['cost of goods',            'Cost of Goods Sold',       'GoodsCostOfGoodsSold',        'high'],
+    ['cogs',                     'Cost of Goods Sold',       'GoodsCostOfGoodsSold',        'high'],
+    ['opening balance equity',   'Equity',                   'OpeningBalanceEquity',        'high'],
+  ];
+
+  function coaHint(rawName) {
+    var n = (rawName || '').toLowerCase();
+    for (var i = 0; i < COA_HINTS.length; i++) {
+      if (n.indexOf(COA_HINTS[i][0]) >= 0) {
+        return { type: COA_HINTS[i][1], detail: COA_HINTS[i][2], confidence: COA_HINTS[i][3] };
+      }
+    }
+    return null;
+  }
+
+  // Apply hints on page load
+  document.querySelectorAll('select[name="account_type"][data-detail-target]').forEach(function (sel) {
+    // Find the account name for this row: it's in the sibling <td> after the GL# <td>.
+    var tr       = sel.closest('tr');
+    if (!tr) return;
+    var nameTd   = tr.querySelector('td:nth-child(2) .coa-primary');
+    if (!nameTd) return;
+    var rawName  = nameTd.textContent.trim();
+    var hint     = coaHint(rawName);
+    if (!hint) return;
+
+    // Add hint text below the select
+    var wrapper = sel.parentElement;
+    var hintEl  = document.createElement('div');
+    hintEl.className   = 'coa-hint-text';
+    hintEl.style.cssText = 'font-size:.72rem;color:var(--ink-muted);margin-top:3px;';
+    hintEl.textContent = 'Suggested: ' + hint.type;
+    wrapper.appendChild(hintEl);
+
+    // Pre-select if high confidence and select is currently blank
+    if (hint.confidence === 'high' && sel.value === '') {
+      sel.value = hint.type;
+      populateSubTypes(sel);
+      // Also pre-select detail type if it matches
+      var subId = sel.getAttribute('data-detail-target');
+      if (subId && hint.detail) {
+        var sub = document.getElementById(subId);
+        if (sub) {
+          sub.value = hint.detail;
+        }
+      }
+      // Update hint text to reflect auto-selection
+      hintEl.textContent = 'Auto-suggested: ' + hint.type;
+    }
+  });
+
+  // ── Bulk checkbox ────────────────────────────────────────────────────────
+  var checkAll  = document.getElementById('coa-check-all');
+  var bulkBar   = document.getElementById('coa-bulk-bar');
+  var bulkCount = document.getElementById('coa-bulk-count');
+  var bulkType  = document.getElementById('coa-bulk-type');
+  var bulkApply = document.getElementById('coa-bulk-apply');
+
+  function getRowChecks() {
+    return Array.from(document.querySelectorAll('.coa-row-check'));
+  }
+  function updateBulkBar() {
+    var checked = getRowChecks().filter(function (cb) { return cb.checked; });
+    if (bulkBar)   { bulkBar.style.display = checked.length ? 'flex' : 'none'; }
+    if (bulkCount) { bulkCount.textContent = checked.length + ' selected'; }
+    if (checkAll)  { checkAll.indeterminate = checked.length > 0 && checked.length < getRowChecks().length; }
+  }
+  if (checkAll) {
+    checkAll.addEventListener('change', function () {
+      getRowChecks().forEach(function (cb) { cb.checked = checkAll.checked; });
+      updateBulkBar();
+    });
+  }
+  document.addEventListener('change', function (e) {
+    if (e.target && e.target.classList.contains('coa-row-check')) { updateBulkBar(); }
+  });
+  if (bulkApply) {
+    bulkApply.addEventListener('click', function () {
+      var chosenType = bulkType ? bulkType.value : '';
+      if (!chosenType) { alert('Choose a QBO Account Type first.'); return; }
+      getRowChecks().filter(function (cb) { return cb.checked; }).forEach(function (cb) {
+        var tr  = cb.closest('tr');
+        var sel = tr ? tr.querySelector('select[name="account_type"]') : null;
+        if (!sel) return;
+        sel.value = chosenType;
+        populateSubTypes(sel);
+        // Re-run hint update if hint text exists
+        var hintEl = tr.querySelector('.coa-hint-text');
+        if (hintEl) { hintEl.textContent = 'Set to: ' + chosenType; }
+      });
+    });
+  }
 }());
 </script>
 
