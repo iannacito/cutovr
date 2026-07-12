@@ -258,6 +258,27 @@ def _run_auto_steps(
                 job, rtype, real_import,
                 progress_fn=_make_progress(firm_id, gl_job_id, key),
             )
+            if pushed == 0 and errors > 0:
+                # Total failure: every name QBO saw was rejected (bad
+                # connection, wrong realm, minorversion, rate limit, etc).
+                # Do NOT mark completed — that would satisfy the PreGL gate
+                # and let the GL form auto-submit while none of these
+                # vendors/customers actually exist in QBO. Every AR/AP JE
+                # line referencing one of them would then be rejected
+                # downstream with no obvious link back to this step.
+                _log.error(
+                    "initialpost: %s step for job %s — all %d push(es) "
+                    "failed, 0 succeeded. NOT marking completed (would "
+                    "falsely satisfy the pre-GL gate).",
+                    key, gl_job_id, errors,
+                )
+                _update(
+                    firm_id, gl_job_id, key, "failed", 0,
+                    f"All {errors} push(es) failed — check the QBO connection, "
+                    "then use Retry",
+                )
+                _set_overall(firm_id, gl_job_id, "failed")
+                return
             save_fn(job["id"], {"status": "completed", "checkpoint": "completed"})
             if pushed:
                 msg = f"{pushed} synced"
