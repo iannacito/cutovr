@@ -8973,67 +8973,93 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
         _record_checkpoint(job, job_id, job_checkpoints.IMPORTING)
         _save_job(job_id)
 
-        try:
-            for i, (txn_id, payload) in enumerate(zip(txn_ids, payloads)):
-                if progress_fn:
-                    progress_fn(i)
-
-                existing_je = None
-                doc_number = payload.get("DocNumber")
-                if doc_number:
-                    try:
-                        existing_je = qbo.find_journal_entry_by_doc_number(doc_number)
-                    except Exception:
-                        existing_je = None
-
-                if existing_je:
-                    je = existing_je
-                else:
-                    try:
-                        resp = qbo.create_journal_entry(payload)
-                        je = resp.get("JournalEntry", {})
-                    except QBOError as _je_err:
-                        _log.warning(
-                            "import: QBOError on DocNumber=%s txn_id=%s — %s",
-                            doc_number, txn_id, _je_err,
-                        )
-                        tx_audit.append({
-                            "txn_id": txn_id,
-                            "doc_number": doc_number,
-                            "outcome": "qbo_error",
-                            "status_code": _je_err.status_code,
-                            "error_body": str(_je_err.body)[:500],
-                            "intuit_tid": _je_err.intuit_tid,
-                        })
-                        qbo_error_count += 1
-                        continue
-
-                created.append({
-                    "Id": je.get("Id"),
-                    "DocNumber": je.get("DocNumber"),
-                    "TxnDate": je.get("TxnDate"),
-                    "transaction_id": txn_id,
-                })
-
-                refs_for_id = sub_refs_by_posted_id.get(txn_id, [txn_id])
+        # Helper to record a created JE in created/created_transactions
+        def _record_created(je: dict, txn_id: str) -> None:
+            created.append({
+                "Id": je.get("Id"),
+                "DocNumber": je.get("DocNumber"),
+                "TxnDate": je.get("TxnDate"),
+                "transaction_id": txn_id,
+            })
+            refs_for_id = sub_refs_by_posted_id.get(txn_id, [txn_id])
+            created_transactions.append({
+                "transaction_id": txn_id,
+                "qbo_je_id": je.get("Id"),
+                "doc_number": je.get("DocNumber"),
+                "txn_date": je.get("TxnDate"),
+            })
+            for sub in refs_for_id:
+                if sub == txn_id:
+                    continue
                 created_transactions.append({
-                    "transaction_id": txn_id,
+                    "transaction_id": sub,
                     "qbo_je_id": je.get("Id"),
                     "doc_number": je.get("DocNumber"),
                     "txn_date": je.get("TxnDate"),
                 })
-                for sub in refs_for_id:
-                    if sub == txn_id:
-                        continue
-                    created_transactions.append({
-                        "transaction_id": sub,
-                        "qbo_je_id": je.get("Id"),
-                        "doc_number": je.get("DocNumber"),
-                        "txn_date": je.get("TxnDate"),
-                    })
 
-                if (i + 1) % 25 == 0:
-                    _t.sleep(0.5)
+        try:
+            CHUNK_SIZE = 25
+            paired = list(zip(txn_ids, payloads))
+
+            for chunk_start in range(0, len(paired), CHUNK_SIZE):
+                chunk = paired[chunk_start:chunk_start + CHUNK_SIZE]
+
+                if progress_fn:
+                    progress_fn(chunk_start)
+
+                # Batch probe for existing JEs
+                doc_numbers = [p.get("DocNumber") for _, p in chunk if p.get("DocNumber")]
+                try:
+                    existing_by_doc = qbo.find_journal_entries_by_doc_numbers(doc_numbers)
+                except Exception:  # noqa: BLE001 — probe is advisory, fall through to create
+                    existing_by_doc = {}
+
+                # Separate items that need to be created from those that already exist
+                to_create_idx, to_create_payloads = [], []
+                for idx, (txn_id, payload) in enumerate(chunk):
+                    doc_number = payload.get("DocNumber")
+                    existing_je = existing_by_doc.get(doc_number) if doc_number else None
+                    if existing_je:
+                        _audit(
+                            "import_idempotent_reuse", target_type="job", target_id=job_id,
+                            details=f"reused existing JE for DocNumber {doc_number}",
+                        )
+                        _record_created(existing_je, txn_id)
+                    else:
+                        to_create_idx.append(idx)
+                        to_create_payloads.append(payload)
+
+                # Batch create the new JEs
+                if to_create_payloads:
+                    batch_results = qbo.create_journal_entries_batch(to_create_payloads)
+                    for idx, result in zip(to_create_idx, batch_results):
+                        txn_id, payload = chunk[idx]
+                        doc_number = payload.get("DocNumber")
+                        if "Fault" in result:
+                            errors = (result["Fault"].get("Error") or [{}])
+                            first = errors[0]
+                            _log.warning(
+                                "import: batch Fault on DocNumber=%s txn_id=%s — %s",
+                                doc_number, txn_id, first,
+                            )
+                            tx_audit.append({
+                                "txn_id": txn_id,
+                                "doc_number": doc_number,
+                                "outcome": "qbo_error",
+                                "status_code": first.get("code"),
+                                "error_body": str(errors)[:500],
+                                "intuit_tid": getattr(qbo, "last_intuit_tid", None),
+                            })
+                            qbo_error_count += 1
+                            continue
+                        _record_created(result.get("JournalEntry", {}), txn_id)
+
+                if progress_fn:
+                    progress_fn(min(chunk_start + CHUNK_SIZE, len(paired)))
+
+                # Stay comfortably under the batch endpoint's ~120 req/min throttle
+                _t.sleep(0.5)
 
         except Exception as partial_e:
             if created_transactions:

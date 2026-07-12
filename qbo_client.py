@@ -274,6 +274,80 @@ class QBOClient:
             intuit_tid=self.last_intuit_tid,
         )
 
+    def create_journal_entries_batch(self, payloads: list[dict]) -> list[dict]:
+        """Create up to 25 JournalEntries in one QBO /batch request. Returns a
+        list of BatchItemResponse entries, same order as `payloads`. Each is
+        either {"JournalEntry": {...}} (success) or {"Fault": {...}} (that one
+        item failed) — QBO's batch endpoint only raises for a malformed
+        request or an outage, never for an individual item's business-rule
+        rejection, so the caller must inspect every item.
+        """
+        if not payloads:
+            return []
+        if len(payloads) > 25:
+            raise ValueError("create_journal_entries_batch: caller must chunk to <=25 items")
+
+        batch_items = [
+            {"bId": str(i + 1), "operation": "create", "JournalEntry": p}
+            for i, p in enumerate(payloads)
+        ]
+        url = f"{self.base_url}/batch?minorversion=75"
+        attempts = max(1, int(DEFAULT_MAX_RETRIES) + 1)
+        last_exc = None
+
+        for attempt in range(attempts):
+            try:
+                response = requests.post(
+                    url, headers=self._headers(),
+                    json={"BatchItemRequest": batch_items}, timeout=60,
+                )
+            except requests.RequestException as e:
+                last_exc = e
+                if attempt + 1 < attempts:
+                    delay = _retry_after_seconds(
+                        None, attempt, DEFAULT_BACKOFF_BASE_SECONDS, DEFAULT_BACKOFF_CAP_SECONDS,
+                    )
+                    _log.warning(
+                        "create_journal_entries_batch network error attempt=%s/%s err=%s sleeping=%.1fs",
+                        attempt + 1, attempts, e, delay,
+                    )
+                    _sleep(delay)
+                    continue
+                raise QBOError(
+                    f"Could not reach QuickBooks batch endpoint: {e}",
+                    status_code=None, body=None, intuit_tid=None,
+                ) from e
+
+            tid = self._record_tid(response)
+            if response.status_code < 400:
+                resp_items = response.json().get("BatchItemResponse", [])
+                by_bid = {item.get("bId"): item for item in resp_items}
+                return [
+                    by_bid.get(str(i + 1)) or {"Fault": {"Error": [{"Message": "Missing batch response item", "code": "MISSING"}]}}
+                    for i in range(len(payloads))
+                ]
+
+            if _is_transient_status(response.status_code) and attempt + 1 < attempts:
+                delay = _retry_after_seconds(
+                    response, attempt, DEFAULT_BACKOFF_BASE_SECONDS, DEFAULT_BACKOFF_CAP_SECONDS,
+                )
+                _log.warning(
+                    "create_journal_entries_batch transient status=%s attempt=%s/%s tid=%s sleeping=%.1fs",
+                    response.status_code, attempt + 1, attempts, tid, delay,
+                )
+                _sleep(delay)
+                continue
+
+            raise QBOError(
+                f"QBO returned {response.status_code} on batch journal-entry create: {response.text}",
+                status_code=response.status_code, body=response.text, intuit_tid=tid,
+            )
+
+        raise QBOError(
+            f"Could not reach QuickBooks batch endpoint after {attempts} attempts: {last_exc}",
+            status_code=None, body=None, intuit_tid=None,
+        )
+
     def find_account_by_acctnum(self, acct_num):
         """Return the QBO Account dict matching AcctNum exactly, or None.
 
@@ -324,6 +398,25 @@ class QBOClient:
         )
         items = result.get("QueryResponse", {}).get("JournalEntry", [])
         return items[0] if items else None
+
+    def find_journal_entries_by_doc_numbers(self, doc_numbers: list[str]) -> dict[str, dict]:
+        """Batch idempotency probe. Returns {DocNumber: JournalEntry} for every
+        DocNumber that already exists in QBO; missing ones are simply absent.
+
+        Replaces one find_journal_entry_by_doc_number() call per JE with a
+        single query per chunk (<=25 doc numbers — same chunk size as the
+        create batch, kept in lockstep for simplicity).
+        """
+        doc_numbers = [str(d) for d in doc_numbers if d]
+        if not doc_numbers:
+            return {}
+        safe_list = ", ".join(f"'{self._escape_qbo_string(d)}'" for d in doc_numbers)
+        result = self.query(
+            f"SELECT Id, DocNumber, TxnDate FROM JournalEntry "
+            f"WHERE DocNumber IN ({safe_list})"
+        )
+        items = result.get("QueryResponse", {}).get("JournalEntry", [])
+        return {je.get("DocNumber"): je for je in items if je.get("DocNumber")}
 
     def delete_journal_entry(self, je_id: str, sync_token: str) -> dict:
         """Delete (void) a Journal Entry from QuickBooks.
