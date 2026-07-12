@@ -61,6 +61,156 @@
         </details>
       {% endif %}
     </section>
+
+    {# ── Processing Card ─────────────────────────────────────────────────────
+       Shows the first 30 JEs sent (from qbo_results) with OK status, plus any
+       rejected entries (from tx_audit) with their QBO error reason.
+       This is the real-time sanity check — confirms what actually hit QBO.
+    #}
+    {% set _ok_rows = job.qbo_results or [] %}
+    {% set _rej_rows = job.tx_audit or [] %}
+    {% if _ok_rows or _rej_rows %}
+    <section class="card" style="padding:var(--space-5);margin-bottom:var(--space-5);">
+      <p class="eyebrow">Processing</p>
+      {% set _total_ok  = (job.import_summary or {}).qbo_je_count or (_ok_rows|length) %}
+      {% set _total_rej = (job.import_summary or {}).skipped_je_count or (_rej_rows|length) %}
+      <h2 style="margin-top:0;">
+        {{ _total_ok }} sent &mdash; {% if _total_rej %}<span style="color:var(--error,#dc2626);">{{ _total_rej }} rejected</span>{% else %}0 rejected{% endif %}
+      </h2>
+      <p class="muted" style="margin-bottom:var(--space-3);">
+        First batch results — check each row&rsquo;s status and review any rejections below.
+      </p>
+      <div class="table-wrap">
+        <table style="width:100%;border-collapse:collapse;font-size:.82rem;">
+          <thead>
+            <tr style="text-align:left;border-bottom:2px solid var(--line);">
+              <th style="padding:6px 8px;">Batch #</th>
+              <th style="padding:6px 8px;">Doc&nbsp;Number</th>
+              <th style="padding:6px 8px;">Date</th>
+              <th style="padding:6px 8px;">QBO&nbsp;ID</th>
+              <th style="padding:6px 8px;text-align:center;">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {# Show first 30 OK entries #}
+            {% for r in _ok_rows[:30] %}
+            <tr style="border-bottom:1px solid var(--line);">
+              <td style="padding:5px 8px;font-family:monospace;font-size:.78rem;">
+                {{ r.transaction_id or loop.index }}
+              </td>
+              <td style="padding:5px 8px;font-family:monospace;font-size:.78rem;">
+                {{ r.DocNumber or '&mdash;' }}
+              </td>
+              <td style="padding:5px 8px;">{{ r.TxnDate or '&mdash;' }}</td>
+              <td style="padding:5px 8px;font-family:monospace;font-size:.78rem;">
+                {{ r.Id or '&mdash;' }}
+              </td>
+              <td style="padding:5px 8px;text-align:center;">
+                <span style="display:inline-block;padding:2px 10px;border-radius:9999px;
+                             font-size:.75rem;font-weight:600;letter-spacing:.04em;
+                             background:var(--success-bg,#ecfaee);
+                             color:var(--success-dark,#14532d);">OK</span>
+              </td>
+            </tr>
+            {% endfor %}
+            {# Show first 30 rejected entries inline #}
+            {% for r in _rej_rows[:30] %}
+            <tr style="border-bottom:1px solid var(--line);
+                       background:var(--error-bg,#fef2f2);">
+              <td style="padding:5px 8px;font-family:monospace;font-size:.78rem;">
+                {{ r.txn_id or '&mdash;' }}
+              </td>
+              <td style="padding:5px 8px;font-family:monospace;font-size:.78rem;">
+                {{ r.doc_number or '&mdash;' }}
+              </td>
+              <td style="padding:5px 8px;">&mdash;</td>
+              <td style="padding:5px 8px;">&mdash;</td>
+              <td style="padding:5px 8px;text-align:center;">
+                <span style="display:inline-block;padding:2px 10px;border-radius:9999px;
+                             font-size:.75rem;font-weight:600;letter-spacing:.04em;
+                             background:var(--error-bg,#fef2f2);
+                             color:var(--error,#dc2626);
+                             border:1px solid var(--error,#dc2626);">REJECTED</span>
+              </td>
+            </tr>
+            {% endfor %}
+            {% if _ok_rows|length > 30 %}
+            <tr>
+              <td colspan="5" style="padding:6px 8px;color:var(--ink-muted);
+                                      font-size:.78rem;font-style:italic;">
+                … and {{ _ok_rows|length - 30 }} more OK entries (showing first 30)
+              </td>
+            </tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    {# ── Rejected Entries Card ────────────────────────────────────────────────
+       Only shown when there are QBO-rejected JEs. Shows txn_id, doc_number,
+       QBO status code, and full error reason so operators can diagnose fast.
+    #}
+    {% if _rej_rows %}
+    <section class="card"
+             style="padding:var(--space-5);margin-bottom:var(--space-5);
+                    border-left:3px solid var(--error,#dc2626);
+                    background:var(--error-bg,#fef2f2);">
+      <p class="eyebrow" style="color:var(--error,#dc2626);">Rejected entries</p>
+      <h2 style="margin-top:0;color:var(--error-dark,#7f1d1d);">
+        {{ _rej_rows|length }} JE group{{ 's' if _rej_rows|length != 1 else '' }} rejected by QuickBooks
+      </h2>
+      <p class="muted" style="margin-bottom:var(--space-3);">
+        QuickBooks refused these journal entries during posting. The reason column
+        shows the exact API error — use it to pinpoint the fix (wrong account type,
+        missing entity, duplicate DocNumber, etc.).
+      </p>
+      <div class="table-wrap">
+        <table style="width:100%;border-collapse:collapse;font-size:.80rem;">
+          <thead>
+            <tr style="text-align:left;border-bottom:2px solid var(--line);">
+              <th style="padding:6px 8px;width:22%;">Transaction&nbsp;ID</th>
+              <th style="padding:6px 8px;width:14%;">Doc&nbsp;Number</th>
+              <th style="padding:6px 8px;width:8%;text-align:center;">HTTP</th>
+              <th style="padding:6px 8px;">Reason (QBO error)</th>
+              <th style="padding:6px 8px;width:14%;font-size:.72rem;">Intuit&nbsp;TID</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in _rej_rows %}
+            <tr style="border-bottom:1px solid var(--line);vertical-align:top;">
+              <td style="padding:5px 8px;font-family:monospace;font-size:.76rem;
+                         word-break:break-all;">
+                {{ r.txn_id or '&mdash;' }}
+              </td>
+              <td style="padding:5px 8px;font-family:monospace;font-size:.76rem;">
+                {{ r.doc_number or '&mdash;' }}
+              </td>
+              <td style="padding:5px 8px;text-align:center;font-weight:600;
+                         color:var(--error,#dc2626);">
+                {{ r.status_code or '?' }}
+              </td>
+              <td style="padding:5px 8px;font-size:.77rem;color:var(--ink-muted);
+                         word-break:break-word;max-width:380px;">
+                {{ r.error_body or r.outcome or '&mdash;' }}
+              </td>
+              <td style="padding:5px 8px;font-family:monospace;font-size:.70rem;
+                         color:var(--ink-muted);word-break:break-all;">
+                {{ r.intuit_tid or '&mdash;' }}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p style="margin-top:var(--space-3);font-size:.82rem;color:var(--ink-muted);">
+        Common causes: account not found in QBO (re-check COA), account type
+        mismatch (AP/AR lines need a Customer or Vendor), or QBO rate limit (retry
+        after a few minutes). Intuit TID is a unique request ID for Intuit support.
+      </p>
+    </section>
+    {% endif %}
+    {% endif %}{# end _ok_rows or _rej_rows #}
   {% else %}
     <div class="hero">
       <p class="eyebrow">Step 5 of 6 &middot; Send</p>

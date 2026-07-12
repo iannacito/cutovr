@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
 from typing import Optional
+import re as _re
 
 import reserved_accounts
 
@@ -917,10 +918,19 @@ def build_create_plan(
 # ----------------------------------------------------------------------------
 
 
+# Regex to strip PCLaw continuation suffix before sending to QBO.
+# PCLaw sometimes splits long account exports across rows with a
+# "- Continued" suffix. Both rows should resolve to the same QBO
+# account; stripping the suffix here prevents "Delivery Expense - Continued"
+# from being created as a duplicate separate account.
+_CONT_SUFFIX_RE = _re.compile(r'\s*-\s*continued\s*$', _re.IGNORECASE)
+
+
 def _build_qbo_payload(entry: CreatePlanEntry) -> dict:
     """Build the QBO Account payload for a single create entry."""
+    _name = _CONT_SUFFIX_RE.sub("", entry.account_name).strip()
     payload = {
-        "Name": entry.account_name,
+        "Name": _name,
         "AccountType": entry.qbo_account_type,
         "Active": entry.active,
     }
