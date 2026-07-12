@@ -8937,7 +8937,10 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
             gate_ok = len(gate_blockers) == 0
 
         if not gate_ok:
-            raise RuntimeError(f"Validation gate failed: {len(gate_blockers)} blocker(s)")
+            reasons = " ".join(
+                f"{b['headline']} {b['action']}".strip() for b in gate_blockers
+            )
+            raise RuntimeError(f"Validation failed: {reasons}")
 
         auto_by_number = build_account_mapping_from_numbers(qbo_accounts)
         auto_by_name = build_account_mapping_from_names(qbo_accounts)
