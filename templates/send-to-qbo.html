@@ -71,6 +71,26 @@
       {% endif %}
     </section>
 
+    {% if job.checkpoint == 'needs_attention' and job.last_error and not (job.qbo_results or job.tx_audit) %}
+    <section class="card"
+             style="padding:var(--space-5);margin-bottom:var(--space-5);
+                    border-left:3px solid var(--error,#dc2626);
+                    background:var(--error-bg,#fef2f2);">
+      <p class="eyebrow" style="color:var(--error,#dc2626);">Import blocked</p>
+      <h2 style="margin-top:0;color:var(--error-dark,#7f1d1d);">
+        Nothing was sent to QuickBooks
+      </h2>
+      <p style="max-width:64ch;">
+        The import stopped before any journal entries were posted, so there's nothing
+        to show in Processing/Rejected below yet. Reason:
+      </p>
+      <p style="font-family:monospace;font-size:.85rem;background:#fff;padding:var(--space-3);
+                border-radius:6px;border:1px solid var(--line);">
+        {{ job.last_error }}
+      </p>
+    </section>
+    {% endif %}
+
     {# ── Processing Card ─────────────────────────────────────────────────────
        Shows the first 30 JEs sent (from qbo_results) with OK status, plus any
        rejected entries (from tx_audit) with their QBO error reason.

@@ -9026,8 +9026,18 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
                 doc_numbers = [p.get("DocNumber") for _, p in chunk if p.get("DocNumber")]
                 try:
                     existing_by_doc = qbo.find_journal_entries_by_doc_numbers(doc_numbers)
-                except Exception:  # noqa: BLE001 — probe is advisory, fall through to create
-                    existing_by_doc = {}
+                except Exception as probe_exc:  # noqa: BLE001
+                    _log.error(
+                        "import: idempotency probe failed for chunk starting at %s — "
+                        "failing CLOSED (not creating) to avoid duplicate JEs on retry: %s",
+                        chunk_start, probe_exc,
+                    )
+                    raise RuntimeError(
+                        f"Could not verify which journal entries were already posted "
+                        f"(idempotency probe failed): {probe_exc}. Safe to retry once "
+                        f"QuickBooks connectivity is confirmed — no new entries were "
+                        f"created for this chunk."
+                    ) from probe_exc
 
                 # Separate items that need to be created from those that already exist
                 to_create_idx, to_create_payloads = [], []
