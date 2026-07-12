@@ -896,6 +896,7 @@ def _record_checkpoint(job, job_id, target):
         "checkpoint",
         target_type="job", target_id=job_id,
         details=f"{current or 'none'} -> {new}",
+        firm_id=job.get("firm_id"),
     )
 
 
@@ -974,7 +975,8 @@ def _get_qbo_client(job_id, user):
         return None, None
     if not _qbo_token_is_fresh(qbo_conn):
         qbo_conn = _refresh_qbo_tokens(job_id, qbo_conn, user["firm_id"])
-        _audit("qbo_token_refreshed", target_type="job", target_id=job_id)
+        _audit("qbo_token_refreshed", target_type="job", target_id=job_id,
+               firm_id=user.get("firm_id"))
     qbo = QBOClient(
         access_token=decrypt_token(qbo_conn["access_token_enc"]),
         realm_id=qbo_conn["realm_id"],
@@ -1051,12 +1053,26 @@ def _audit_details_with_tid(details, intuit_tid):
     return f"{details} intuit_tid={intuit_tid}"
 
 
-def _audit(action, target_type=None, target_id=None, details=None):
-    user = current_user()
+def _audit(action, target_type=None, target_id=None, details=None,
+           firm_id=None, user_id=None):
+    """Record an audit log entry.
+
+    Pass firm_id/user_id explicitly when calling from outside a Flask
+    request context (e.g. a background import thread) — current_user()
+    depends on the session, which does not exist there. When neither is
+    given, falls back to the current request's logged-in user as before.
+    """
+    if firm_id is None and user_id is None:
+        try:
+            user = current_user()
+        except RuntimeError:
+            user = None
+        firm_id = user["firm_id"] if user else None
+        user_id = user["id"] if user else None
     db.audit(
         action=action,
-        firm_id=user["firm_id"] if user else None,
-        user_id=user["id"] if user else None,
+        firm_id=firm_id,
+        user_id=user_id,
         target_type=target_type,
         target_id=target_id,
         details=_sanitize_audit_details(details),
@@ -9048,6 +9064,7 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
                         _audit(
                             "import_idempotent_reuse", target_type="job", target_id=job_id,
                             details=f"reused existing JE for DocNumber {doc_number}",
+                            firm_id=user.get("firm_id"),
                         )
                         _record_created(existing_je, txn_id)
                     else:
@@ -10378,6 +10395,7 @@ def _load_job_gl_rows_durable(job, job_id):
             "import_missing_file",
             target_type="job", target_id=job_id,
             details="no encrypted_file recorded",
+            firm_id=job.get("firm_id"),
         )
         return None
     encrypted_in = UPLOAD_DIR / enc_name
@@ -10387,6 +10405,7 @@ def _load_job_gl_rows_durable(job, job_id):
             target_type="job", target_id=job_id,
             # basename only — never log the full path of an upload dir.
             details=f"missing={encrypted_in.name}",
+            firm_id=job.get("firm_id"),
         )
         return None
 
@@ -10398,6 +10417,7 @@ def _load_job_gl_rows_durable(job, job_id):
             _audit(
                 "import_decrypt_error",
                 target_type="job", target_id=job_id, details=str(e),
+                firm_id=job.get("firm_id"),
             )
             return None
         try:
@@ -10413,6 +10433,7 @@ def _load_job_gl_rows_durable(job, job_id):
             _audit(
                 "import_csv_error",
                 target_type="job", target_id=job_id, details=str(e),
+                firm_id=job.get("firm_id"),
             )
             return None
     finally:
