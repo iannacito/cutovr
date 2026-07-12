@@ -327,7 +327,7 @@
   </section>
   {% endif %}
 
-  {% if not already_imported %}
+  {% if not already_imported and not import_in_progress %}
     <section class="card" data-testid="send-to-qbo-card"
              style="padding:var(--space-6);margin-bottom:var(--space-6);">
       <p class="eyebrow">Ready to send</p>
@@ -382,7 +382,7 @@
       <div id="send-to-qbo-progress"
            data-testid="send-to-qbo-progress"
            role="status" aria-live="polite"
-           style="display:none;margin-top:var(--space-5);padding:var(--space-4);
+           style="{% if import_in_progress %}display:block;{% else %}display:none;{% endif %}margin-top:var(--space-5);padding:var(--space-4);
                   border:1px solid var(--border, #ddd);border-radius:8px;
                   background:var(--info-bg, #f4f8ff);">
         <p style="margin:0;font-weight:600;">
@@ -394,9 +394,9 @@
           Sending your data to QuickBooks&hellip;
         </p>
         <p class="muted" style="margin:.5em 0 0;">
-          This may take a few minutes for larger imports.
+          <span id="import-progress-text">This may take a few minutes for larger imports.
           <strong>Please keep this tab open</strong> &mdash; we&rsquo;ll show the
-          summary as soon as QuickBooks confirms the entries.
+          summary as soon as QuickBooks confirms the entries.</span>
         </p>
       </div>
 
@@ -601,6 +601,53 @@
   }
   window.initToggle = initToggle;
   window.retryStep  = retryStep;
+
+  // GL import polling (when import_in_progress flag is set)
+  {% if import_in_progress %}
+  (function () {
+    var jobId = {{ job.id | tojson }};
+    var progressPanel = document.getElementById('send-to-qbo-progress');
+    var progressText = document.getElementById('import-progress-text');
+    var pollErrors = 0;
+
+    function pollImportStatus() {
+      fetch('/jobs/' + jobId + '/import-status')
+        .then(function (r) {
+          if (!r.ok) { throw new Error('Server error ' + r.status); }
+          return r.json();
+        })
+        .then(function (data) {
+          pollErrors = 0;
+          if (progressText && data.overall === 'running') {
+            var pct = data.total > 0 ? Math.round((data.pushed / data.total) * 100) : 0;
+            progressText.textContent = 'Progress: ' + data.pushed + ' of ' + data.total + ' posted (' + pct + '%)…';
+          }
+          if (data.overall === 'done') {
+            clearInterval(importPollTimer);
+            progressPanel.style.display = 'none';
+            location.reload();
+          } else if (data.overall === 'failed') {
+            clearInterval(importPollTimer);
+            if (progressText) {
+              progressText.innerHTML = '<strong style="color:var(--error,#dc2626);">Import failed:</strong> ' + (data.msg || 'Unknown error') + ' <button onclick="location.reload()" style="margin-left:8px;cursor:pointer;">Reload</button>';
+            }
+          }
+        })
+        .catch(function (err) {
+          pollErrors += 1;
+          if (pollErrors >= 5) {
+            clearInterval(importPollTimer);
+            if (progressText) {
+              progressText.textContent = 'Lost connection. Refresh to check status.';
+            }
+          }
+        });
+    }
+
+    var importPollTimer = setInterval(pollImportStatus, 2000);
+    pollImportStatus();  // Check immediately
+  })();
+  {% endif %}
 })();
 </script>
 {% endblock %}

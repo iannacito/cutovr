@@ -25,6 +25,7 @@ import calendly_webhook
 import data_retention
 import demo_mode
 import entity_resolution
+import importer
 import job_checkpoints
 import migration_hub
 
@@ -2114,6 +2115,23 @@ def initialpost_retry(job_id, step_key):
     return jsonify(state)
 
 
+@app.route("/jobs/<job_id>/import-status")
+@login_required
+def import_status(job_id):
+    """Polling endpoint — returns current GL import state as JSON."""
+    _job, _user = _job_or_403(job_id)
+
+    state = importer.get_import_state_json(job_id)
+    if state is None:
+        # No in-memory state — check DB for job checkpoint
+        job = db.get_job(job_id)
+        if job and job.get("checkpoint") == job_checkpoints.IMPORTING:
+            state = {"overall": "running", "pushed": 0, "total": 0, "skipped": 0, "msg": "Import in progress..."}
+        else:
+            state = {"overall": "idle", "pushed": 0, "total": 0, "skipped": 0, "msg": "Not running"}
+    return jsonify(state)
+
+
 def _gl_period_key(j):
     """Sort key for GL jobs by period (earliest first).
 
@@ -2304,6 +2322,9 @@ def send_to_qbo(job_id: str):
 
     _qbo_is_sandbox = os.environ.get("QBO_ENVIRONMENT", "sandbox") == "sandbox"
 
+    # Check if import is already running (page reload/navigate-back during import)
+    _import_in_progress = (job or {}).get("checkpoint") == job_checkpoints.IMPORTING
+
     return render_template(
         "send-to-qbo.html",
         job=job,
@@ -2311,6 +2332,7 @@ def send_to_qbo(job_id: str):
         qbo_real_import=QBO_REAL_IMPORT,
         qbo_is_sandbox=_qbo_is_sandbox,
         already_imported=_already_imported,
+        import_in_progress=_import_in_progress,
         init_state=_init_state,
         pregl_coa_ob_bypass=False,
         workflow_stages=[s.to_dict() for s in stages],
@@ -8741,29 +8763,63 @@ def disconnect_qbo(job_id):
 @app.route("/jobs/<job_id>/import-to-qbo", methods=["POST"])
 @login_required
 def import_to_qbo(job_id):
-    """Route-level wrapper that delegates to ``_import_to_qbo_impl`` and
-    converts any unexpected exception into a friendly recovery page.
+    """Start GL import in background thread; return immediately to avoid timeout.
 
-    This is the global safety net the user reported missing: prior to this
-    fix, exceptions raised before the inner try/except (e.g.
-    ``decrypt_file`` against an absent encrypted CSV) bubbled out as a raw
-    Flask 500. The customer-facing message must always be actionable, so
-    we render the import-recovery card here on any unhandled error.
+    Runs all pre-flight validation synchronously (fast), then starts a
+    background thread for the QBO posting loop. Returns redirect to
+    send-to-qbo where JS polls /jobs/<id>/import-status for progress.
     """
     try:
-        return _import_to_qbo_impl(job_id)
+        job, _user = _job_or_403(job_id)
+        qbo_conn = _get_qbo_connection(job_id)
+
+        # Multi-report safety gate (unchanged from sync version)
+        report_type = job.get("report_type") or REPORT_GENERAL_LEDGER
+        if report_type != REPORT_GENERAL_LEDGER:
+            flash(
+                f"Import to QuickBooks is not available for {REPORT_LABELS.get(report_type, report_type)}. "
+                "This report type is parsed for validation and reconciliation only.",
+                "error",
+            )
+            _audit(
+                "import_blocked_report_type",
+                target_type="job", target_id=job_id,
+                details=f"report_type={report_type}",
+            )
+            return redirect(url_for("job_detail", job_id=job_id))
+
+        if not qbo_conn:
+            flash("QuickBooks connection not found. Connect to QuickBooks first.", "error")
+            return redirect(url_for("job_detail", job_id=job_id))
+
+        if job.get("import_summary"):
+            flash(
+                "This file has already been sent to QuickBooks. "
+                "Scroll down to Step 6 to review the results.",
+                "info",
+            )
+            return redirect(url_for("job_detail", job_id=job_id))
+
+        if not QBO_REAL_IMPORT:
+            job["status"] = "Import to QBO initiated (demo mode)"
+            _save_job(job_id)
+            _audit("import_demo", target_type="job", target_id=job_id)
+            flash(
+                "Demo mode: no journal entries were sent to QuickBooks. "
+                "Set QBO_REAL_IMPORT=1 in the environment and restart to perform a real sandbox import.",
+                "info",
+            )
+            return redirect(url_for("job_detail", job_id=job_id))
+
+        # Start background import thread (will do all heavy lifting)
+        importer.start_import(job_id, _run_gl_import, db.save_job_state, QBO_REAL_IMPORT)
+
+        return redirect(url_for("send_to_qbo", job_id=job_id))
+
     except HTTPException:
-        # Auth / not-found responses (401/403/404) raised via abort() must
-        # propagate unchanged. Swallowing them here would convert a
-        # cross-firm 404 into a 200 recovery card, which both leaks job
-        # existence and is the wrong status for callers.
         raise
-    except Exception as e:  # noqa: BLE001 — last-resort net before 500
-        # Log first — captures the full traceback in Render logs even if
-        # the DB audit write below fails. Critical for diagnosing ISEs.
+    except Exception as e:  # noqa: BLE001
         _log.exception("import_to_qbo: unhandled exception for job %s", job_id)
-        # Audit separately in its own try so a DB contention error here
-        # cannot cascade into a second unhandled exception and ISE.
         try:
             _audit(
                 "import_unhandled_error",
@@ -8771,11 +8827,8 @@ def import_to_qbo(job_id):
                 details=f"{type(e).__name__}: {e}",
             )
         except Exception:  # noqa: BLE001
-            pass  # swallow — Render log above already has the detail
-        # Best-effort: try to render the recovery card with whatever
-        # context we can rehydrate. Fall all the way back to a flash +
-        # redirect if even that fails — the customer must never see a
-        # raw 500 from this route.
+            pass
+
         try:
             job, _u = _job_or_403(job_id)
             qbo_conn = _get_qbo_connection(job_id) or {}
@@ -8789,6 +8842,274 @@ def import_to_qbo(job_id):
                 "error",
             )
             return redirect(url_for("job_detail", job_id=job_id))
+
+
+def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
+    """Run GL import in background thread.
+
+    Re-hydrates job from DB, validates, and runs the QBO posting loop.
+    Updates job state, saves to DB, records in import history.
+    Raises RuntimeError on fatal failure (caught by importer._run_import_background).
+    """
+    import time as _t
+    job = db.get_job(job_id)
+    if not job:
+        raise RuntimeError(f"Job {job_id} not found")
+
+    qbo_conn = _get_qbo_connection(job_id)
+    if not qbo_conn:
+        raise RuntimeError("QuickBooks connection not found")
+
+    rows = _load_job_gl_rows_durable(job, job_id)
+    if rows is None:
+        raise RuntimeError("Could not load GL rows from job")
+
+    fieldnames = list(rows[0].keys()) if rows else []
+    firm_id = job.get("firm_id")
+    if not firm_id:
+        raise RuntimeError("Job has no associated firm")
+    # Create minimal user object for _get_qbo_client
+    user = {"firm_id": firm_id}
+
+    # Merge auto-balance rows
+    auto_rows = job.get("auto_balance_rows") or []
+    if auto_rows:
+        if any(not (r.get("date") or "").strip() for r in auto_rows):
+            first_date = next(
+                (r.get("date", "") for r in rows if (r.get("date") or "").strip()),
+                "",
+            )
+            auto_rows = [{**r, "date": r.get("date") or first_date} for r in auto_rows]
+            job["auto_balance_rows"] = auto_rows
+            db.save_job_state(job_id, job)
+        rows = list(rows) + auto_rows
+
+    try:
+        qbo, _conn = _get_qbo_client(job_id, user)
+    except QBOAuthExpired:
+        raise RuntimeError("QuickBooks token expired — reconnect from the QuickBooks page.")
+
+    try:
+        qbo_accounts = qbo.get_accounts()
+    except QBOError as e:
+        raise RuntimeError(f"Could not query QuickBooks accounts: {e}")
+
+    if is_gl_format(fieldnames):
+        from gl_row_quality import is_droppable_row as _gate_row_filter
+        _rows_for_gate = [r for r in rows if not _gate_row_filter(r)]
+        gate_ok, gate_blockers = evaluate_import_gate(_rows_for_gate, fieldnames)
+
+        if auto_rows and not gate_ok:
+            gate_blockers = [
+                b for b in gate_blockers
+                if "debits and credits" not in b.get("headline", "")
+            ]
+            gate_ok = len(gate_blockers) == 0
+
+        if not gate_ok:
+            raise RuntimeError(f"Validation gate failed: {len(gate_blockers)} blocker(s)")
+
+        auto_by_number = build_account_mapping_from_numbers(qbo_accounts)
+        auto_by_name = build_account_mapping_from_names(qbo_accounts)
+        saved_mappings = db.list_account_mappings(user["firm_id"], qbo_conn["realm_id"])
+
+        if auto_by_number or any(m.get("pclaw_account_number") for m in saved_mappings):
+            mapping = dict(auto_by_number)
+            mapping_mode = "number"
+            for m in saved_mappings:
+                if m.get("pclaw_account_number"):
+                    mapping[str(m["pclaw_account_number"])] = m["qbo_account_id"]
+        else:
+            mapping = dict(auto_by_name)
+            mapping_mode = "name"
+            for m in saved_mappings:
+                if m.get("pclaw_account_name"):
+                    mapping[m["pclaw_account_name"]] = m["qbo_account_id"]
+
+        unmapped = find_unmapped_accounts(rows, mapping, mapping_mode)
+        if unmapped:
+            raise RuntimeError(f"Unmapped accounts: {sorted(unmapped)}")
+
+        type_index = build_account_type_index(qbo_accounts)
+        from pclaw_pipeline import plan_balanced_payloads
+        from gl_grouping import plan_posting_groups
+
+        payloads, posted_ids = plan_balanced_payloads(
+            rows, mapping, mapping_mode=mapping_mode, account_type_index=type_index
+        )
+
+        grouped_for_check = group_rows_by_transaction(rows)
+        _grouping_plan = plan_posting_groups(grouped_for_check)
+        sub_refs_by_posted_id: dict[str, list[str]] = {}
+        for ref in _grouping_plan["balanced_transactions"].keys():
+            sub_refs_by_posted_id[ref] = [ref]
+        for grp in _grouping_plan["merged_groups"]:
+            sub_refs_by_posted_id[grp["group_id"]] = list(grp["transaction_ids"])
+
+        customer_index, vendor_index = _firm_entity_indexes(user["firm_id"])
+        try:
+            new_entities = _resolve_entity_hints(
+                qbo, payloads,
+                customer_index=customer_index,
+                vendor_index=vendor_index,
+                firm_id=user["firm_id"],
+                realm_id=qbo_conn["realm_id"],
+            )
+        except entity_resolution.EntityNameError as e:
+            raise RuntimeError(f"Entity names missing: {e}")
+        except QBOError as e:
+            raise RuntimeError(f"Could not create Name in QuickBooks: {e}")
+
+        source_debit = sum(money(r["debit"]) for r in rows if not _gate_row_filter(r))
+        source_credit = sum(money(r["credit"]) for r in rows if not _gate_row_filter(r))
+
+        txn_ids = posted_ids
+        created = []
+        created_transactions = []
+        tx_audit: list[dict] = []
+        qbo_error_count = 0
+
+        # Update checkpoint to IMPORTING
+        _record_checkpoint(job, job_id, job_checkpoints.IMPORTING)
+        _save_job(job_id)
+
+        try:
+            for i, (txn_id, payload) in enumerate(zip(txn_ids, payloads)):
+                if progress_fn:
+                    progress_fn(i)
+
+                existing_je = None
+                doc_number = payload.get("DocNumber")
+                if doc_number:
+                    try:
+                        existing_je = qbo.find_journal_entry_by_doc_number(doc_number)
+                    except Exception:
+                        existing_je = None
+
+                if existing_je:
+                    je = existing_je
+                else:
+                    try:
+                        resp = qbo.create_journal_entry(payload)
+                        je = resp.get("JournalEntry", {})
+                    except QBOError as _je_err:
+                        _log.warning(
+                            "import: QBOError on DocNumber=%s txn_id=%s — %s",
+                            doc_number, txn_id, _je_err,
+                        )
+                        tx_audit.append({
+                            "txn_id": txn_id,
+                            "doc_number": doc_number,
+                            "outcome": "qbo_error",
+                            "status_code": _je_err.status_code,
+                            "error_body": str(_je_err.body)[:500],
+                            "intuit_tid": _je_err.intuit_tid,
+                        })
+                        qbo_error_count += 1
+                        continue
+
+                created.append({
+                    "Id": je.get("Id"),
+                    "DocNumber": je.get("DocNumber"),
+                    "TxnDate": je.get("TxnDate"),
+                    "transaction_id": txn_id,
+                })
+
+                refs_for_id = sub_refs_by_posted_id.get(txn_id, [txn_id])
+                created_transactions.append({
+                    "transaction_id": txn_id,
+                    "qbo_je_id": je.get("Id"),
+                    "doc_number": je.get("DocNumber"),
+                    "txn_date": je.get("TxnDate"),
+                })
+                for sub in refs_for_id:
+                    if sub == txn_id:
+                        continue
+                    created_transactions.append({
+                        "transaction_id": sub,
+                        "qbo_je_id": je.get("Id"),
+                        "doc_number": je.get("DocNumber"),
+                        "txn_date": je.get("TxnDate"),
+                    })
+
+                if (i + 1) % 25 == 0:
+                    _t.sleep(0.5)
+
+        except Exception as partial_e:
+            if created_transactions:
+                try:
+                    partial_import_id = history.record_import(
+                        job_id=job_id,
+                        realm_id=qbo_conn["realm_id"],
+                        file_sha256=job.get("file_sha256", ""),
+                        company_name=qbo_conn.get("company_name"),
+                        transaction_count=len(created),
+                        debit_total=Decimal("0"),
+                        credit_total=Decimal("0"),
+                        status="partial",
+                        notes=f"Partial import: {len(created)} of {len(txn_ids)} JEs posted before failure.",
+                        created_transactions=created_transactions,
+                        created_entities=new_entities,
+                    )
+                    job["last_import_id"] = partial_import_id
+                    job["partial_import"] = {
+                        "import_id": partial_import_id,
+                        "posted_count": len(created),
+                        "total_count": len(txn_ids),
+                    }
+                    _record_checkpoint(job, job_id, job_checkpoints.NEEDS_ATTENTION)
+                    _save_job(job_id)
+                except Exception:
+                    _log.exception("Failed to record partial import for job=%s", job_id)
+
+            if tx_audit:
+                job["tx_audit"] = tx_audit
+            raise partial_e
+
+        job["tx_audit"] = tx_audit
+        _save_job(job_id)
+
+        import_id = history.record_import(
+            job_id=job_id,
+            realm_id=qbo_conn["realm_id"],
+            file_sha256=job.get("file_sha256", ""),
+            company_name=qbo_conn.get("company_name"),
+            transaction_count=len(created),
+            debit_total=source_debit,
+            credit_total=source_credit,
+            status="success",
+            created_transactions=created_transactions,
+            created_entities=new_entities,
+        )
+        job["last_import_id"] = import_id
+
+        job["status"] = f"Imported {len(created)} journal entries to QuickBooks"
+        job["unmapped_accounts"] = None
+        job["unmapped_account_guidance"] = None
+        job["last_error"] = None
+        job["entity_name_blockers"] = None
+        job["qbo_results"] = created
+        job["import_summary"] = {
+            "source_transaction_count": len(txn_ids),
+            "qbo_je_count": len(created),
+            "skipped_je_count": qbo_error_count,
+            "source_debit_total": str(source_debit),
+            "source_credit_total": str(source_credit),
+            "balanced": source_debit == source_credit,
+        }
+        _record_checkpoint(job, job_id, job_checkpoints.COMPLETED)
+        _save_job(job_id)
+
+        try:
+            _verify_import(job, qbo)
+        except Exception as ve:
+            job["verification"] = {
+                "status": "error",
+                "error": str(ve),
+            }
+        _save_job(job_id)
+    else:
+        raise RuntimeError("Non-GL format not supported in background import")
 
 
 def _import_to_qbo_impl(job_id):
