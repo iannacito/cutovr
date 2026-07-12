@@ -126,3 +126,17 @@ def _run_import_background(
             if state:
                 state["overall"] = "failed"
                 state["msg"] = f"Import failed: {str(exc)[:100]}"
+        # Persist to the job record so a full page reload can see the failure.
+        # This is the only place that's guaranteed to run regardless of where
+        # inside perform_import_fn the exception came from (validation gate,
+        # unmapped accounts, token expiry, posting loop, etc.).
+        try:
+            save_fn(job_id, {
+                "checkpoint": "needs_attention",
+                "last_error": f"{type(exc).__name__}: {exc}"[:500],
+            })
+        except Exception:  # noqa: BLE001
+            _log.exception(
+                "_run_import_background: also failed to persist failure state for job %s",
+                job_id,
+            )
