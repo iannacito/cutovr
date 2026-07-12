@@ -512,6 +512,32 @@ class QBOClient:
             return existing
         return self.create_vendor(display_name)
 
+    def get_vendor_by_id(self, entity_id: str):
+        """Read a single Vendor by QBO Id — works for inactive vendors too.
+
+        The query API skips inactive entities; the REST read endpoint does not.
+        Used as fallback when 6240 fires and exact-name lookup returns nothing.
+        """
+        url = (
+            f"{self.base_url}/v3/company/{self.realm_id}"
+            f"/vendor/{entity_id}?minorversion=75"
+        )
+        response = requests.get(url, headers=self._headers(), timeout=30)
+        if response.status_code == 200:
+            return response.json().get("Vendor")
+        return None
+
+    def get_customer_by_id(self, entity_id: str):
+        """Read a single Customer by QBO Id — works for inactive customers too."""
+        url = (
+            f"{self.base_url}/v3/company/{self.realm_id}"
+            f"/customer/{entity_id}?minorversion=75"
+        )
+        response = requests.get(url, headers=self._headers(), timeout=30)
+        if response.status_code == 200:
+            return response.json().get("Customer")
+        return None
+
     def get_all_customers(self) -> list[dict]:
         """Fetch all active customers from QBO for entity matching in Step 3.
 

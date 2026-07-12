@@ -4003,10 +4003,18 @@ def _find_or_create_entity(qbo, kind, name, persisted, created,
                     except Exception:  # noqa: BLE001
                         pass
                     if _body_id:
-                        # QBO confirmed the entity exists at this Id — use it
-                        # directly. No extra lookup needed; inactive/duplicate
-                        # entities are fine to reference in JE lines.
-                        entity_id = _body_id
+                        # Use REST Read endpoint — works for inactive entities
+                        # where the query API returns empty.
+                        _reader = (
+                            qbo.get_customer_by_id
+                            if kind == "Customer"
+                            else qbo.get_vendor_by_id
+                        )
+                        _entity = _reader(_body_id)
+                        if _entity and _entity.get("Id"):
+                            entity_id = _entity["Id"]
+                        else:
+                            raise
                     else:
                         raise
             else:
@@ -9663,10 +9671,8 @@ def preview_import(job_id):
                 )
 
         # Case 3: global imbalance with no per-txn blockers and no saved auto rows.
-        # The file's transactions individually balance, but the overall debits ≠
-        # credits sum. Synthesise one adjustment row using the mapped bank account
-        # to restore global balance, exactly like Case 1 but without needing a
-        # still_blocked list.
+        # The individual transactions all balance but the overall debits ≠ credits.
+        # Build ONE synthetic adjustment row on the bank account to zero out the diff.
         if (
             not preview.get("blocked_transactions")
             and not preview.get("balanced")
@@ -9681,42 +9687,41 @@ def preview_import(job_id):
                 _global_dr = _Decimal(_raw_dr)
                 _global_cr = _Decimal(_raw_cr)
                 _diff = _global_dr - _global_cr  # positive = excess debits
-                if _diff:
-                    from gl_grouping import auto_balance_by_token_group
-                    _bank2, _exp2 = _detect_accounts_for_auto_balance(
+                if _diff != 0:
+                    _bank2, _ = _detect_accounts_for_auto_balance(
                         [], rows, saved_mappings
                     )
                     if _bank2["name"]:
-                        # Build one synthetic still_blocked entry representing
-                        # the global imbalance so auto_balance_by_token_group
-                        # can produce the adjustment row.
-                        _synthetic_blocked = [{
-                            "transaction_id": "GLOBAL-BALANCE-ADJ",
-                            "line_count": 1,
-                            "reasons": ["global debit/credit imbalance"],
-                            "token": None,
-                            "debits": str(abs(_diff)) if _diff > 0 else "0.00",
-                            "credits": str(abs(_diff)) if _diff < 0 else "0.00",
-                        }]
-                        _synthetic2 = auto_balance_by_token_group(
-                            still_blocked=_synthetic_blocked,
-                            original_rows=rows,
-                            bank_account_name=_bank2["name"],
-                            bank_account_number=_bank2["number"],
-                            expense_offset_name=_exp2["name"],
-                            expense_offset_number=_exp2["number"],
+                        _abs = abs(_diff)
+                        # Find a date from any GL row
+                        _any_date = next(
+                            ((r.get("date") or "").strip()
+                             for r in rows
+                             if (r.get("date") or "").strip()),
+                            "",
                         )
-                        if _synthetic2:
-                            job["auto_balance_rows"] = _synthetic2
-                            jobs[job_id] = job
-                            db.save_job_state(job_id, job)
-                            logging.getLogger("app").info(
-                                "auto_balance(global): added %d synthetic rows for job %s "
-                                "diff=%s bank=%r",
-                                len(_synthetic2), job_id, _diff, _bank2["name"],
-                            )
-                            preview["balanced"] = True
-                            preview["would_post"] = True
+                        _synthetic_global = [{
+                            "date": _any_date,
+                            "account_number": _bank2["number"] or "",
+                            "account_name": _bank2["name"],
+                            "memo": "Auto-balance (global adjustment)",
+                            "reference_number": "",
+                            "transaction_id": "GLOBAL-BALANCE-ADJ",
+                            "vendor_name": "",
+                            # excess debits → add credit; excess credits → add debit
+                            "debit": f"{_abs:.2f}" if _diff < 0 else "0.00",
+                            "credit": f"{_abs:.2f}" if _diff > 0 else "0.00",
+                        }]
+                        job["auto_balance_rows"] = _synthetic_global
+                        jobs[job_id] = job
+                        db.save_job_state(job_id, job)
+                        logging.getLogger("app").info(
+                            "auto_balance(global): 1 synthetic row for job %s "
+                            "diff=%s bank=%r",
+                            job_id, _diff, _bank2["name"],
+                        )
+                        preview["balanced"] = True
+                        preview["would_post"] = True
             except Exception:  # noqa: BLE001
                 logging.getLogger("app").warning(
                     "auto_balance(global): failed for job %s", job_id, exc_info=True
