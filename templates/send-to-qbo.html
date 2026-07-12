@@ -4,6 +4,15 @@
 <section class="page" data-testid="send-to-qbo-page">
   {% include "_workflow_stepper.html" %}
 
+  {% if job.checkpoint == 'needs_attention' and job.last_error %}
+  <section class="card" style="padding:var(--space-4);margin-bottom:var(--space-5);
+                                border-left:3px solid var(--error,#dc2626);
+                                background:var(--error-bg,#fef2f2);">
+    <p class="eyebrow" style="color:var(--error,#dc2626);">Import failed</p>
+    <p style="margin:0;">{{ job.last_error }}</p>
+  </section>
+  {% endif %}
+
   {% if already_imported %}
     {# Surface the import-complete success panel as the FIRST piece of
        page content after the stepper. User testing: lawyers had to

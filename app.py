@@ -9083,13 +9083,21 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
                         "posted_count": len(created),
                         "total_count": len(txn_ids),
                     }
-                    _record_checkpoint(job, job_id, job_checkpoints.NEEDS_ATTENTION)
-                    _save_job(job_id)
                 except Exception:
                     _log.exception("Failed to record partial import for job=%s", job_id)
 
+            # ALWAYS move off IMPORTING on any failure, even a 0-JE first-chunk
+            # failure — otherwise the page is stuck showing the spinner forever
+            # (import_in_progress is checkpoint-only; nothing else ever un-sticks it).
+            job["last_error"] = f"{type(partial_e).__name__}: {partial_e}"[:500]
+            if isinstance(partial_e, QBOError):
+                job["last_error"] = (
+                    f"QBO error (status {partial_e.status_code}): {str(partial_e.body)[:400]}"
+                )
+            _record_checkpoint(job, job_id, job_checkpoints.NEEDS_ATTENTION)
             if tx_audit:
                 job["tx_audit"] = tx_audit
+            _save_job(job_id)
             raise partial_e
 
         job["tx_audit"] = tx_audit
