@@ -472,7 +472,7 @@
           </button>
         </div>
       </dialog>
-      <script>
+      <script nonce="{{ csp_nonce() }}">
         document.addEventListener('DOMContentLoaded', function () {
           var d = document.getElementById('overwrite-confirm-dialog');
           if (d) { try { d.showModal(); } catch(e) { console.error('[overwrite-dialog]', e); } }

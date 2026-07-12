@@ -381,7 +381,7 @@
         </div>
       </form>
 
-      <script>
+      <script nonce="{{ csp_nonce() }}">
         (function () {
           var form = document.getElementById("gl-send-form");
           var btn = document.getElementById("send-to-qbo-btn");
@@ -453,7 +453,7 @@
 </section>
 
 {% block extra_js %}
-<script>
+<script nonce="{{ csp_nonce() }}">
 (function () {
   var JOB_ID    = {{ job.id | tojson }};
   var CSRF      = {{ csrf_token() | tojson }};

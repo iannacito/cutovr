@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, abort, Response
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, abort, Response, g
 from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
 from werkzeug.datastructures import FileStorage
@@ -265,6 +265,16 @@ def _make_session_permanent():
         session.modified = True
 
 
+@app.before_request
+def _set_csp_nonce():
+    g.csp_nonce = secrets.token_urlsafe(16)
+
+
+@app.context_processor
+def _inject_csp_nonce():
+    return {"csp_nonce": g.get("csp_nonce", "")}
+
+
 @app.errorhandler(413)
 def _request_entity_too_large(_e):
     """Friendly message for uploads that exceed MAX_CONTENT_LENGTH."""
@@ -298,13 +308,12 @@ def _security_headers(resp):
     )
     # Conservative CSP: app templates do not load any third-party scripts
     # at runtime (only Google Fonts CSS + font files via <link>). We allow
-    # 'self' for everything plus the two Google Fonts hosts. No inline
-    # scripts; no eval. If a future feature needs an inline <script> the
-    # right move is a nonce, not loosening this header.
+    # 'self' for everything plus the two Google Fonts hosts. Inline scripts
+    # require a per-request nonce; see _set_csp_nonce and _inject_csp_nonce.
     resp.headers.setdefault(
         "Content-Security-Policy",
         "default-src 'self'; "
-        "script-src 'self'; "
+        f"script-src 'self' 'nonce-{g.get('csp_nonce', '')}'; "
         "style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; "
         "font-src 'self' https://fonts.gstatic.com data:; "
         "img-src 'self' data:; "

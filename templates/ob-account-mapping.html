@@ -771,7 +771,7 @@
     {% endif %}
   </div>
   {% endif %}
-  <script>
+  <script nonce="{{ csp_nonce() }}">
   // Account type → detail type vocabulary (same as account-mapping.html)
   const ACCT_DETAIL_TYPES = {
     "Bank":                    ["Checking","Savings","MoneyMarket","CashOnHand","TrustAccounts"],
@@ -825,7 +825,7 @@
     sel.addEventListener('change', () => populateAcctDetailTypes(sel));
   });
   </script>
-  <script>
+  <script nonce="{{ csp_nonce() }}">
   (function () {
     var expanded = false;
     window.toggleMappingOverride = function (idx) {

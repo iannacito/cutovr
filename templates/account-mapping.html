@@ -577,7 +577,7 @@
     {% endif %}
   </div>
   {% endif %}
-  <script>
+  <script nonce="{{ csp_nonce() }}">
   (function () {
     var expanded = false;
     window.toggleMappingOverride = function (idx) {
@@ -613,7 +613,7 @@
   {% endif %}
 </section>
 
-<script>
+<script nonce="{{ csp_nonce() }}">
 (function () {
   'use strict';
 
