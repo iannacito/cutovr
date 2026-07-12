@@ -9420,6 +9420,11 @@ def _import_to_qbo_impl(job_id):
                 "info",
             )
 
+    # After a successful import (import_summary saved), send the user back to
+    # send-to-qbo so the Processing card and Rejected-entries card are visible.
+    # On error, job_detail shows the flash error message as before.
+    if job.get("import_summary"):
+        return redirect(url_for("send_to_qbo", job_id=job_id))
     return redirect(url_for("job_detail", job_id=job_id))
 
 
