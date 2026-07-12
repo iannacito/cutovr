@@ -270,9 +270,14 @@ def _set_csp_nonce():
     g.csp_nonce = secrets.token_urlsafe(16)
 
 
+def _csp_nonce() -> str:
+    """Template helper: returns the current request's CSP nonce."""
+    return g.get("csp_nonce", "")
+
+
 @app.context_processor
 def _inject_csp_nonce():
-    return {"csp_nonce": g.get("csp_nonce", "")}
+    return {"csp_nonce": _csp_nonce}
 
 
 @app.errorhandler(413)
