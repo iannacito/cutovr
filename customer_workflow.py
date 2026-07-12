@@ -643,9 +643,21 @@ def build_customer_stages(
                     return fallback
             if review_blocker == "ready":
                 stage.cta_label = "Step 5: Send to QuickBooks"
-                stage.cta_url = _u(
-                    "send_to_qbo_entry", "/send-to-qbo"
-                )
+                # Use the job-scoped URL (not the heuristic dispatch) when we
+                # know which GL job the user is reviewing. This prevents the
+                # Step 4→5 CTA from jumping to a different GL batch when
+                # multiple GL files are uploaded. review_job_id is passed from
+                # preview_import (app.py line ~9758) so it is always GL1's id.
+                if review_job_id:
+                    stage.cta_url = _u(
+                        "send_to_qbo",
+                        f"/jobs/{review_job_id}/send-to-qbo",
+                        job_id=review_job_id,
+                    )
+                else:
+                    stage.cta_url = _u(
+                        "send_to_qbo_entry", "/send-to-qbo"
+                    )
             elif review_blocker == "unmatched":
                 if review_job_id:
                     stage.cta_url = _u(
