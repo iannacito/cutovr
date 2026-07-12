@@ -372,37 +372,6 @@
         </div>
       </form>
 
-      {# Plain-English loading state. Hidden on first render; revealed
-         after the form submits so the user knows the upload is still
-         working on larger imports. The form continues to submit
-         normally (no fetch / no JS-only path) — JS only disables the
-         button and shows the status panel so the page does not look
-         frozen. If JavaScript is off, the form still works; the user
-         just doesn't get the inline progress message. #}
-      <div id="send-to-qbo-progress"
-           data-testid="send-to-qbo-progress"
-           role="status" aria-live="polite"
-           style="{% if import_in_progress %}display:block;{% else %}display:none;{% endif %}margin-top:var(--space-5);padding:var(--space-4);
-                  border:1px solid var(--border, #ddd);border-radius:8px;
-                  background:var(--info-bg, #f4f8ff);">
-        <p style="margin:0;font-weight:600;">
-          <span class="spinner" aria-hidden="true"
-                style="display:inline-block;width:14px;height:14px;
-                       border:2px solid currentColor;border-right-color:transparent;
-                       border-radius:50%;vertical-align:-2px;margin-right:.5em;
-                       animation:spin 0.9s linear infinite;"></span>
-          Sending your data to QuickBooks&hellip;
-        </p>
-        <p class="muted" style="margin:.5em 0 0;">
-          <span id="import-progress-text">This may take a few minutes for larger imports.
-          <strong>Please keep this tab open</strong> &mdash; we&rsquo;ll show the
-          summary as soon as QuickBooks confirms the entries.</span>
-        </p>
-      </div>
-
-      <style>
-        @keyframes spin { to { transform: rotate(360deg); } }
-      </style>
       <script>
         (function () {
           var form = document.getElementById("gl-send-form");
@@ -437,6 +406,34 @@
       {% endif %}
     </section>
   {% endif %}
+
+  {# GL import progress panel — shown when import_in_progress, hidden otherwise.
+     Rendered at top level (not nested in the Ready-to-send section) so it's
+     visible when the Send button is hidden. #}
+  <div id="send-to-qbo-progress"
+       data-testid="send-to-qbo-progress"
+       role="status" aria-live="polite"
+       style="display:{{ 'block' if import_in_progress else 'none' }};margin-top:var(--space-5);padding:var(--space-4);
+              border:1px solid var(--border, #ddd);border-radius:8px;
+              background:var(--info-bg, #f4f8ff);margin-bottom:var(--space-6);">
+    <p style="margin:0;font-weight:600;">
+      <span class="spinner" aria-hidden="true"
+            style="display:inline-block;width:14px;height:14px;
+                   border:2px solid currentColor;border-right-color:transparent;
+                   border-radius:50%;vertical-align:-2px;margin-right:.5em;
+                   animation:spin 0.9s linear infinite;"></span>
+      Sending your data to QuickBooks&hellip;
+    </p>
+    <p class="muted" style="margin:.5em 0 0;">
+      <span id="import-progress-text">This may take a few minutes for larger imports.
+      <strong>Please keep this tab open</strong> &mdash; we&rsquo;ll show the
+      summary as soon as QuickBooks confirms the entries.</span>
+    </p>
+  </div>
+
+  <style>
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
 
   <div class="actions-row" style="margin-top:var(--space-5);">
     <a class="btn btn-link" href="{{ url_for('import_job_entry') }}"
@@ -624,7 +621,7 @@
           }
           if (data.overall === 'done') {
             clearInterval(importPollTimer);
-            progressPanel.style.display = 'none';
+            if (progressPanel) { progressPanel.style.display = 'none'; }
             location.reload();
           } else if (data.overall === 'failed') {
             clearInterval(importPollTimer);
