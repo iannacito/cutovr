@@ -6939,12 +6939,29 @@ def coa_apply_route(job_id):
 
 
 def _reparse_report_rows(job: dict, report_type: str):
-    """Re-decrypt the upload and re-run the parser. Returns [] on error."""
+    """Re-decrypt the upload and re-run the parser. Returns [] on error.
+
+    Logs which of the three failure branches fired — job has no
+    encrypted_file reference, the file is missing from disk, or
+    decrypt/parse raised — so a silent 0-rows result is diagnosable
+    instead of indistinguishable from "file legitimately has no rows".
+    """
+    job_id = job.get("id")
     enc_name = job.get("encrypted_file")
     if not enc_name:
+        _log.warning(
+            "_reparse_report_rows: job %s (report_type=%s) has no "
+            "encrypted_file reference — cannot re-parse",
+            job_id, report_type,
+        )
         return []
     enc_path = UPLOAD_DIR / enc_name
     if not enc_path.exists():
+        _log.warning(
+            "_reparse_report_rows: encrypted file %s for job %s "
+            "(report_type=%s) not found on disk",
+            enc_path, job_id, report_type,
+        )
         return []
     temp_path = UPLOAD_DIR / f"reparse_{secrets.token_urlsafe(8)}.csv"
     try:
@@ -6963,6 +6980,11 @@ def _reparse_report_rows(job: dict, report_type: str):
             rows = []
         return rows
     except Exception:  # noqa: BLE001
+        _log.exception(
+            "_reparse_report_rows: decrypt/parse FAILED for job %s "
+            "(report_type=%s) — see traceback above for exact cause",
+            job_id, report_type,
+        )
         return []
     finally:
         temp_path.unlink(missing_ok=True)
@@ -7023,6 +7045,19 @@ def _init_push_entities(
         # to re-decrypting from the encrypted upload on disk (same path as push_entity_list route).
         rows = _reparse_report_rows(hydrated, report_type)
     if not rows:
+        if hydrated.get("encrypted_file"):
+            # The job clearly has an uploaded file on record but 0 rows came
+            # back — that is a READ/PARSE failure (see _reparse_report_rows
+            # logs for which branch), not "nothing to push". Raise so the
+            # caller (_run_auto_steps) marks this step "failed" instead of
+            # silently completing with "Already in QBO" — which would let
+            # the PreGL gate open while these entities were never created.
+            raise RuntimeError(
+                f"Could not read the uploaded {report_type.replace('_', ' ')} "
+                "file for re-parsing — it may be missing from disk or failed "
+                "to parse. Check server logs for _reparse_report_rows, then "
+                "re-upload the file if needed."
+            )
         _log.warning("_init_push_entities: no parsed rows for %s job %s — file missing or unreadable", report_type, job_id)
         return 0, 0, 0
 
