@@ -8901,7 +8901,7 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
     Raises RuntimeError on fatal failure (caught by importer._run_import_background).
     """
     import time as _t
-    job = db.get_job(job_id)
+    job = db.hydrate_job(job_id)
     if not job:
         raise RuntimeError(f"Job {job_id} not found")
 
