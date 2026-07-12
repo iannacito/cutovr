@@ -2048,22 +2048,34 @@ def initialpost_start(job_id):
     """Start (or refresh) the pre-GL V/C sequence for a GL job.
 
     Called by JS when the user clicks "Send to QuickBooks".
-    Returns JSON with current step statuses.
+    Returns JSON with current step statuses. Never returns a raw 500 —
+    any failure returns {"overall": "failed", "error": "..."} so the
+    JS catch handler can show a friendly message.
     """
-    job, user = _job_or_403(job_id)
-    firm_id     = user["firm_id"]
-    real_import = QBO_REAL_IMPORT
+    try:
+        job, user = _job_or_403(job_id)
+        firm_id     = user["firm_id"]
+        real_import = QBO_REAL_IMPORT
 
-    all_jobs = db.list_jobs_for_firm(firm_id, limit=200) or []
-    state = start_sequence(
-        firm_id     = firm_id,
-        gl_job_id   = job_id,
-        jobs        = all_jobs,
-        push_fn     = _init_push_entities,
-        save_fn     = db.save_job_state,
-        real_import = real_import,
-    )
-    return jsonify(state)
+        all_jobs = db.list_jobs_for_firm(firm_id, limit=200) or []
+        state = start_sequence(
+            firm_id     = firm_id,
+            gl_job_id   = job_id,
+            jobs        = all_jobs,
+            push_fn     = _init_push_entities,
+            save_fn     = db.save_job_state,
+            real_import = real_import,
+        )
+        return jsonify(state)
+    except HTTPException:
+        raise
+    except Exception as _seq_exc:  # noqa: BLE001
+        _log.exception("initialpost_start: unhandled exception for job %s", job_id)
+        return jsonify({
+            "overall": "failed",
+            "steps": [],
+            "error": f"{type(_seq_exc).__name__}: {_seq_exc}",
+        }), 500
 
 
 @app.route("/initialpost/state/<job_id>")
@@ -8712,11 +8724,19 @@ def import_to_qbo(job_id):
         # existence and is the wrong status for callers.
         raise
     except Exception as e:  # noqa: BLE001 — last-resort net before 500
-        _audit(
-            "import_unhandled_error",
-            target_type="job", target_id=job_id,
-            details=f"{type(e).__name__}: {e}",
-        )
+        # Log first — captures the full traceback in Render logs even if
+        # the DB audit write below fails. Critical for diagnosing ISEs.
+        _log.exception("import_to_qbo: unhandled exception for job %s", job_id)
+        # Audit separately in its own try so a DB contention error here
+        # cannot cascade into a second unhandled exception and ISE.
+        try:
+            _audit(
+                "import_unhandled_error",
+                target_type="job", target_id=job_id,
+                details=f"{type(e).__name__}: {e}",
+            )
+        except Exception:  # noqa: BLE001
+            pass  # swallow — Render log above already has the detail
         # Best-effort: try to render the recovery card with whatever
         # context we can rehydrate. Fall all the way back to a flash +
         # redirect if even that fails — the customer must never see a
@@ -9348,6 +9368,8 @@ def _import_to_qbo_impl(job_id):
             )
 
     except QBOError as e:
+        # Log full traceback to Render before audit write (DB may be contended).
+        _log.exception("import_to_qbo: QBOError for job %s", job_id)
         # Always audit — diagnostic even if import already succeeded.
         _audit(
             "import_failed",
@@ -9380,6 +9402,7 @@ def _import_to_qbo_impl(job_id):
                 "info",
             )
     except ValueError as e:
+        _log.exception("import_to_qbo: ValueError for job %s", job_id)
         _audit("import_failed", target_type="job", target_id=job_id, details=str(e))
         if not job.get("import_summary"):
             job["status"] = "Import failed (validation)"
@@ -9404,6 +9427,9 @@ def _import_to_qbo_impl(job_id):
                 "info",
             )
     except Exception as e:  # noqa: BLE001
+        # Log full traceback before audit write — DB contention cannot
+        # silently swallow the real error.
+        _log.exception("import_to_qbo: unexpected error for job %s", job_id)
         _audit("import_failed", target_type="job", target_id=job_id, details=str(e))
         if not job.get("import_summary"):
             job["status"] = "Import failed"
