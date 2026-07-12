@@ -128,6 +128,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     qbo_results_json TEXT,
     import_summary_json TEXT,
     verification_json TEXT,
+    tx_audit_json   TEXT,
     last_import_id  INTEGER,
     status          TEXT,
     checkpoint      TEXT,
@@ -337,6 +338,7 @@ class AppDB:
         add_col("jobs", "qbo_results_json TEXT")
         add_col("jobs", "import_summary_json TEXT")
         add_col("jobs", "verification_json TEXT")
+        add_col("jobs", "tx_audit_json TEXT")
         add_col("jobs", "last_import_id INTEGER")
         add_col("jobs", "unmapped_accounts_json TEXT")
         add_col("jobs", "last_error_json TEXT")
@@ -816,6 +818,9 @@ class AppDB:
         if "verification" in job_dict:
             fields.append("verification_json")
             values.append(json.dumps(job_dict["verification"]) if job_dict["verification"] is not None else None)
+        if "tx_audit" in job_dict:
+            fields.append("tx_audit_json")
+            values.append(json.dumps(job_dict["tx_audit"]) if job_dict["tx_audit"] is not None else None)
         if "unmapped_accounts" in job_dict:
             fields.append("unmapped_accounts_json")
             values.append(json.dumps(job_dict["unmapped_accounts"]) if job_dict["unmapped_accounts"] else None)
@@ -950,6 +955,7 @@ class AppDB:
             ("qbo_results_json", "qbo_results"),
             ("import_summary_json", "import_summary"),
             ("verification_json", "verification"),
+            ("tx_audit_json", "tx_audit"),
             ("unmapped_accounts_json", "unmapped_accounts"),
             ("last_error_json", "last_error"),
             ("preflight_json", "preflight"),
