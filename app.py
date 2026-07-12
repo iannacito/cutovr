@@ -8874,6 +8874,25 @@ def import_to_qbo(job_id):
             return redirect(url_for("job_detail", job_id=job_id))
 
 
+def _je_description_for_display(payload: dict) -> str:
+    """Extract a display-friendly description from a JE payload."""
+    if payload.get("Description"):
+        return payload["Description"]
+    lines = []
+    for line in payload.get("Line", []):
+        if line.get("Description"):
+            lines.append(line["Description"])
+    return " · ".join(lines)[:80] if lines else ""
+
+
+def _je_amount_for_display(payload: dict) -> str:
+    """Extract total amount from a JE payload."""
+    total = Decimal("0")
+    for line in payload.get("Line", []):
+        total += Decimal(line.get("Amount") or "0")
+    return str(abs(total))
+
+
 def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
     """Run GL import in background thread.
 
@@ -9038,6 +9057,19 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
             for chunk_start in range(0, len(paired), CHUNK_SIZE):
                 chunk = paired[chunk_start:chunk_start + CHUNK_SIZE]
 
+                # Mark this chunk as in-flight immediately, before the QBO call
+                importer.update_entries(job_id, {
+                    txn_id: {
+                        "txn_id": txn_id,
+                        "doc_number": payload.get("DocNumber"),
+                        "date": payload.get("TxnDate"),
+                        "description": _je_description_for_display(payload),
+                        "amount": _je_amount_for_display(payload),
+                        "status": "processing",
+                    }
+                    for txn_id, payload in chunk
+                })
+
                 if progress_fn:
                     progress_fn(chunk_start)
 
@@ -9070,6 +9102,9 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
                             firm_id=user.get("firm_id"),
                         )
                         _record_created(existing_je, txn_id)
+                        importer.update_entries(job_id, {
+                            txn_id: {"txn_id": txn_id, "status": "ok"}
+                        })
                     else:
                         to_create_idx.append(idx)
                         to_create_payloads.append(payload)
@@ -9096,8 +9131,17 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
                                 "intuit_tid": getattr(qbo, "last_intuit_tid", None),
                             })
                             qbo_error_count += 1
+                            importer.update_entries(job_id, {
+                                txn_id: {
+                                    "txn_id": txn_id, "status": "rejected",
+                                    "reason": str(errors)[:300], "status_code": first.get("code"),
+                                }
+                            })
                             continue
                         _record_created(result.get("JournalEntry", {}), txn_id)
+                        importer.update_entries(job_id, {
+                            txn_id: {"txn_id": txn_id, "status": "ok"}
+                        })
 
                 if progress_fn:
                     progress_fn(min(chunk_start + CHUNK_SIZE, len(paired)))

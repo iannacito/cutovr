@@ -29,6 +29,7 @@ def _blank_state() -> dict:
         "skipped": 0,
         "msg": "",
         "thread": None,
+        "entries": {},
     }
 
 
@@ -67,18 +68,43 @@ def start_import(
     return {"overall": state["overall"], "pushed": state["pushed"], "total": state["total"]}
 
 
+def update_entries(job_id: str, updates: dict) -> None:
+    """Merge a batch of per-JE status updates into _IMPORT_STATE[job_id]['entries'].
+
+    `updates` is {txn_id: {...fields..., status: 'processing'|'ok'|'rejected'}}.
+    Rows marked 'ok' are dropped after one poll cycle (see get_import_state_json).
+    """
+    with _IMPORT_LOCK:
+        state = _IMPORT_STATE.get(job_id)
+        if state is None:
+            return
+        state.setdefault("entries", {})
+        state["entries"].update(updates)
+
+
 def get_import_state_json(job_id: str) -> dict | None:
-    """Return serializable import state (no Thread object)."""
+    """Return serializable import state (no Thread object).
+
+    Prunes 'ok' entries after reporting them once to keep payload size bounded.
+    """
     with _IMPORT_LOCK:
         state = _IMPORT_STATE.get(job_id)
         if state is None:
             return None
+        entries = state.get("entries", {})
+        out_entries = list(entries.values())
+        # Drop 'ok' rows after reporting them once — the frontend removes
+        # them from view on receipt, no need to keep re-sending forever.
+        for k, v in list(entries.items()):
+            if v.get("status") == "ok":
+                del entries[k]
         return {
             "overall": state["overall"],
             "pushed": state["pushed"],
             "total": state["total"],
             "skipped": state["skipped"],
             "msg": state["msg"],
+            "entries": out_entries,
         }
 
 

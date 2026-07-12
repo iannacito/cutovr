@@ -464,6 +464,68 @@
     @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 
+  {% set _show_processing = (import_in_progress or (job.checkpoint == 'needs_attention' and job.last_error)) %}
+  {% if _show_processing and job.preview and job.preview.sample_lines %}
+  <section class="card" id="processing-table-card" style="padding:var(--space-4);margin-bottom:var(--space-5);">
+    <p class="eyebrow" style="margin:0 0 var(--space-2);">Processing</p>
+    <table id="processing-table" style="width:100%;border-collapse:collapse;font-size:.85rem;">
+      <thead>
+        <tr style="text-align:left;border-bottom:1px solid var(--line);">
+          <th style="padding:4px 8px;">Date</th>
+          <th style="padding:4px 8px;">Account</th>
+          <th style="padding:4px 8px;">Amount</th>
+          <th style="padding:4px 8px;">Description</th>
+          <th style="padding:4px 8px;">Transaction reference</th>
+          <th style="padding:4px 8px;">Status</th>
+        </tr>
+      </thead>
+      <tbody id="processing-table-body">
+        {% for l in job.preview.sample_lines %}
+        <tr data-txn-id="{{ l.transaction_id }}">
+          <td style="padding:4px 8px;">{{ l.date }}</td>
+          <td style="padding:4px 8px;">{{ l.account }}{% if l.qbo_acct_num %} <small class="muted">&middot; #{{ l.qbo_acct_num }}</small>{% endif %}</td>
+          <td style="padding:4px 8px;">${{ l.amount }}{% if l.posting_type %} <small class="muted">&middot; {{ l.posting_type }}</small>{% endif %}</td>
+          <td style="padding:4px 8px;" class="muted">{{ l.description }}</td>
+          <td style="padding:4px 8px;"><code class="muted" style="font-size:.85em;">{{ l.transaction_id }}</code></td>
+          <td style="padding:4px 8px;" class="row-status" data-txn-id="{{ l.transaction_id }}">
+            <span style="color:var(--text-muted);">Queued</span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if job.preview.sample_lines|length < (job.summary or {}).row_count|default(0) %}
+    <p class="muted" style="font-size:.8rem;margin-top:var(--space-2);">
+      Showing the first {{ job.preview.sample_lines|length }} of
+      {{ (job.summary or {}).row_count }} lines — the rest post the same way, just not
+      all individually listed here.
+    </p>
+    {% endif %}
+  </section>
+
+  <section class="card" id="rejected-card" style="padding:var(--space-4);margin-bottom:var(--space-5);
+             border-left:3px solid var(--error,#dc2626);">
+    <p class="eyebrow" style="margin:0 0 var(--space-2);">Rejected</p>
+    <table id="rejected-table" style="width:100%;border-collapse:collapse;font-size:.85rem;">
+      <thead>
+        <tr style="text-align:left;border-bottom:1px solid var(--line);">
+          <th style="padding:4px 8px;">Date</th>
+          <th style="padding:4px 8px;">Account</th>
+          <th style="padding:4px 8px;">Amount</th>
+          <th style="padding:4px 8px;">Description</th>
+          <th style="padding:4px 8px;">Transaction reference</th>
+          <th style="padding:4px 8px;">Reason</th>
+        </tr>
+      </thead>
+      <tbody id="rejected-table-body">
+        <tr id="rejected-empty-row">
+          <td colspan="6" style="padding:8px;color:var(--text-muted);">None yet.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+
   <div class="actions-row" style="margin-top:var(--space-5);">
     <a class="btn btn-link" href="{{ url_for('import_job_entry') }}"
        data-testid="back-to-step-4">
@@ -647,6 +709,38 @@
           if (progressText && data.overall === 'running') {
             var pct = data.total > 0 ? Math.round((data.pushed / data.total) * 100) : 0;
             progressText.textContent = 'Progress: ' + data.pushed + ' of ' + data.total + ' posted (' + pct + '%)…';
+          }
+          // Update processing/rejected table rows from entries
+          if (data.entries) {
+            (data.entries || []).forEach(function (entry) {
+              if (!entry.txn_id) return;
+              var rows = document.querySelectorAll('[data-txn-id="' + entry.txn_id + '"]');
+              rows.forEach(function (row) {
+                var statusCell = row.querySelector('.row-status[data-txn-id="' + entry.txn_id + '"]');
+                if (!statusCell) return;
+                if (entry.status === 'ok') {
+                  statusCell.innerHTML = '<span style="color:var(--success,#2f7d32);">✓ OK</span>';
+                  setTimeout(function () { row.style.display = 'none'; }, 500);
+                } else if (entry.status === 'rejected') {
+                  statusCell.innerHTML = '<span style="color:var(--error,#dc2626);">✗ Rejected</span>';
+                  var rejTable = document.getElementById('rejected-table-body');
+                  var emptyRow = document.getElementById('rejected-empty-row');
+                  if (rejTable) {
+                    if (emptyRow) emptyRow.style.display = 'none';
+                    var rejRow = document.createElement('tr');
+                    rejRow.innerHTML = '<td style="padding:4px 8px;">' + (entry.date || '') + '</td>' +
+                      '<td style="padding:4px 8px;">' + (entry.account || '') + '</td>' +
+                      '<td style="padding:4px 8px;">$' + (entry.amount || '') + '</td>' +
+                      '<td style="padding:4px 8px;" class="muted">' + (entry.description || '') + '</td>' +
+                      '<td style="padding:4px 8px;"><code class="muted" style="font-size:.85em;">' + (entry.txn_id || '') + '</code></td>' +
+                      '<td style="padding:4px 8px;font-size:.8rem;">' + (entry.reason || '') + '</td>';
+                    rejTable.appendChild(rejRow);
+                  }
+                } else if (entry.status === 'processing') {
+                  statusCell.innerHTML = '<span style="color:var(--text-muted);">Processing…</span>';
+                }
+              });
+            });
           }
           if (data.overall === 'done') {
             clearInterval(importPollTimer);
