@@ -8858,6 +8858,16 @@ def import_to_qbo(job_id):
             )
             return redirect(url_for("job_detail", job_id=job_id))
 
+        # Set checkpoint to IMPORTING synchronously before starting the thread.
+        # Otherwise, if the redirect's page-render completes before the thread's first
+        # checkpoint write (very plausible — the redirect is near-instant, the thread
+        # has network I/O first), the page computes "nothing in progress" and doesn't
+        # embed the polling script, leaving the user with a static page forever.
+        # This moves the race from "hope the thread writes first" to "guarantee the
+        # checkpoint is already set before the client ever reads it."
+        _record_checkpoint(job, job_id, job_checkpoints.IMPORTING)
+        db.save_job_state(job_id, job)
+
         # Start background import thread (will do all heavy lifting)
         importer.start_import(job_id, _run_gl_import, db.save_job_state, QBO_REAL_IMPORT)
 
