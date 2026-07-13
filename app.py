@@ -5602,6 +5602,143 @@ def operator_diag6000(job_id):
     return jsonify(result)
 
 
+@app.route("/diag/gl-6000-bisect/<job_id>")
+@login_required
+def diag_gl_6000_bisect(job_id):
+    """GL 6000/-30006 bisection ladder — operator-only diagnostic tool.
+
+    Tests minimal JEs with incrementally added fields to isolate which
+    field or account state causes the persistent "Unexpected Internal Error"
+    rejection. Posts small reversible test JEs (delete manually after each
+    run if unexpectedly successful). Runs against the live connected realm.
+
+    Requires firm ownership (same gating as dev_reset_migration).
+    """
+    _job, _user = _job_or_403(job_id)
+    qbo_conn = _get_qbo_connection(job_id)
+    if not qbo_conn:
+        return jsonify({"error": "No QuickBooks connection found"}), 400
+
+    step = int(request.args.get("step", 0))
+    if step > 6:
+        return jsonify({"error": "invalid step (0-6 only)"}), 400
+
+    try:
+        qbo, _ = _get_qbo_client(job_id, current_user())
+        qbo_accts = qbo.get_accounts()
+    except Exception as e:
+        return jsonify({"error": f"Could not get QBO client: {e}"}), 400
+
+    # Resolve account IDs for the bisection (use first two accounts from mapping)
+    ids = _diag6000_account_ids(_job, qbo_accts, qbo_conn)
+    if len(ids) < 2:
+        return jsonify({"error": "Could not resolve 2 account IDs for bisection"}), 400
+
+    account1_id, account1_name = ids[0][1], ids[0][0]
+    account2_id, account2_name = ids[1][1], ids[1][0]
+
+    result = {
+        "step": step,
+        "description": _DIAG6000_STEPS.get(step, "unknown"),
+        "account1": {"id": account1_id, "name": account1_name},
+        "account2": {"id": account2_id, "name": account2_name},
+    }
+
+    # Build the JE payload based on ladder step
+    # Step 0: Minimal (value only, no extra fields)
+    # Step 1: + TxnDate (today)
+    # Step 2: + DocNumber
+    # Step 3: + PrivateNote
+    # Step 4: + Description on each line
+    # Step 5: + AccountRef.name
+    # Step 6: + Entity (Vendor/Customer — if applicable)
+
+    je_payload = {
+        "Line": [
+            {
+                "DetailType": "JournalEntryLineDetail",
+                "Amount": "1.00",
+                "JournalEntryLineDetail": {
+                    "PostingType": "Debit",
+                    "AccountRef": {"value": str(account1_id)},
+                }
+            },
+            {
+                "DetailType": "JournalEntryLineDetail",
+                "Amount": "1.00",
+                "JournalEntryLineDetail": {
+                    "PostingType": "Credit",
+                    "AccountRef": {"value": str(account2_id)},
+                }
+            },
+        ],
+    }
+
+    # Build payload incrementally based on step
+    if step >= 1:
+        # Step 1: Add TxnDate (today's date in ISO format)
+        from datetime import date
+        je_payload["TxnDate"] = str(date.today())
+
+    if step >= 2:
+        # Step 2: Add DocNumber (test value to allow re-running)
+        import random
+        je_payload["DocNumber"] = str(random.randint(100000, 999999))
+
+    if step >= 3:
+        # Step 3: Add PrivateNote
+        je_payload["PrivateNote"] = "DIAG6000 bisection test"
+
+    if step >= 4:
+        # Step 4: Add Description on each line
+        for line in je_payload["Line"]:
+            line["Description"] = f"DIAG6000 test step {step}"
+
+    if step >= 5:
+        # Step 5: Add AccountRef.name (the mapped account name, with padding)
+        je_payload["Line"][0]["JournalEntryLineDetail"]["AccountRef"]["name"] = account1_name
+        je_payload["Line"][1]["JournalEntryLineDetail"]["AccountRef"]["name"] = account2_name
+
+    if step >= 6:
+        # Step 6: Add Entity (Vendor or Customer if applicable)
+        # For simplicity, only add if this is an AR/AP account
+        # Otherwise leave Entity absent (not all accounts require it)
+        pass  # Skip for now — most test accounts are balance sheet, not AR/AP
+
+    result["payload"] = je_payload
+
+    # Post the JE
+    try:
+        je_resp = qbo.create_journal_entry(je_payload)
+        result["outcome"] = "POSTED"
+        je_entry = je_resp.get("JournalEntry", je_resp)
+        result["je_id"] = je_entry.get("Id")
+        result["je_doc_number"] = je_entry.get("DocNumber")
+        result["intuit_tid"] = qbo.last_intuit_tid
+
+        _log.warning(
+            "DIAG6000: bisection step=%s POSTED je_id=%s tid=%s",
+            step, je_entry.get("Id"), qbo.last_intuit_tid,
+        )
+
+        # Provide next-step link if not at the end
+        if step < 6:
+            result["next_step"] = f"/diag/gl-6000-bisect/{job_id}?step={step + 1}"
+
+    except QBOError as e:
+        result["outcome"] = "FAULT"
+        result["status_code"] = e.status_code
+        result["fault_body"] = str(e.body)[:2000] if e.body else ""
+        result["intuit_tid"] = e.intuit_tid
+
+        _log.warning(
+            "DIAG6000: bisection step=%s FAULT status=%s tid=%s body=%s",
+            step, e.status_code, e.intuit_tid, str(e.body)[:500],
+        )
+
+    return jsonify(result)
+
+
 def _gl_rows_for_snapshot(gl_rows):
     """Return ``gl_rows`` as a list of plain dicts safe to JSON-encode.
 

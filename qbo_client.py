@@ -216,6 +216,19 @@ class QBOClient:
         )
         attempts = max(1, int(max_retries) + 1)
         last_exc: Exception | None = None
+
+        # Pre-request diagnostic log (DIAG6000: GL import error diagnosis)
+        import json
+        _payload_display = dict(journal_entry_payload)
+        for line in _payload_display.get("Line", []):
+            if "Description" in line and len(line["Description"]) > 80:
+                line = dict(line)
+                line["Description"] = line["Description"][:80] + "..."
+        _log.warning(
+            "DIAG6000: create_journal_entry posting JE payload: %s",
+            json.dumps(_payload_display, default=str),
+        )
+
         for attempt in range(attempts):
             try:
                 response = requests.post(
@@ -245,7 +258,12 @@ class QBOClient:
 
             tid = self._record_tid(response)
             if response.status_code < 400:
-                return response.json()
+                result = response.json()
+                _log.warning(
+                    "DIAG6000: create_journal_entry success status=%s tid=%s result=%s",
+                    response.status_code, tid, json.dumps(result, default=str)[:2000],
+                )
+                return result
 
             if _is_transient_status(response.status_code) and attempt + 1 < attempts:
                 delay = _retry_after_seconds(
@@ -259,6 +277,13 @@ class QBOClient:
                 _sleep(delay)
                 continue
 
+            # Persistent failure — log full fault details
+            resp_data = response.json() if response.headers.get("content-type", "").startswith("application/json") else {}
+            fault = resp_data.get("Fault", {})
+            _log.warning(
+                "DIAG6000: create_journal_entry fault status=%s tid=%s fault=%s",
+                response.status_code, tid, json.dumps(fault, default=str)[:2000],
+            )
             raise QBOError(
                 f"QBO returned {response.status_code}: {response.text}",
                 status_code=response.status_code,
