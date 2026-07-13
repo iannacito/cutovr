@@ -733,6 +733,21 @@ class QBOClient:
         return result.get("QueryResponse", {}).get("Vendor", [])
 
 
+def _is_inactive_ref_error(body):
+    """Return True if the QBO error body contains a 610 inactive-ref fault."""
+    if not body:
+        return False
+    try:
+        import json as _json
+        data = _json.loads(body)
+        for err in ((data.get("Fault") or {}).get("Error") or []):
+            if str(err.get("code")) == "610":
+                return True
+    except Exception:
+        pass
+    return False
+
+
 class QBOError(Exception):
     """A QBO API error.
 
@@ -740,6 +755,9 @@ class QBOError(Exception):
     headers, when present. It is safe to surface to operators and even to
     end users as a support reference — it identifies the request to Intuit
     support but contains no token, secret, or PII.
+
+    `is_inactive_ref` is True when QBO returned error code 610 — the JE
+    exists but references an inactive account. Cannot delete until reactivated.
     """
 
     def __init__(self, message, status_code=None, body=None, intuit_tid=None):
@@ -747,3 +765,4 @@ class QBOError(Exception):
         self.status_code = status_code
         self.body = body
         self.intuit_tid = intuit_tid
+        self.is_inactive_ref: bool = _is_inactive_ref_error(body)

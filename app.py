@@ -3126,7 +3126,7 @@ def _hub_batch_label(job: dict) -> str:
     type_label = _REPORT_TYPE_LABELS.get(rt, rt.replace("_", " ").title())
     if rt not in _HUB_PERIOD_REPORT_TYPES:
         return type_label
-    src = job.get("source_file") or ""
+    src = _hub_display_filename(job.get("source_file") or "")
     period = _hub_period_label(src)
     return f"{type_label} {period}" if period else type_label
 
@@ -14194,6 +14194,7 @@ def revert_import(job_id):
 
     qbo_results = job.get("qbo_results", [])
     deleted_count = 0
+    inactive_count = 0
     failed_count = 0
     failed_entries = []
 
@@ -14215,7 +14216,7 @@ def revert_import(job_id):
 
             sync_token = je.get("SyncToken")
             if not sync_token:
-                failed_entries.append(f"{result.get('DocNumber', je_id)}: no SyncToken")
+                failed_entries.append(f"JE {result.get('DocNumber', je_id)}: missing SyncToken")
                 failed_count += 1
                 continue
 
@@ -14226,19 +14227,43 @@ def revert_import(job_id):
                 "Deleted JournalEntry %s (%s) for job %s",
                 je_id, result.get("DocNumber"), job_id,
             )
+        except QBOError as e:  # noqa: BLE001
+            if e.is_inactive_ref:
+                inactive_count += 1
+                _log = logging.getLogger("app")
+                _log.warning(
+                    "JE %s has inactive account reference (QBO 610) for job %s",
+                    je_id, job_id,
+                )
+            else:
+                doc = result.get("DocNumber", je_id)
+                failed_entries.append(f"JE {doc}: QBO {e.status_code or 'error'} — contact support")
+                failed_count += 1
+                _log = logging.getLogger("app")
+                _log.warning("Failed to delete JE %s: %s", je_id, e)
         except Exception as e:  # noqa: BLE001
-            failed_entries.append(f"{result.get('DocNumber', je_id)}: {e}")
+            doc = result.get("DocNumber", je_id)
+            failed_entries.append(f"JE {doc}: unexpected error ({type(e).__name__})")
             failed_count += 1
             _log = logging.getLogger("app")
             _log.warning("Failed to delete JE %s: %s", je_id, e)
 
-    # Only clear import state when the revert fully succeeded.
-    # If any deletes failed, preserve the IDs so the user can retry.
+    # Only clear import state when the revert fully succeeded (no hard
+    # failures — inactive-account holds don't count as failures, they're
+    # a separate, actionable state).
     if failed_count == 0:
         job["import_summary"] = None
         job["qbo_results"] = None
         job["checkpoint"] = "reviewed"   # reset so job can be re-imported
-        job["status"] = "Reverted — ready to re-import"
+        if inactive_count > 0:
+            job["status"] = (
+                f"Reverted — {deleted_count} deleted. Note: {inactive_count} "
+                "entries still exist in QuickBooks (referenced accounts are "
+                "inactive — re-activate them in QBO, then click Revert again "
+                "to remove them)."
+            )
+        else:
+            job["status"] = "Reverted — ready to re-import"
         # Delete from import history if the method exists
         try:
             last_import = history.get_latest_completed_import_for_job(job_id)
@@ -14248,8 +14273,9 @@ def revert_import(job_id):
             pass  # method may not exist or import already deleted
     else:
         job["status"] = (
-            f"Revert partial — {deleted_count} deleted, {failed_count} failed. "
-            "Fix the error and try again."
+            f"Revert partial — {deleted_count} deleted"
+            + (f", {inactive_count} blocked by inactive QBO accounts" if inactive_count else "")
+            + f", {failed_count} failed. Fix the error and try again."
         )
     _save_job(job_id)
 
@@ -14257,18 +14283,28 @@ def revert_import(job_id):
         "import_reverted",
         target_type="job",
         target_id=job_id,
-        details=f"deleted {deleted_count}, failed {failed_count}",
+        details=f"deleted={deleted_count} inactive={inactive_count} failed={failed_count}",
     )
 
-    if failed_count == 0:
+    if failed_count == 0 and inactive_count == 0:
         flash(
             f"Revert complete. {deleted_count} journal entries were deleted from QuickBooks.",
             "success",
         )
+    elif failed_count == 0 and inactive_count > 0:
+        flash(
+            f"Revert mostly complete: {deleted_count} deleted. {inactive_count} "
+            "entries still exist in QuickBooks — they reference accounts that "
+            "have been made inactive. Re-activate those accounts in "
+            "QuickBooks, then click Revert again to remove them.",
+            "warning",
+        )
     else:
         flash(
-            f"Revert partial: {deleted_count} deleted, {failed_count} failed. "
-            f"Failed entries: {'; '.join(failed_entries[:5])}",
+            f"Revert partial: {deleted_count} deleted"
+            + (f", {inactive_count} blocked by inactive QBO accounts" if inactive_count else "")
+            + f", {failed_count} could not be deleted. Check the QuickBooks "
+            "connection and try again.",
             "warning",
         )
 
