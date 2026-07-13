@@ -20,6 +20,7 @@ threat model.
 from __future__ import annotations
 
 import csv
+import json
 from collections import OrderedDict
 from decimal import Decimal
 from io import StringIO
@@ -33,6 +34,7 @@ from pclaw_pipeline import (
     build_account_mapping_from_names,
     build_account_mapping_from_numbers,
     build_account_type_index,
+    build_journal_entry_payload,
     derive_entity_hint,
     find_unmapped_accounts,
     group_rows_by_transaction,
@@ -171,6 +173,18 @@ def build_dry_run_preview(
             if len([r for r in txn_rows if money(r["debit"]) or money(r["credit"])]) < 2:
                 blockers.append("fewer than 2 posting lines")
 
+        # Build payload JSON once per transaction for format debugging
+        payload_json = None
+        if not blockers:  # Only build for non-blocked transactions
+            try:
+                _payload = build_journal_entry_payload(
+                    txn_id, txn_rows, mapping, mapping_mode=mapping_mode
+                )
+                payload_json = json.dumps(_payload, indent=2, default=str)
+            except Exception as _pe:  # noqa: BLE001
+                payload_json = f"(payload could not be built: {_pe})"
+
+        _first_sample_line = True
         for r in txn_rows:
             debit = money(r["debit"])
             credit = money(r["credit"])
@@ -211,7 +225,7 @@ def build_dry_run_preview(
                     rec["lines"] += 1
 
             if len(sample_lines) < sample_limit and (debit or credit):
-                sample_lines.append({
+                sample_line = {
                     "transaction_id": txn_id,
                     "date": r.get("date"),
                     "account": display,
@@ -221,7 +235,12 @@ def build_dry_run_preview(
                     "amount": _dollar(debit if debit else credit),
                     "description": (r.get("description") or "")[:120],
                     "mapped": mapped,
-                })
+                }
+                # Attach payload JSON to first sample line of each transaction
+                if _first_sample_line and payload_json:
+                    sample_line["payload_json"] = payload_json
+                    _first_sample_line = False
+                sample_lines.append(sample_line)
 
         if blockers:
             txn_accounts = list(dict.fromkeys(

@@ -477,6 +477,7 @@
           <th style="padding:4px 8px;">Description</th>
           <th style="padding:4px 8px;">Transaction reference</th>
           <th style="padding:4px 8px;">Status</th>
+          <th style="padding:4px 8px;">JSON</th>
         </tr>
       </thead>
       <tbody id="processing-table-body">
@@ -489,6 +490,13 @@
           <td style="padding:4px 8px;"><code class="muted" style="font-size:.85em;">{{ l.transaction_id }}</code></td>
           <td style="padding:4px 8px;" class="row-status" data-txn-id="{{ l.transaction_id }}">
             <span style="color:var(--text-muted);">Queued</span>
+          </td>
+          <td style="padding:4px 8px;">
+            {% if l.payload_json %}
+            <details><summary style="cursor:pointer;">{&hellip;}</summary>
+              <pre style="max-width:34rem;max-height:18rem;overflow:auto;font-size:.7rem;">{{ l.payload_json }}</pre>
+            </details>
+            {% else %}&mdash;{% endif %}
           </td>
         </tr>
         {% endfor %}
