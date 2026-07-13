@@ -9698,7 +9698,7 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
 
         # Update checkpoint to IMPORTING
         _record_checkpoint(job, job_id, job_checkpoints.IMPORTING)
-        _save_job(job_id)
+        db.save_job_state(job_id, job)
 
         # Helper to update Processing table entries for a txn_id and all its sub-references
         def _update_entry_with_subrefs(txn_id: str, status_update: dict) -> None:
@@ -9909,11 +9909,11 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
             _record_checkpoint(job, job_id, job_checkpoints.NEEDS_ATTENTION)
             if tx_audit:
                 job["tx_audit"] = tx_audit
-            _save_job(job_id)
+            db.save_job_state(job_id, job)
             raise partial_e
 
         job["tx_audit"] = tx_audit
-        _save_job(job_id)
+        db.save_job_state(job_id, job)
 
         import_id = history.record_import(
             job_id=job_id,
@@ -9998,7 +9998,7 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
             _record_checkpoint(job, job_id, job_checkpoints.NEEDS_ATTENTION)
         else:
             _record_checkpoint(job, job_id, job_checkpoints.COMPLETED)
-        _save_job(job_id)
+        db.save_job_state(job_id, job)
 
         try:
             _verify_import(job, qbo)
@@ -10007,7 +10007,7 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
                 "status": "error",
                 "error": str(ve),
             }
-        _save_job(job_id)
+        db.save_job_state(job_id, job)
     else:
         raise RuntimeError("Non-GL format not supported in background import")
 
