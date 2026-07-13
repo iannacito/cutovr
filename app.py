@@ -9216,6 +9216,12 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
 
     if is_gl_format(fieldnames):
         from gl_row_quality import is_droppable_row as _gate_row_filter
+
+        # Row-conservation ledger: capture all rows through the pipeline
+        parsed_rows = list(rows)  # raw rows from file
+        dropped_rows = [{"txn": r.get("transaction_id", ""), "why": "blank/zero-activity listing row"}
+                       for r in rows if _gate_row_filter(r)]
+
         _rows_for_gate = [r for r in rows if not _gate_row_filter(r)]
         gate_ok, gate_blockers = evaluate_import_gate(_rows_for_gate, fieldnames)
 
@@ -9320,6 +9326,7 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
         created_transactions = []
         tx_audit: list[dict] = []
         qbo_error_count = 0
+        reused_count = 0  # Track idempotent reuse for ledger
 
         # Update checkpoint to IMPORTING
         _record_checkpoint(job, job_id, job_checkpoints.IMPORTING)
@@ -9401,6 +9408,7 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
                             details=f"reused existing JE for DocNumber {doc_number}",
                             firm_id=user.get("firm_id"),
                         )
+                        reused_count += 1
                         _record_created(existing_je, txn_id)
                         importer.update_entries(job_id, {
                             txn_id: {"txn_id": txn_id, "status": "ok"}
@@ -9542,12 +9550,52 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
         )
         job["last_import_id"] = import_id
 
+        # Build row-conservation ledger
+        gate_excluded_rows: list = []  # No rows excluded at gate (fail-closed on any blocker)
+        posted_count = len(created)
+        rejected_count = qbo_error_count
+
+        import_ledger = {
+            "parsed_rows": len(parsed_rows),
+            "dropped_rows": dropped_rows,
+            "gate_excluded_rows": gate_excluded_rows,
+            "planned_txns": len(txn_ids),
+            "posted": posted_count,
+            "reused_idempotent": reused_count,
+            "rejected": rejected_count,
+        }
+
+        # Verify row conservation: all rows must be accounted for
+        total_accounted = (
+            len(dropped_rows)
+            + len(gate_excluded_rows)
+            + posted_count
+            + reused_count
+            + rejected_count
+        )
+        import_ledger["conservation_ok"] = (len(parsed_rows) == total_accounted)
+
+        if not import_ledger["conservation_ok"]:
+            _log.warning(
+                "GL import ledger mismatch job=%s parsed=%d accounted=%d "
+                "(dropped=%d gate_excluded=%d posted=%d reused=%d rejected=%d)",
+                job_id,
+                len(parsed_rows),
+                total_accounted,
+                len(dropped_rows),
+                len(gate_excluded_rows),
+                posted_count,
+                reused_count,
+                rejected_count,
+            )
+
         job["status"] = f"Imported {len(created)} journal entries to QuickBooks"
         job["unmapped_accounts"] = None
         job["unmapped_account_guidance"] = None
         job["last_error"] = None
         job["entity_name_blockers"] = None
         job["qbo_results"] = created
+        job["import_ledger"] = import_ledger
         job["import_summary"] = {
             "source_transaction_count": len(txn_ids),
             "qbo_je_count": len(created),
@@ -9556,7 +9604,12 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
             "source_credit_total": str(source_credit),
             "balanced": source_debit == source_credit,
         }
-        _record_checkpoint(job, job_id, job_checkpoints.COMPLETED)
+
+        # If conservation check fails, flag for review
+        if not import_ledger["conservation_ok"]:
+            _record_checkpoint(job, job_id, job_checkpoints.NEEDS_ATTENTION)
+        else:
+            _record_checkpoint(job, job_id, job_checkpoints.COMPLETED)
         _save_job(job_id)
 
         try:
