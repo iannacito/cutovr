@@ -295,6 +295,20 @@ class QBOClient:
         attempts = max(1, int(DEFAULT_MAX_RETRIES) + 1)
         last_exc = None
 
+        # Diagnostic logging: capture batch structure before posting
+        if batch_items:
+            sample_item = batch_items[0]
+            sample_je = sample_item.get("JournalEntry", {})
+            sample_lines = sample_je.get("Line", [])
+            _log.debug(
+                "create_journal_entries_batch: posting %d items, sample structure: "
+                "JE keys=%s, Line count=%d, Line[0] keys=%s",
+                len(batch_items),
+                list(sample_je.keys()) if sample_je else [],
+                len(sample_lines),
+                list(sample_lines[0].keys()) if sample_lines else [],
+            )
+
         for attempt in range(attempts):
             try:
                 response = requests.post(
@@ -322,6 +336,19 @@ class QBOClient:
             if response.status_code < 400:
                 resp_items = response.json().get("BatchItemResponse", [])
                 by_bid = {item.get("bId"): item for item in resp_items}
+
+                # Log any faults for diagnosis
+                fault_count = sum(1 for item in resp_items if "Fault" in item)
+                if fault_count > 0:
+                    sample_fault = next((item.get("Fault") for item in resp_items if "Fault" in item), {})
+                    sample_errors = sample_fault.get("Error", [{}])
+                    _log.warning(
+                        "create_journal_entries_batch: %d of %d items returned Fault. "
+                        "Sample error: code=%s, message=%s",
+                        fault_count, len(resp_items),
+                        sample_errors[0].get("code"), sample_errors[0].get("Message"),
+                    )
+
                 return [
                     by_bid.get(str(i + 1)) or {"Fault": {"Error": [{"Message": "Missing batch response item", "code": "MISSING"}]}}
                     for i in range(len(payloads))
