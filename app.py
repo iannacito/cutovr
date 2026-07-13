@@ -2391,6 +2391,7 @@ def send_to_qbo(job_id: str):
             "entity_linking_status": job.get("entity_linking_status"),
             "pending_entity_links_count": len(job.get("pending_entity_links") or []),
             "pending_entity_links_failures": job.get("pending_entity_links_failures") or [],
+            "pending_entity_links": job.get("pending_entity_links") or [],
         }, indent=2)
 
     return render_template(
@@ -14406,19 +14407,25 @@ def _run_pass2_entity_linking(job, job_id, qbo, user, qbo_conn, account_type_ind
 
             # Find lines matching this entity type and add Entity to them
             modified_lines = []
+            any_line_matched = False
             account_type = link_entry.get("account_type")
             for line in lines:
                 line_copy = dict(line)
                 detail = line_copy.get("JournalEntryLineDetail", {})
                 account_ref = detail.get("AccountRef", {})
                 account_id = str(account_ref.get("value") or "")
-                line_account_type = account_type_index.get(account_id) if account_type else None
+                line_account_type = account_type_index.get(account_id)
 
-                # Only add Entity to lines matching the expected account type
-                should_add_entity = (
-                    (kind == "Customer" and line_account_type == "Accounts Receivable") or
-                    (kind == "Vendor" and line_account_type in (None, "Accounts Payable"))
-                )
+                # Match the line whose CURRENT account type equals what Pass 1
+                # recorded when it captured this hint (link_entry["account_type"]),
+                # not a hardcoded AR/AP-only category. Per Bug 43/VERDICT
+                # (2026-07-13), legitimate Vendor hints also originate on non-AR/AP
+                # lines (e.g. a Bank or Income line carrying a real PCLaw "Pd
+                # To/Rcvd From" value) — restricting Vendor matches to (None,
+                # "Accounts Payable") silently excluded those lines: the sparse
+                # update succeeded at QBO with no actual change, so it was recorded
+                # as "linked" even though nothing attached.
+                should_add_entity = bool(account_type) and line_account_type == account_type
 
                 if should_add_entity:
                     detail["Entity"] = {
@@ -14426,7 +14433,17 @@ def _run_pass2_entity_linking(job, job_id, qbo, user, qbo_conn, account_type_ind
                         "EntityRef": {"value": entity_id, "name": name},
                     }
                     line_copy["JournalEntryLineDetail"] = detail
+                    any_line_matched = True
                 modified_lines.append(line_copy)
+
+            if not any_line_matched:
+                failed_links.append({
+                    "doc_number": doc_number,
+                    "reason": f"No line matched account_type={account_type!r} — Entity not attached",
+                    "kind": kind,
+                    "name": name,
+                })
+                continue
 
             # Sparse-update the JE
             update_payload = {
