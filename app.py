@@ -47,6 +47,7 @@ from pclaw_pipeline import (
     group_rows_by_transaction,
     money,
     GL_REQUIRED_COLUMNS,
+    filter_live_mappings,
 )
 from qbo_auth import QBOAuthHandler
 from qbo_client import QBOClient, QBOError
@@ -5393,9 +5394,11 @@ def _diag6000_account_ids(job, qbo_response, qbo_conn):
     qbo_accounts = qbo_response.get("QueryResponse", {}).get("Account") or []
     active_by_id = {str(a.get("Id")): a.get("Active", True) for a in qbo_accounts if a.get("Id")}
 
+    # Filter stale mappings and get live ones
+    saved_mappings, stale_count, _ = filter_live_mappings(saved_mappings, qbo_response)
+
     # Mirror importer's mapping logic (app.py:9007-9018)
-    from pclaw_pipeline import build_account_mapping_from_numbers, build_account_mapping_from_names
-    auto_by_number = build_account_mapping_from_numbers(qbo_accounts)
+    auto_by_number = build_account_mapping_from_numbers(qbo_response)
     if auto_by_number or any(m.get("pclaw_account_number") for m in saved_mappings):
         mapping = {k: str(v) for k, v in auto_by_number.items()}
         for m in saved_mappings:
@@ -5414,7 +5417,7 @@ def _diag6000_account_ids(job, qbo_response, qbo_conn):
                     prefs.append((key, mapping[key], key))
         return [(*p, active_by_id.get(p[1], True)) for p in prefs[:2]]
     else:
-        mapping = {k: str(v) for k, v in build_account_mapping_from_names(qbo_accounts).items()}
+        mapping = {k: str(v) for k, v in build_account_mapping_from_names(qbo_response).items()}
         for m in saved_mappings:
             if m.get("pclaw_account_name"):
                 mapping[m["pclaw_account_name"]] = str(m["qbo_account_id"])
@@ -9207,6 +9210,7 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
         auto_by_number = build_account_mapping_from_numbers(qbo_accounts)
         auto_by_name = build_account_mapping_from_names(qbo_accounts)
         saved_mappings = db.list_account_mappings(user["firm_id"], qbo_conn["realm_id"])
+        saved_mappings, stale_count, _ = filter_live_mappings(saved_mappings, qbo_accounts)
 
         if auto_by_number or any(m.get("pclaw_account_number") for m in saved_mappings):
             mapping = {k: str(v) for k, v in auto_by_number.items()}  # Normalize IDs to strings
@@ -9779,6 +9783,7 @@ def _import_to_qbo_impl(job_id):
             auto_by_number = build_account_mapping_from_numbers(qbo_accounts)
             auto_by_name = build_account_mapping_from_names(qbo_accounts)
             saved_mappings = db.list_account_mappings(user["firm_id"], realm_id)
+            saved_mappings, stale_count, _ = filter_live_mappings(saved_mappings, qbo_accounts)
 
             # Decide the lookup mode: numbers are preferred when any exist,
             # because they're stable across name renames.
@@ -11168,6 +11173,7 @@ def account_mapping(job_id):
 
     # Existing saved mappings keyed for fast template lookup.
     saved_mappings = db.list_account_mappings(user["firm_id"], realm_id, source_type=_map_source)
+    saved_mappings, stale_count, _ = filter_live_mappings(saved_mappings, qbo_accounts_resp)
     saved_by_key = {(m["pclaw_account_number"], m["pclaw_account_name"]): m for m in saved_mappings}
 
     # Run a dry-run create-plan so we can annotate each unmatched row
@@ -11252,6 +11258,7 @@ def account_mapping(job_id):
             key=lambda a: (a.get("AccountType") or "", a.get("Name") or ""),
         ),
         mapping_summary=summary,
+        stale_mapping_count=stale_count,
         create_missing_offer=create_missing_offer,
         account_mapping_categories=ACCOUNT_MAPPING_CATEGORIES,
         coa_override_account_types=COA_OVERRIDE_ACCOUNT_TYPES,

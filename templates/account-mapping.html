@@ -282,6 +282,17 @@
     </p>
   </section>
   {% endif %}
+
+  {% if stale_mapping_count and stale_mapping_count > 0 %}
+  <p class="muted" data-testid="stale-mapping-notice"
+     style="margin:0 0 var(--space-4);font-size:.9rem;padding:var(--space-3);background:var(--warning-bg,#fff7ed);border-left:3px solid var(--warning,#b45309);">
+    <strong>{{ stale_mapping_count }}</strong>
+    saved account match{{ 'es' if stale_mapping_count != 1 else '' }}
+    referenced accounts that no longer exist in QuickBooks and
+    {{ 'were' if stale_mapping_count != 1 else 'was' }} ignored &mdash; re-match below if needed.
+  </p>
+  {% endif %}
+
   <p class="muted" data-testid="mapping-summary"
      style="margin:0 0 var(--space-4);font-size:.9rem;">
     We matched
@@ -372,14 +383,25 @@
                       <summary style="cursor:pointer;font-size:.8rem;color:var(--muted);">
                         Change type
                       </summary>
-                      <select name="category"
-                              form="add-form-{{ r.idx }}"
-                              style="margin-top:.3rem;max-width:18rem;">
-                        <option value="">&mdash; use inferred type &mdash;</option>
-                        {% for cat in account_mapping_categories %}
-                          <option value="{{ cat[0] }}">{{ cat[1] }}</option>
-                        {% endfor %}
-                      </select>
+                      <div style="display:flex;flex-wrap:wrap;gap:.35rem;align-items:flex-end;margin-top:.3rem;">
+                        <select id="row-acct-type-{{ r.idx }}"
+                                name="account_type"
+                                form="add-form-{{ r.idx }}"
+                                data-testid="row-category-select-{{ r.idx }}"
+                                data-detail-target="row-detail-type-{{ r.idx }}"
+                                style="max-width:18rem;">
+                          <option value="">&mdash; use inferred type &mdash;</option>
+                          {% for at in coa_override_account_types %}
+                            <option value="{{ at }}">{{ at }}</option>
+                          {% endfor %}
+                        </select>
+                        <select id="row-detail-type-{{ r.idx }}"
+                                name="detail_type"
+                                form="add-form-{{ r.idx }}"
+                                style="max-width:18rem;">
+                          <option value="">&mdash; default for type &mdash;</option>
+                        </select>
+                      </div>
                     </details>
                   {% elif r.needs_category %}
                     <span class="muted" style="font-size:.85rem;">

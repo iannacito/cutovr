@@ -92,6 +92,10 @@ def build_dry_run_preview(
     """
     saved_mappings = saved_mappings or []
 
+    # Filter stale mappings (from old QBO company after purge)
+    from pclaw_pipeline import filter_live_mappings
+    saved_mappings, stale_count, _ = filter_live_mappings(saved_mappings, qbo_accounts_response)
+
     # Mirror the importer's decision: prefer number-based matching when any
     # numbers are present (stable across renames in QBO), otherwise fall
     # back to name matching.

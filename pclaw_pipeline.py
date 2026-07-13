@@ -196,6 +196,32 @@ def validate_transaction_group(transaction_id, rows):
             )
 
 
+def filter_live_mappings(saved_mappings, qbo_accounts_response):
+    """Filter saved mappings to only those with qbo_account_ids still in the live QBO company.
+
+    After a QBO company purge or reconnect, saved mappings may reference account ids
+    that no longer exist. This helper filters them out at read time so stale ids don't
+    poison mode selection or Step 4 display.
+
+    Returns: (live_mappings, dropped_count, valid_ids_set)
+    """
+    accounts = qbo_accounts_response.get("QueryResponse", {}).get("Account") or []
+    valid_ids = {str(a["Id"]) for a in accounts if a.get("Id")}
+
+    live = [m for m in (saved_mappings or []) if str(m.get("qbo_account_id")) in valid_ids]
+    dropped = len(saved_mappings or []) - len(live)
+
+    if dropped > 0:
+        import logging
+        _log = logging.getLogger("pclaw_pipeline")
+        _log.warning(
+            "mapping hygiene: ignoring %d stale saved mappings (ids not in current QBO)",
+            dropped,
+        )
+
+    return live, dropped, valid_ids
+
+
 def build_account_mapping_from_numbers(qbo_accounts_response):
     accounts = qbo_accounts_response.get("QueryResponse", {}).get("Account", [])
     mapping = {}
