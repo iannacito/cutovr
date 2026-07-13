@@ -2371,6 +2371,7 @@ def send_to_qbo(job_id: str):
     # Compute a small sample of what would post, same approach as Step 4's preview,
     # so the Processing card has real rows to show without re-inventing storage.
     _sample_lines = []
+    _payload_preview = []
     try:
         _rows, _fieldnames = _load_job_gl_rows(job)
         if _rows:
@@ -2379,6 +2380,38 @@ def send_to_qbo(job_id: str):
             _saved_mappings = db.list_account_mappings(user["firm_id"], qbo_conn["realm_id"])
             _preview = build_dry_run_preview(_rows, _qbo_accounts, _saved_mappings, sample_limit=10)
             _sample_lines = _preview.get("sample_lines") or []
+
+            # Build JE payload preview (exactly as import would) for format debugging.
+            # Do NOT call _resolve_entity_hints here — GET must not write to QBO.
+            try:
+                from pclaw_pipeline import plan_balanced_payloads, build_account_type_index
+                _type_index = build_account_type_index(_qbo_accounts)
+                # Reuse the same mapping construction as the importer (post stale-filter)
+                _saved_mappings_filtered, _, _ = filter_live_mappings(_saved_mappings, _qbo_accounts)
+                _auto_by_number = build_account_mapping_from_numbers(_qbo_accounts)
+                _auto_by_name = build_account_mapping_from_names(_qbo_accounts)
+                if _auto_by_number or any(m.get("pclaw_account_number") for m in _saved_mappings_filtered):
+                    _mapping = {k: str(v) for k, v in _auto_by_number.items()}
+                    _mapping_mode = "number"
+                    for m in _saved_mappings_filtered:
+                        if m.get("pclaw_account_number"):
+                            _mapping[str(m["pclaw_account_number"])] = str(m["qbo_account_id"])
+                else:
+                    _mapping = {k: str(v) for k, v in _auto_by_name.items()}
+                    _mapping_mode = "name"
+                    for m in _saved_mappings_filtered:
+                        if m.get("pclaw_account_name"):
+                            _mapping[m["pclaw_account_name"]] = str(m["qbo_account_id"])
+
+                _payloads, _pids = plan_balanced_payloads(
+                    _rows, _mapping, mapping_mode=_mapping_mode, account_type_index=_type_index
+                )
+                _payload_preview = [
+                    {"txn_id": pid, "payload": p}
+                    for pid, p in zip(_pids, _payloads)
+                ][:3]
+            except Exception as _pe:  # noqa: BLE001
+                _log.warning("send_to_qbo: payload preview skipped: %s", _pe)
     except Exception:  # noqa: BLE001
         _log.warning("send_to_qbo: could not build sample preview for job %s", job_id, exc_info=True)
         # Leave _sample_lines empty — the Processing card just won't render this load,
@@ -2395,6 +2428,7 @@ def send_to_qbo(job_id: str):
         init_state=_init_state,
         pregl_coa_ob_bypass=False,
         sample_lines=_sample_lines,
+        payload_preview=_payload_preview,
         workflow_stages=[s.to_dict() for s in stages],
         workflow_current=current.to_dict() if current else None,
         workflow_progress=customer_workflow.progress_percent(stages),
