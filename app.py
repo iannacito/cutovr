@@ -3,12 +3,12 @@ from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
 from werkzeug.datastructures import FileStorage
 from pathlib import Path
-from datetime import datetime, timedelta, timezone as _dt_timezone
+from datetime import datetime, timedelta, timezone as _dt_timezone, date
 from zoneinfo import ZoneInfo
 from decimal import Decimal
 from functools import wraps
 from typing import Optional
-import os, secrets
+import os, secrets, random
 from dotenv import load_dotenv
 load_dotenv()
 import hashlib
@@ -5734,6 +5734,141 @@ def diag_gl_6000_bisect(job_id):
         _log.warning(
             "DIAG6000: bisection step=%s FAULT status=%s tid=%s body=%s",
             step, e.status_code, e.intuit_tid, str(e.body)[:500],
+        )
+
+    return jsonify(result)
+
+
+@app.route("/test-ar-ap-bare/<job_id>")
+@login_required
+def test_ar_ap_bare_posting(job_id):
+    """Step 0 diagnostic: test if A/R and A/P lines can be created WITHOUT Entity.
+
+    Posts a minimal 2-line JE with one line hitting an A/R or A/P account,
+    with NO Entity attached, to determine if QBO will accept bare AR/AP lines
+    or if they must have Entity at creation time.
+
+    Outcome:
+      - 'SUCCEEDS' → A/R/A/P lines can be created bare, then linked in Pass 2
+      - 'FAILS' → A/R/A/P lines need Entity at creation time (modify design)
+    """
+    _job, _user = _job_or_403(job_id)
+    qbo_conn = _get_qbo_connection(job_id)
+    if not qbo_conn:
+        return jsonify({"error": "No QuickBooks connection found"}), 400
+
+    try:
+        qbo, _ = _get_qbo_client(job_id, current_user())
+        qbo_accts_resp = qbo.get_accounts()
+    except Exception as e:
+        return jsonify({"error": f"Could not get QBO client: {e}"}), 400
+
+    # Extract account list from response
+    qbo_accts = (
+        qbo_accts_resp.get("QueryResponse", {}).get("Account") or []
+        if isinstance(qbo_accts_resp, dict) else (qbo_accts_resp or [])
+    )
+
+    # Find first A/R and A/P accounts by AccountSubType
+    ar_account = next(
+        (a for a in qbo_accts if a.get("AccountSubType") in ("AccountsReceivable",) and a.get("Active", True)),
+        None
+    )
+    ap_account = next(
+        (a for a in qbo_accts if a.get("AccountSubType") in ("AccountsPayable",) and a.get("Active", True)),
+        None
+    )
+
+    if not ar_account and not ap_account:
+        return jsonify({
+            "error": "No active A/R or A/P accounts found in QuickBooks",
+            "ar_account": None,
+            "ap_account": None,
+        }), 400
+
+    # Use A/R if available, else A/P
+    target_account = ar_account or ap_account
+    target_name = target_account.get("Name", "")
+    target_id = target_account.get("Id")
+    account_type = "AR" if ar_account else "AP"
+
+    # Find a counterbalancing account (any active account)
+    counter_account = next(
+        (a for a in qbo_accts
+         if a.get("Active", True) and str(a.get("Id")) != str(target_id)),
+        None
+    )
+    if not counter_account:
+        return jsonify({"error": "Could not find a counterbalancing account"}), 400
+
+    # Build a minimal 2-line JE with ONE line on A/R or A/P and NO Entity
+    je_payload = {
+        "TxnDate": str(date.today()),
+        "DocNumber": f"TEST-AR-AP-{random.randint(100000, 999999)}",
+        "PrivateNote": "Step 0: Test if AR/AP lines accept bare posting (no Entity)",
+        "Line": [
+            {
+                "DetailType": "JournalEntryLineDetail",
+                "Amount": "1.00",
+                "Description": f"Test {account_type} line (no Entity)",
+                "JournalEntryLineDetail": {
+                    "PostingType": "Debit" if account_type == "AR" else "Debit",
+                    "AccountRef": {"value": str(target_id), "name": target_name},
+                    # NO Entity attached — this is the key test
+                }
+            },
+            {
+                "DetailType": "JournalEntryLineDetail",
+                "Amount": "1.00",
+                "Description": "Counterbalancing credit",
+                "JournalEntryLineDetail": {
+                    "PostingType": "Credit",
+                    "AccountRef": {"value": str(counter_account.get("Id")), "name": counter_account.get("Name", "")},
+                }
+            },
+        ],
+    }
+
+    result = {
+        "step": "0",
+        "description": "Test if A/R or A/P lines accept bare posting (no Entity at creation time)",
+        "account_type": account_type,
+        "target_account": {"id": str(target_id), "name": target_name},
+        "counterbalancing_account": {"id": str(counter_account.get("Id")), "name": counter_account.get("Name", "")},
+        "payload": je_payload,
+    }
+
+    try:
+        je_resp = qbo.create_journal_entry(je_payload)
+        result["outcome"] = "SUCCEEDS"
+        je_entry = je_resp.get("JournalEntry", je_resp)
+        result["je_id"] = je_entry.get("Id")
+        result["je_doc_number"] = je_entry.get("DocNumber")
+        result["intuit_tid"] = qbo.last_intuit_tid
+        result["message"] = (
+            f"{account_type} lines CAN be created without Entity. "
+            f"Proceed with two-pass design: Pass 1 posts bare, Pass 2 links entities."
+        )
+
+        _log.warning(
+            "STEP-0: AR/AP bare posting SUCCEEDS je_id=%s account_type=%s tid=%s",
+            je_entry.get("Id"), account_type, qbo.last_intuit_tid,
+        )
+
+    except QBOError as e:
+        result["outcome"] = "FAILS"
+        result["status_code"] = e.status_code
+        result["fault_body"] = str(e.body)[:2000] if e.body else ""
+        result["intuit_tid"] = e.intuit_tid
+        result["message"] = (
+            f"{account_type} lines CANNOT be created without Entity. "
+            f"Pass 1 must keep entity resolution+attachment for {account_type} only, "
+            f"Pass 2 handles only optional non-AR/AP entities. Modify design."
+        )
+
+        _log.warning(
+            "STEP-0: AR/AP bare posting FAILS status=%s account_type=%s tid=%s",
+            e.status_code, account_type, e.intuit_tid,
         )
 
     return jsonify(result)
