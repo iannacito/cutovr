@@ -451,6 +451,7 @@ def build_journal_entry_payload(
                 "type": hint[0],
                 "name": hint[1],
                 "identifier": hint[2],
+                "account_type": account_type,
             }
 
         lines.append(line)

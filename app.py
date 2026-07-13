@@ -14260,6 +14260,16 @@ def link_vendor_customer_entities(job_id):
 
     customer_index, vendor_index = _firm_entity_indexes(user["firm_id"])
 
+    # Fetch QBO accounts to map account IDs to account types (for line matching in sparse update)
+    try:
+        qbo_accounts = qbo.get_accounts()
+    except QBOError as e:
+        flash(f"Could not query QuickBooks accounts: {e}", "error")
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    from pclaw_pipeline import build_account_type_index
+    account_type_index = build_account_type_index(qbo_accounts)
+
     # Build entity caches (find/create) using same logic as _resolve_entity_hints
     created = []
     persisted = {}
@@ -14329,18 +14339,32 @@ def link_vendor_customer_entities(job_id):
                 })
                 continue
 
-            # Find lines matching this entity type and add Entity to them
-            # For now, add Entity to all lines of matching account type (conservative)
+            # Find lines matching this entity type and add Entity to them.
+            # Match by account type stored with the entity hint.
+            # For Customers: AR lines only. For Vendors: AP lines, or other types if no specific account type.
             modified_lines = []
+            account_type = link_entry.get("account_type")
             for line in lines:
                 line_copy = dict(line)
                 detail = line_copy.get("JournalEntryLineDetail", {})
-                # Add Entity to all lines (since we don't track exact account per link)
-                detail["Entity"] = {
-                    "Type": kind,
-                    "EntityRef": {"value": entity_id, "name": name},
-                }
-                line_copy["JournalEntryLineDetail"] = detail
+                account_ref = detail.get("AccountRef", {})
+                account_id = str(account_ref.get("value") or "")
+                line_account_type = account_type_index.get(account_id) if account_type else None
+
+                # Only add Entity to lines matching the expected account type:
+                # - Customer: AR lines only
+                # - Vendor: AP lines, or any line if the hint had account_type outside AR/AP (general vendor entity)
+                should_add_entity = (
+                    (kind == "Customer" and line_account_type == "Accounts Receivable") or
+                    (kind == "Vendor" and line_account_type in (None, "Accounts Payable"))
+                )
+
+                if should_add_entity:
+                    detail["Entity"] = {
+                        "Type": kind,
+                        "EntityRef": {"value": entity_id, "name": name},
+                    }
+                    line_copy["JournalEntryLineDetail"] = detail
                 modified_lines.append(line_copy)
 
             # Sparse-update the JE
@@ -14356,8 +14380,11 @@ def link_vendor_customer_entities(job_id):
             linked_count += 1
 
             _log.info(
-                "link-entities: linked JE %s doc=%s kind=%s entity_id=%s",
-                je_id, doc_number, kind, entity_id,
+                "link-entities(DIAG): JE %s doc=%s kind=%s entity_id=%s name=%s "
+                "response_id=%s sync=%s — update success",
+                je_id, doc_number, kind, entity_id, name,
+                _resp.get("JournalEntry", {}).get("Id") if isinstance(_resp, dict) else "N/A",
+                _resp.get("JournalEntry", {}).get("SyncToken") if isinstance(_resp, dict) else "N/A",
             )
 
             # Rate-limit: 0.5s between calls
@@ -14370,11 +14397,17 @@ def link_vendor_customer_entities(job_id):
                 "kind": link_entry.get("kind"),
                 "name": link_entry.get("name"),
             })
+            _intuit_tid = getattr(e, "intuit_tid", None) if isinstance(e, QBOError) else None
+            _status_code = str(e.status_code) if isinstance(e, QBOError) else "N/A"
             _log.warning(
-                "link-entities: failed to link JE doc=%s kind=%s — %s",
+                "link-entities(DIAG): failed to link JE doc=%s kind=%s name=%s — "
+                "status=%s error=%s intuit_tid=%s",
                 link_entry.get("doc_number"),
                 link_entry.get("kind"),
+                link_entry.get("name"),
+                _status_code,
                 str(e)[:200],
+                _intuit_tid,
             )
 
     # Update pending_entity_links in job state
