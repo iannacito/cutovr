@@ -10017,7 +10017,6 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
             try:
                 # Fetch fresh QBO accounts for Pass 2's line-matching logic
                 qbo_accounts = qbo.get_accounts()
-                from pclaw_pipeline import build_account_type_index
                 account_type_index = build_account_type_index(qbo_accounts)
 
                 linked_count, failed_links = _run_pass2_entity_linking(
