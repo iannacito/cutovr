@@ -41,6 +41,7 @@ from pclaw_pipeline import (
     build_account_mapping_from_numbers,
     build_account_mapping_from_names,
     build_account_type_index,
+    build_account_name_index,
     build_journal_entries_from_gl,
     find_unmapped_accounts,
     build_test_journal_entry,
@@ -9561,11 +9562,12 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
             )
 
         type_index = build_account_type_index(qbo_accounts)
+        name_index = build_account_name_index(qbo_accounts)
         from pclaw_pipeline import plan_balanced_payloads
         from gl_grouping import plan_posting_groups
 
         payloads, posted_ids = plan_balanced_payloads(
-            rows, mapping, mapping_mode=mapping_mode, account_type_index=type_index
+            rows, mapping, mapping_mode=mapping_mode, account_type_index=type_index, account_name_index=name_index
         )
 
         grouped_for_check = group_rows_by_transaction(rows)
@@ -10216,6 +10218,7 @@ def _import_to_qbo_impl(job_id):
                 return redirect(url_for("job_detail", job_id=job_id))
 
             type_index = build_account_type_index(qbo_accounts)
+            name_index = build_account_name_index(qbo_accounts)
             # ``posted_ids`` is the deterministic list of PCLaw transaction
             # references AND merged source-journal group ids (one per
             # payload). Used below to match the QBO response back to the
@@ -10225,7 +10228,7 @@ def _import_to_qbo_impl(job_id):
             from pclaw_pipeline import plan_balanced_payloads
             from gl_grouping import plan_posting_groups
             payloads, posted_ids = plan_balanced_payloads(
-                rows, mapping, mapping_mode=mapping_mode, account_type_index=type_index
+                rows, mapping, mapping_mode=mapping_mode, account_type_index=type_index, account_name_index=name_index
             )
             # Build a map from each posted id -> the set of PCLaw
             # transaction references it covers. For a balanced

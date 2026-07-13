@@ -254,6 +254,16 @@ def build_account_type_index(qbo_accounts_response):
     return index
 
 
+def build_account_name_index(qbo_accounts_response):
+    """Map QBO Account Id -> the account's real QBO Name."""
+    index = {}
+    for account in qbo_accounts_response.get("QueryResponse", {}).get("Account", []):
+        acct_id = account.get("Id")
+        if acct_id:
+            index[acct_id] = account.get("Name", "")
+    return index
+
+
 # Default entity names used when a PCLaw row has no explicit customer/vendor.
 # Beginner-safe so the MVP does not require the user to pre-create entities.
 DEFAULT_CUSTOMER_NAME = "PCLaw Test Customer"
@@ -379,12 +389,14 @@ def idempotency_doc_number(transaction_id: str) -> str:
 
 
 def build_journal_entry_payload(
-    transaction_id, rows, account_mapping, mapping_mode="number", account_type_index=None
+    transaction_id, rows, account_mapping, mapping_mode="number",
+    account_type_index=None, account_name_index=None,
 ):
     validate_transaction_group(transaction_id, rows)
     first_row = rows[0]
     lines = []
     account_type_index = account_type_index or {}
+    account_name_index = account_name_index or {}
 
     for row in rows:
         debit = money(row["debit"])
@@ -419,7 +431,12 @@ def build_journal_entry_payload(
                 "PostingType": posting_type,
                 "AccountRef": {
                     "value": qbo_account_id,
-                    "name": row.get("account_name") or "",
+                    # Real QBO account name, not the raw PCLaw label — QBO
+                    # validates ID/name consistency. Falls back to the
+                    # PCLaw label only if the id is somehow missing from the
+                    # index (shouldn't happen — preflight already validates
+                    # every mapped id exists and is Active).
+                    "name": account_name_index.get(qbo_account_id) or row.get("account_name") or "",
                 },
             },
         }
@@ -456,7 +473,7 @@ def build_journal_entry_payload(
     }
 
 
-def plan_balanced_payloads(rows, account_mapping, mapping_mode="number", account_type_index=None):
+def plan_balanced_payloads(rows, account_mapping, mapping_mode="number", account_type_index=None, account_name_index=None):
     """Return ``(payloads, posted_ids)`` honouring source-journal grouping.
 
     See :mod:`gl_grouping` for the safety policy. When individual PCLaw
@@ -513,6 +530,7 @@ def plan_balanced_payloads(rows, account_mapping, mapping_mode="number", account
                 account_mapping=account_mapping,
                 mapping_mode=mapping_mode,
                 account_type_index=account_type_index,
+                account_name_index=account_name_index,
             )
         )
         posted_ids.append(transaction_id)
@@ -524,6 +542,7 @@ def plan_balanced_payloads(rows, account_mapping, mapping_mode="number", account
                 account_mapping=account_mapping,
                 mapping_mode=mapping_mode,
                 account_type_index=account_type_index,
+                account_name_index=account_name_index,
             )
         )
         posted_ids.append(group["group_id"])
@@ -531,7 +550,7 @@ def plan_balanced_payloads(rows, account_mapping, mapping_mode="number", account
     return payloads, posted_ids
 
 
-def build_journal_entries_from_gl(rows, account_mapping, mapping_mode="number", account_type_index=None):
+def build_journal_entries_from_gl(rows, account_mapping, mapping_mode="number", account_type_index=None, account_name_index=None):
     """List-of-payloads view of :func:`plan_balanced_payloads`.
 
     Kept for backwards compatibility with callers that just want the
@@ -543,6 +562,7 @@ def build_journal_entries_from_gl(rows, account_mapping, mapping_mode="number", 
         account_mapping,
         mapping_mode=mapping_mode,
         account_type_index=account_type_index,
+        account_name_index=account_name_index,
     )
     return payloads
 
