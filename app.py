@@ -9625,6 +9625,20 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
         _record_checkpoint(job, job_id, job_checkpoints.IMPORTING)
         _save_job(job_id)
 
+        # Helper to update Processing table entries for a txn_id and all its sub-references
+        def _update_entry_with_subrefs(txn_id: str, status_update: dict) -> None:
+            """Update status for txn_id and all underlying PCLaw transaction references.
+
+            For merged groups, this expands txn_id (which is the group id) to all
+            underlying transaction refs and updates them all. For single transactions,
+            it just updates the one entry.
+            """
+            entries_to_update = {}
+            sub_refs = sub_refs_by_posted_id.get(txn_id, [txn_id])
+            for ref in sub_refs:
+                entries_to_update[ref] = {"txn_id": ref, **status_update}
+            importer.update_entries(job_id, entries_to_update)
+
         # Helper to record a created JE in created/created_transactions
         def _record_created(je: dict, txn_id: str) -> None:
             created.append({
@@ -9662,17 +9676,15 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
                 chunk = paired[chunk_start:chunk_start + CHUNK_SIZE]
 
                 # Mark this chunk as in-flight immediately, before the QBO call
-                importer.update_entries(job_id, {
-                    txn_id: {
-                        "txn_id": txn_id,
+                # Expand sub-references for merged groups
+                for txn_id, payload in chunk:
+                    _update_entry_with_subrefs(txn_id, {
                         "doc_number": payload.get("DocNumber"),
                         "date": payload.get("TxnDate"),
                         "description": _je_description_for_display(payload),
                         "amount": _je_amount_for_display(payload),
                         "status": "processing",
-                    }
-                    for txn_id, payload in chunk
-                })
+                    })
 
                 if progress_fn:
                     progress_fn(chunk_start)
@@ -9707,9 +9719,7 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
                         )
                         reused_count += 1
                         _record_created(existing_je, txn_id)
-                        importer.update_entries(job_id, {
-                            txn_id: {"txn_id": txn_id, "status": "ok"}
-                        })
+                        _update_entry_with_subrefs(txn_id, {"status": "ok"})
                     else:
                         to_create_idx.append(idx)
                         to_create_payloads.append(payload)
@@ -9759,17 +9769,14 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
                             }
                             tx_audit.append(audit_record)
                             qbo_error_count += 1
-                            importer.update_entries(job_id, {
-                                txn_id: {
-                                    "txn_id": txn_id, "status": "rejected",
-                                    "reason": str(errors)[:300], "status_code": first.get("code"),
-                                }
+                            _update_entry_with_subrefs(txn_id, {
+                                "status": "rejected",
+                                "reason": str(errors)[:300],
+                                "status_code": first.get("code"),
                             })
                             continue
                         _record_created(result.get("JournalEntry", {}), txn_id)
-                        importer.update_entries(job_id, {
-                            txn_id: {"txn_id": txn_id, "status": "ok"}
-                        })
+                        _update_entry_with_subrefs(txn_id, {"status": "ok"})
 
                 if progress_fn:
                     progress_fn(min(chunk_start + CHUNK_SIZE, len(paired)))
