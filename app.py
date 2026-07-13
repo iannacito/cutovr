@@ -9441,14 +9441,18 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
                                 "import: batch Fault on DocNumber=%s txn_id=%s — %s",
                                 doc_number, txn_id, first,
                             )
-                            tx_audit.append({
+                            # Capture payload for first 10 rejected items (format debugging)
+                            _reject_count = len([x for x in tx_audit if x.get("outcome") == "qbo_error"])
+                            audit_record = {
                                 "txn_id": txn_id,
                                 "doc_number": doc_number,
                                 "outcome": "qbo_error",
                                 "status_code": first.get("code"),
                                 "error_body": str(errors)[:500],
                                 "intuit_tid": getattr(qbo, "last_intuit_tid", None),
-                            })
+                                "payload": payload if _reject_count < 10 else None,
+                            }
+                            tx_audit.append(audit_record)
                             qbo_error_count += 1
                             importer.update_entries(job_id, {
                                 txn_id: {

@@ -524,6 +524,21 @@
       </tbody>
     </table>
   </section>
+
+  {# Rejected payload debugging — show JSON for first 10 errors #}
+  {% set _payload_rows = (tx_audit or []) | selectattr("payload") | list %}
+  {% if _payload_rows %}
+  <details class="card" style="margin-top:1rem;padding:var(--space-4);">
+    <summary style="cursor:pointer;font-weight:500;">Rejected payload JSON (first {{ _payload_rows | length }}) — for format debugging</summary>
+    {% for r in _payload_rows %}
+      <div style="margin:var(--space-4) 0;border-top:1px solid var(--line);padding-top:var(--space-3);">
+        <p style="margin:.6rem 0 .2rem;"><strong><code>{{ r.txn_id }}</code></strong> — <span class="muted">{{ r.error_body | truncate(160) }}</span><br>
+           <span class="muted" style="font-size:.85rem;">intuit_tid: {{ r.intuit_tid or "—" }}</span></p>
+        <pre style="max-height:22rem;overflow:auto;font-size:.75rem;background:var(--surface-2,#f5f5f5);padding:var(--space-2);border-radius:4px;margin:var(--space-2) 0 0;">{{ r.payload | tojson(indent=2) }}</pre>
+      </div>
+    {% endfor %}
+  </details>
+  {% endif %}
   {% endif %}
 
   <div class="actions-row" style="margin-top:var(--space-5);">
