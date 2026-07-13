@@ -9654,6 +9654,10 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
             CHUNK_SIZE = 25
             paired = list(zip(txn_ids, payloads))
 
+            # Initialize progress callback with the total count
+            if progress_fn and callable(progress_fn):
+                progress_fn = progress_fn(len(paired))
+
             for chunk_start in range(0, len(paired), CHUNK_SIZE):
                 chunk = paired[chunk_start:chunk_start + CHUNK_SIZE]
 
