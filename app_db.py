@@ -420,6 +420,11 @@ class AppDB:
         # "planned_txns": T, "posted": P, "reused_idempotent": R, "rejected": J,
         # "conservation_ok": (T == P+R+J)}.
         add_col("jobs", "import_ledger_json TEXT")
+        # Pending entity links for Pass 2 (vendor/customer name resolution).
+        # Captured in Pass 1 when AR/AP lines have entity hints but are posted
+        # without entities (to avoid 6000/-30006 errors). Pass 2 uses this list
+        # to retroactively attach entities to the created JEs. Stored as JSON TEXT.
+        add_col("jobs", "pending_entity_links_json TEXT")
 
         # cutover_settings: AR/AP migration strategy (Task 4 in the
         # migration-workflow completion PR). Default empty so existing
