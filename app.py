@@ -9915,6 +9915,8 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
             "source_credit_total": str(source_credit),
             "balanced": source_debit == source_credit,
         }
+        # Track entity linking status separately so Pass 2 can update independently
+        job["entity_linking_status"] = "pending" if pending_entity_links else "complete"
 
         # If conservation check fails, flag for review
         if not import_ledger["conservation_ok"]:
@@ -14304,6 +14306,8 @@ def link_vendor_customer_entities(job_id):
     job["pending_entity_links"] = pending_links
     if failed_links:
         job["pending_entity_links_failures"] = failed_links
+    # Mark Pass 2 entity linking as complete (or partial if failures occurred)
+    job["entity_linking_status"] = "partial" if failed_links else "complete"
     _save_job(job_id)
 
     if failed_links:
