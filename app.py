@@ -9999,6 +9999,7 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
         else:
             _record_checkpoint(job, job_id, job_checkpoints.COMPLETED)
         db.save_job_state(job_id, job)
+        jobs.pop(job_id, None)  # Fix 4: invalidate in-memory cache
 
         try:
             _verify_import(job, qbo)
@@ -10008,6 +10009,38 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
                 "error": str(ve),
             }
         db.save_job_state(job_id, job)
+        jobs.pop(job_id, None)  # Fix 4: invalidate in-memory cache
+
+        # Fix 1: Auto-chain Pass 2 (entity linking) after Pass 1 completes
+        # Only run if there are pending entity links to process
+        if pending_entity_links and qbo_conn:
+            try:
+                # Fetch fresh QBO accounts for Pass 2's line-matching logic
+                qbo_accounts = qbo.get_accounts()
+                from pclaw_pipeline import build_account_type_index
+                account_type_index = build_account_type_index(qbo_accounts)
+
+                linked_count, failed_links = _run_pass2_entity_linking(
+                    job, job_id, qbo, user, qbo_conn, account_type_index
+                )
+                # Persist Pass 2 results (Fix 3: use db.save_job_state)
+                db.save_job_state(job_id, job)
+                jobs.pop(job_id, None)  # Fix 4: invalidate in-memory cache
+
+                if linked_count > 0 or failed_links:
+                    _log.info(
+                        "pass2_auto_chain: linked=%d failed=%d for job=%s",
+                        linked_count, len(failed_links), job_id,
+                    )
+            except Exception as pass2_e:  # noqa: BLE001
+                # Log Pass 2 failure but don't block Pass 1 completion
+                _log.warning(
+                    "pass2_auto_chain: Pass 2 failed for job=%s — %s",
+                    job_id, pass2_e, exc_info=True
+                )
+                job["entity_linking_status"] = "pending"  # Mark as still pending for manual retry
+                db.save_job_state(job_id, job)
+                jobs.pop(job_id, None)
     else:
         raise RuntimeError("Non-GL format not supported in background import")
 
@@ -14230,47 +14263,28 @@ def revert_import(job_id):
     return redirect(url_for("job_detail", job_id=job_id))
 
 
-@app.route("/jobs/<job_id>/link-vendor-customer-entities", methods=["POST"])
-@login_required
-def link_vendor_customer_entities(job_id):
-    """PASS 2: Link vendor/customer entities to posted JEs via sparse update.
+def _run_pass2_entity_linking(job, job_id, qbo, user, qbo_conn, account_type_index):
+    """PASS 2 core logic: Link vendor/customer entities to posted JEs via sparse update.
 
-    After Pass 1 completes (JEs posted without Entity), this route reads the
-    pending_entity_links list and sparse-updates each JE to add the Entity.
-    Vendor/customer names are resolved/created same as Pass 1 would have.
+    Extracted so it can be called both from a route (manual trigger) and automatically
+    after Pass 1 completes. Takes all dependencies as arguments (no Flask request context).
+
+    Args:
+        job (dict): Job state with pending_entity_links populated
+        job_id (str): Job ID
+        qbo (QBOClient): Authenticated QBO client
+        user (dict): User dict with firm_id
+        qbo_conn (dict): QBO connection dict with realm_id
+        account_type_index (dict): Maps QBO account ID -> account type
+
+    Returns:
+        (linked_count, failed_links): Tuple of number linked and list of failures
     """
-    job, user = _job_or_403(job_id)
-
-    # Only accessible if pending_entity_links exists
     pending_links = job.get("pending_entity_links") or []
     if not pending_links:
-        flash("No pending entity links found. All entities already linked or no entities to link.", "info")
-        return redirect(url_for("job_detail", job_id=job_id))
+        return 0, []
 
-    qbo_conn = _get_qbo_connection(job_id)
-    if not qbo_conn:
-        flash("No QuickBooks connection found.", "error")
-        return redirect(url_for("job_detail", job_id=job_id))
-
-    try:
-        qbo, _ = _get_qbo_client(job_id, user)
-    except QBOAuthExpired:
-        flash("QuickBooks token expired. Please reconnect from the QuickBooks page.", "error")
-        return redirect(url_for("job_detail", job_id=job_id))
-
-    customer_index, vendor_index = _firm_entity_indexes(user["firm_id"])
-
-    # Fetch QBO accounts to map account IDs to account types (for line matching in sparse update)
-    try:
-        qbo_accounts = qbo.get_accounts()
-    except QBOError as e:
-        flash(f"Could not query QuickBooks accounts: {e}", "error")
-        return redirect(url_for("job_detail", job_id=job_id))
-
-    from pclaw_pipeline import build_account_type_index
-    account_type_index = build_account_type_index(qbo_accounts)
-
-    # Build entity caches (find/create) using same logic as _resolve_entity_hints
+    # Build entity caches
     created = []
     persisted = {}
     for row in db.list_entity_map(user["firm_id"], qbo_conn["realm_id"]):
@@ -14279,7 +14293,6 @@ def link_vendor_customer_entities(job_id):
     failed_links = []
     linked_count = 0
 
-    # Rate-limit: pace at least 0.5s between calls (per instructions)
     import time as _time_sleep_local
     for link_entry in pending_links:
         if link_entry.get("linked"):
@@ -14339,9 +14352,7 @@ def link_vendor_customer_entities(job_id):
                 })
                 continue
 
-            # Find lines matching this entity type and add Entity to them.
-            # Match by account type stored with the entity hint.
-            # For Customers: AR lines only. For Vendors: AP lines, or other types if no specific account type.
+            # Find lines matching this entity type and add Entity to them
             modified_lines = []
             account_type = link_entry.get("account_type")
             for line in lines:
@@ -14351,9 +14362,7 @@ def link_vendor_customer_entities(job_id):
                 account_id = str(account_ref.get("value") or "")
                 line_account_type = account_type_index.get(account_id) if account_type else None
 
-                # Only add Entity to lines matching the expected account type:
-                # - Customer: AR lines only
-                # - Vendor: AP lines, or any line if the hint had account_type outside AR/AP (general vendor entity)
+                # Only add Entity to lines matching the expected account type
                 should_add_entity = (
                     (kind == "Customer" and line_account_type == "Accounts Receivable") or
                     (kind == "Vendor" and line_account_type in (None, "Accounts Payable"))
@@ -14410,13 +14419,61 @@ def link_vendor_customer_entities(job_id):
                 _intuit_tid,
             )
 
-    # Update pending_entity_links in job state
+    # Update job state with results
     job["pending_entity_links"] = pending_links
     if failed_links:
         job["pending_entity_links_failures"] = failed_links
-    # Mark Pass 2 entity linking as complete (or partial if failures occurred)
     job["entity_linking_status"] = "partial" if failed_links else "complete"
-    _save_job(job_id)
+
+    return linked_count, failed_links
+
+
+@app.route("/jobs/<job_id>/link-vendor-customer-entities", methods=["POST"])
+@login_required
+def link_vendor_customer_entities(job_id):
+    """PASS 2 route: Thin wrapper around the core Pass 2 logic.
+
+    Allows manual re-trigger of entity linking via POST. Most of the time, Pass 2
+    runs automatically after Pass 1 completes (via _run_pass2_entity_linking).
+    This route is for manual re-runs or batch recovery.
+    """
+    job, user = _job_or_403(job_id)
+
+    # Only accessible if pending_entity_links exists
+    pending_links = job.get("pending_entity_links") or []
+    if not pending_links:
+        flash("No pending entity links found. All entities already linked or no entities to link.", "info")
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    qbo_conn = _get_qbo_connection(job_id)
+    if not qbo_conn:
+        flash("No QuickBooks connection found.", "error")
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    try:
+        qbo, _ = _get_qbo_client(job_id, user)
+    except QBOAuthExpired:
+        flash("QuickBooks token expired. Please reconnect from the QuickBooks page.", "error")
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    # Fetch QBO accounts to map account IDs to account types
+    try:
+        qbo_accounts = qbo.get_accounts()
+    except QBOError as e:
+        flash(f"Could not query QuickBooks accounts: {e}", "error")
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    from pclaw_pipeline import build_account_type_index
+    account_type_index = build_account_type_index(qbo_accounts)
+
+    # Call the extracted core Pass 2 logic
+    linked_count, failed_links = _run_pass2_entity_linking(
+        job, job_id, qbo, user, qbo_conn, account_type_index
+    )
+
+    # Persist the results (Fix 3: use db.save_job_state instead of _save_job)
+    db.save_job_state(job_id, job)
+    jobs.pop(job_id, None)  # Fix 4: invalidate in-memory cache
 
     if failed_links:
         flash(

@@ -425,6 +425,11 @@ class AppDB:
         # without entities (to avoid 6000/-30006 errors). Pass 2 uses this list
         # to retroactively attach entities to the created JEs. Stored as JSON TEXT.
         add_col("jobs", "pending_entity_links_json TEXT")
+        # Entity linking status: tracks whether Pass 2 (vendor/customer entity attachment)
+        # is pending, complete, or partial (some entities failed to link). Allows the UI
+        # to show import completion and Step 6 reachability separately from entity linking
+        # progress. Values: "pending" | "complete" | "partial".
+        add_col("jobs", "entity_linking_status TEXT")
 
         # cutover_settings: AR/AP migration strategy (Task 4 in the
         # migration-workflow completion PR). Default empty so existing
@@ -906,6 +911,9 @@ class AppDB:
                 if job_dict["pending_entity_links"]
                 else None
             )
+        if "entity_linking_status" in job_dict:
+            fields.append("entity_linking_status")
+            values.append(job_dict["entity_linking_status"])
         if "opening_balance_history" in job_dict:
             fields.append("opening_balance_history_json")
             values.append(
@@ -1013,6 +1021,8 @@ class AppDB:
                     out[dst] = None
         if row["last_import_id"]:
             out["last_import_id"] = row["last_import_id"]
+        if row.get("entity_linking_status"):
+            out["entity_linking_status"] = row["entity_linking_status"]
         return out
 
     def list_jobs_for_firm(self, firm_id: int, limit: int = 50) -> list:
