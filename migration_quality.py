@@ -37,6 +37,7 @@ from pclaw_pipeline import (
     find_unmapped_accounts,
     group_rows_by_transaction,
     money,
+    _normalize_account_list,
 )
 
 
@@ -116,14 +117,15 @@ def build_dry_run_preview(
                 mapping[m["pclaw_account_name"]] = m["qbo_account_id"]
 
     account_type_index = build_account_type_index(qbo_accounts_response)
+    accounts = _normalize_account_list(qbo_accounts_response)
     qbo_name_by_id = {
         a.get("Id"): a.get("Name")
-        for a in qbo_accounts_response.get("QueryResponse", {}).get("Account", [])
+        for a in accounts
         if a.get("Id")
     }
     qbo_acctnum_by_id = {
         a.get("Id"): (a.get("AcctNum") or "").strip() or None
-        for a in qbo_accounts_response.get("QueryResponse", {}).get("Account", [])
+        for a in accounts
         if a.get("Id")
     }
 

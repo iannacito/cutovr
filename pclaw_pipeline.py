@@ -222,8 +222,20 @@ def filter_live_mappings(saved_mappings, qbo_accounts_response):
     return live, dropped, valid_ids
 
 
+def _normalize_account_list(accounts_input):
+    """Convert full response dict or unwrapped list to a normalized account list.
+
+    Prevents shape-confusion bugs where {"QueryResponse": {"Account": [...]}}
+    is mistaken for the list or vice versa. This is the ONE place accounts
+    are unwrapped, making shape clear to all consumers.
+    """
+    if isinstance(accounts_input, dict):
+        return accounts_input.get("QueryResponse", {}).get("Account") or []
+    return accounts_input or []
+
+
 def build_account_mapping_from_numbers(qbo_accounts_response):
-    accounts = qbo_accounts_response.get("QueryResponse", {}).get("Account", [])
+    accounts = _normalize_account_list(qbo_accounts_response)
     mapping = {}
     for account in accounts:
         acct_num = account.get("AcctNum")
@@ -234,7 +246,7 @@ def build_account_mapping_from_numbers(qbo_accounts_response):
 
 
 def build_account_mapping_from_names(qbo_accounts_response):
-    accounts = qbo_accounts_response.get("QueryResponse", {}).get("Account", [])
+    accounts = _normalize_account_list(qbo_accounts_response)
     mapping = {}
     for account in accounts:
         name = account.get("Name")
@@ -247,7 +259,7 @@ def build_account_mapping_from_names(qbo_accounts_response):
 def build_account_type_index(qbo_accounts_response):
     """Map QBO Account Id -> AccountType (e.g. 'Accounts Receivable')."""
     index = {}
-    for account in qbo_accounts_response.get("QueryResponse", {}).get("Account", []):
+    for account in _normalize_account_list(qbo_accounts_response):
         acct_id = account.get("Id")
         if acct_id:
             index[acct_id] = account.get("AccountType")
@@ -553,7 +565,7 @@ def build_test_journal_entry(qbo_accounts_response, txn_date, amount=1.00, memo=
     active QBO accounts. Used when account mapping fails so the user can
     still confirm the integration writes to QBO.
     """
-    accounts = qbo_accounts_response.get("QueryResponse", {}).get("Account", [])
+    accounts = _normalize_account_list(qbo_accounts_response)
     active = [a for a in accounts if a.get("Active", True) and a.get("Id")]
     if len(active) < 2:
         raise ValueError("QBO sandbox has fewer than 2 active accounts; cannot build a test entry.")
