@@ -5370,6 +5370,211 @@ def readiness_page():
     )
 
 
+# ── DIAG6000: Phase B bisection runner (operator-only, temporary diagnostic tool) ──
+
+_DIAG6000_STEPS = {
+    0: "Minimal JE, TxnDate = today (company/account-level vs payload)",
+    1: "Add TxnDate = 2021-01-04 (historical-date handling)",
+    2: "Add DocNumber (numeric, ≤21 chars)",
+    3: "Add PrivateNote (import format)",
+    4: "Add line Description (from the job)",
+    5: "Add AccountRef.name (PCLaw strings)",
+    6: "Add full real payload from the job (rebuilt, entity hints resolved)",
+    7: "Post step 6 via batch endpoint (1 item)",
+}
+
+
+def _diag6000_account_ids(job, qbo_response, qbo_conn):
+    """Return [(pclaw_num/name, qbo_id, pclaw_name, Active), ...] for the two accounts
+    used in the bisection ladder (prefer 1012 & 5070; fall back to first two distinct).
+    """
+    user = {"firm_id": job.get("firm_id")}
+    saved_mappings = db.list_account_mappings(user["firm_id"], qbo_conn["realm_id"])
+    qbo_accounts = qbo_response.get("QueryResponse", {}).get("Account") or []
+    active_by_id = {str(a.get("Id")): a.get("Active", True) for a in qbo_accounts if a.get("Id")}
+
+    # Mirror importer's mapping logic (app.py:9007-9018)
+    from pclaw_pipeline import build_account_mapping_from_numbers, build_account_mapping_from_names
+    auto_by_number = build_account_mapping_from_numbers(qbo_accounts)
+    if auto_by_number or any(m.get("pclaw_account_number") for m in saved_mappings):
+        mapping = {k: str(v) for k, v in auto_by_number.items()}
+        for m in saved_mappings:
+            if m.get("pclaw_account_number"):
+                mapping[str(m["pclaw_account_number"])] = str(m["qbo_account_id"])
+        # Prefer 1012 & 5070 (common in fails); fall back to first two
+        prefs = []
+        for key in ("1012", "5070"):
+            if key in mapping:
+                prefs.append((key, mapping[key], key))
+        if len(prefs) < 2:
+            for key in sorted(mapping.keys()):
+                if len(prefs) >= 2:
+                    break
+                if (key, mapping[key], key) not in prefs:
+                    prefs.append((key, mapping[key], key))
+        return [(*p, active_by_id.get(p[1], True)) for p in prefs[:2]]
+    else:
+        mapping = {k: str(v) for k, v in build_account_mapping_from_names(qbo_accounts).items()}
+        for m in saved_mappings:
+            if m.get("pclaw_account_name"):
+                mapping[m["pclaw_account_name"]] = str(m["qbo_account_id"])
+        pairs = [(k, mapping[k], k) for k in sorted(mapping.keys())[:2]]
+        return [(*p, active_by_id.get(p[1], True)) for p in pairs]
+
+
+def _diag6000_payload(step, ids, job):
+    """Build the cumulative diagnostic JE payload for the bisection step.
+    Step 0 = minimal, each step adds one field. Step 6 uses real data from the job.
+    """
+    import decimal
+    from datetime import date
+    if not ids or len(ids) < 2:
+        raise ValueError("Need at least 2 account ids for bisection")
+
+    debit_key, debit_id, debit_name, debit_active = ids[0]
+    credit_key, credit_id, credit_name, credit_active = ids[1]
+
+    payload = {
+        "TxnDate": str(date.today()),
+        "Line": [
+            {
+                "Amount": 1.00,
+                "DetailType": "JournalEntryLineDetail",
+                "JournalEntryLineDetail": {"PostingType": "Debit", "AccountRef": {"value": debit_id}},
+            },
+            {
+                "Amount": 1.00,
+                "DetailType": "JournalEntryLineDetail",
+                "JournalEntryLineDetail": {"PostingType": "Credit", "AccountRef": {"value": credit_id}},
+            },
+        ],
+    }
+
+    if step >= 1:
+        payload["TxnDate"] = "2021-01-04"
+    if step >= 2:
+        payload["DocNumber"] = "999000001"
+    if step >= 3:
+        payload["PrivateNote"] = f"Imported from PCLaw via pclaw-qbo | transaction_id=DIAG"
+    if step >= 4:
+        # Add a real description from the job if available
+        gl_rows = job.get("gl_rows") or []
+        desc = next((r.get("description") for r in gl_rows if r.get("description")), "Diagnostic entry")
+        for line in payload["Line"]:
+            line["Description"] = desc[:120]
+    if step >= 5:
+        payload["Line"][0]["JournalEntryLineDetail"]["AccountRef"]["name"] = debit_name
+        payload["Line"][1]["JournalEntryLineDetail"]["AccountRef"]["name"] = credit_name
+    if step >= 6:
+        # Use a real JE from the job (first one with valid payloads)
+        from pclaw_pipeline import plan_balanced_payloads, build_account_type_index
+        from qbo_client import QBOClient
+        try:
+            qbo_accts_resp = {"QueryResponse": {"Account": job.get("_qbo_accounts_cached", [])}}
+            gl_rows = job.get("gl_rows") or []
+            firm_id = job.get("firm_id")
+            qbo_conn = _get_qbo_connection(job.get("id"))
+            saved_mappings = db.list_account_mappings(firm_id, qbo_conn["realm_id"]) if qbo_conn else []
+            if gl_rows and qbo_accts_resp["QueryResponse"]["Account"]:
+                mapping, posted_ids = plan_balanced_payloads(
+                    gl_rows, {str(m.get("pclaw_account_number", m.get("pclaw_account_name"))): str(m["qbo_account_id"])
+                              for m in saved_mappings},
+                    mapping_mode="number" if any(m.get("pclaw_account_number") for m in saved_mappings) else "name",
+                    account_type_index=build_account_type_index(qbo_accts_resp.get("QueryResponse", {}).get("Account") or []),
+                )
+                if mapping:
+                    payload = mapping[0]  # Use the first real JE, with entity hints already resolved
+        except Exception:
+            pass  # Fall back to step 5 payload if real data unavailable
+
+    return payload
+
+
+@app.route("/operator/diag6000/<job_id>")
+def operator_diag6000(job_id):
+    """Operator-only diagnostic: step-by-step bisection to isolate QBO error 6000.
+
+    Each request performs one step of the ladder (posts a $1 JE, deletes it,
+    returns the result). Helps determine which field/account/company-state is broken.
+    Temporary tool — remove after the verdict.
+    """
+    if not _is_operator():
+        abort(404)
+
+    step = int(request.args.get("step", 0))
+    if step > 7:
+        return jsonify({"error": "invalid step"}), 400
+
+    job = db.hydrate_job(job_id)
+    if not job:
+        abort(404)
+
+    try:
+        qbo, qbo_conn = _get_qbo_client(job_id, current_user())
+        qbo_accts = qbo.get_accounts()
+    except Exception as e:
+        return jsonify({"error": f"Could not get QBO client: {e}"}), 400
+
+    ids = _diag6000_account_ids(job, qbo_accts, qbo_conn)
+    if len(ids) < 2:
+        return jsonify({"error": "Could not resolve 2 account IDs for bisection"}), 400
+
+    payload = _diag6000_payload(step, ids, job)
+
+    result = {
+        "step": step,
+        "description": _DIAG6000_STEPS.get(step, "unknown"),
+        "payload": payload,
+        "account_ids": [
+            {"pclaw": ids[0][0], "qbo_id": ids[0][1], "active": ids[0][3]},
+            {"pclaw": ids[1][0], "qbo_id": ids[1][1], "active": ids[1][3]},
+        ],
+    }
+
+    try:
+        if step == 7:
+            # Batch endpoint
+            resp = qbo.create_journal_entries_batch([payload])[0]
+            fault = resp.get("Fault")
+            je = resp.get("JournalEntry")
+        else:
+            # Single create
+            je = qbo.create_journal_entry(payload)
+            fault = None
+
+        result["outcome"] = "FAULT" if fault else "POSTED"
+        if fault:
+            result["fault"] = fault
+
+        # Clean up: delete the JE immediately
+        if je:
+            entry = je.get("JournalEntry", je)
+            try:
+                qbo.delete_journal_entry(entry["Id"], entry["SyncToken"])
+                result["cleanup"] = "deleted"
+            except Exception as ce:
+                result["cleanup"] = f"DELETE FAILED — remove JE {entry.get('Id')} manually: {str(ce)[:200]}"
+    except QBOError as e:
+        result["outcome"] = "ERROR"
+        result["error"] = {
+            "status": e.status_code,
+            "body": str(e.body)[:2000],
+            "intuit_tid": e.intuit_tid,
+        }
+
+    _log.warning(
+        "DIAG6000: step=%s outcome=%s",
+        step,
+        json.dumps({k: result.get(k) for k in ("fault", "error")})[:2000],
+    )
+
+    # Provide next-step link if this step passed
+    if result.get("outcome") == "POSTED" and step < 7:
+        result["next"] = f"/operator/diag6000/{job_id}?step={step + 1}"
+
+    return jsonify(result)
+
+
 def _gl_rows_for_snapshot(gl_rows):
     """Return ``gl_rows`` as a list of plain dicts safe to JSON-encode.
 
