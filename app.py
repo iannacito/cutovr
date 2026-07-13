@@ -9606,6 +9606,11 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
         if pending_entity_links:
             job["pending_entity_links"] = pending_entity_links
 
+        # Pass 1 creates zero QBO entities by design — Vendor/Customer resolution
+        # now happens in Pass 2. Keep this defined so downstream history.record_import()
+        # calls still work and accurately report "0 entities created in this pass."
+        new_entities = []
+
         source_debit = sum(money(r["debit"]) for r in rows if not _gate_row_filter(r))
         source_credit = sum(money(r["credit"]) for r in rows if not _gate_row_filter(r))
 
