@@ -131,6 +131,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     tx_audit_json   TEXT,
     import_progress_json TEXT,
     import_ledger_json TEXT,
+    pending_entity_links_json TEXT,
     last_import_id  INTEGER,
     status          TEXT,
     checkpoint      TEXT,
@@ -893,6 +894,13 @@ class AppDB:
                 if job_dict["entity_name_blockers"]
                 else None
             )
+        if "pending_entity_links" in job_dict:
+            fields.append("pending_entity_links_json")
+            values.append(
+                json.dumps(job_dict["pending_entity_links"])
+                if job_dict["pending_entity_links"]
+                else None
+            )
         if "opening_balance_history" in job_dict:
             fields.append("opening_balance_history_json")
             values.append(
@@ -986,6 +994,7 @@ class AppDB:
             ("coa_create_history_json", "coa_create_history"),
             ("coa_type_overrides_json", "coa_type_overrides"),
             ("entity_name_blockers_json", "entity_name_blockers"),
+            ("pending_entity_links_json", "pending_entity_links"),
             ("opening_balance_history_json", "opening_balance_history"),
             ("auto_balance_rows_json", "auto_balance_rows"),
             ("parsed_trial_balance_json", "parsed_trial_balance"),

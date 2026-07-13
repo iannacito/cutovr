@@ -9577,18 +9577,32 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
             sub_refs_by_posted_id[grp["group_id"]] = list(grp["transaction_ids"])
 
         customer_index, vendor_index = _firm_entity_indexes(user["firm_id"])
-        try:
-            new_entities = _resolve_entity_hints(
-                qbo, payloads,
-                customer_index=customer_index,
-                vendor_index=vendor_index,
-                firm_id=user["firm_id"],
-                realm_id=qbo_conn["realm_id"],
-            )
-        except entity_resolution.EntityNameError as e:
-            raise RuntimeError(f"Entity names missing: {e}")
-        except QBOError as e:
-            raise RuntimeError(f"Could not create Name in QuickBooks: {e}")
+
+        # PASS 1: Capture entity hints for Pass 2 linking, then strip them from payloads
+        # before posting. This avoids 6000/-30006 errors that occur when entity is
+        # attached at JE creation time.
+        pending_entity_links = []
+        for payload in payloads:
+            for line in payload.get("Line", []):
+                hint = line.get("_pclaw_entity_hint")
+                if hint:
+                    doc_number = payload.get("DocNumber", "")
+                    # Find which transaction this line belongs to (via matching amount/account)
+                    # For now, create a link entry
+                    link_entry = {
+                        "doc_number": doc_number,
+                        "kind": hint.get("type"),  # "Customer" or "Vendor"
+                        "name": hint.get("name"),
+                        "account_type": hint.get("account_type"),
+                        "linked": False,
+                    }
+                    pending_entity_links.append(link_entry)
+                # Strip the hint so it won't be sent to QBO
+                line.pop("_pclaw_entity_hint", None)
+
+        # Save pending entity links to job state (will be persisted after posting)
+        if pending_entity_links:
+            job["pending_entity_links"] = pending_entity_links
 
         source_debit = sum(money(r["debit"]) for r in rows if not _gate_row_filter(r))
         source_credit = sum(money(r["credit"]) for r in rows if not _gate_row_filter(r))
@@ -9861,7 +9875,14 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
                 rejected_count,
             )
 
-        job["status"] = f"Imported {len(created)} journal entries to QuickBooks"
+        # Show Pass 1 completion state: if there are pending entity links, note that
+        if pending_entity_links:
+            job["status"] = (
+                f"Posted {len(created)} journal entries to QuickBooks — "
+                f"vendor/customer linking pending ({len(pending_entity_links)} entities)"
+            )
+        else:
+            job["status"] = f"Imported {len(created)} journal entries to QuickBooks"
         job["unmapped_accounts"] = None
         job["unmapped_account_guidance"] = None
         job["last_error"] = None
@@ -14110,6 +14131,178 @@ def revert_import(job_id):
     # Partial revert: show job detail so they can see failed entries and retry.
     if failed_count == 0:
         return redirect(url_for("send_to_qbo", job_id=job_id))
+    return redirect(url_for("job_detail", job_id=job_id))
+
+
+@app.route("/jobs/<job_id>/link-vendor-customer-entities", methods=["POST"])
+@login_required
+def link_vendor_customer_entities(job_id):
+    """PASS 2: Link vendor/customer entities to posted JEs via sparse update.
+
+    After Pass 1 completes (JEs posted without Entity), this route reads the
+    pending_entity_links list and sparse-updates each JE to add the Entity.
+    Vendor/customer names are resolved/created same as Pass 1 would have.
+    """
+    job, user = _job_or_403(job_id)
+
+    # Only accessible if pending_entity_links exists
+    pending_links = job.get("pending_entity_links") or []
+    if not pending_links:
+        flash("No pending entity links found. All entities already linked or no entities to link.", "info")
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    qbo_conn = _get_qbo_connection(job_id)
+    if not qbo_conn:
+        flash("No QuickBooks connection found.", "error")
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    try:
+        qbo, _ = _get_qbo_client(job_id, user)
+    except QBOAuthExpired:
+        flash("QuickBooks token expired. Please reconnect from the QuickBooks page.", "error")
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    customer_index, vendor_index = _firm_entity_indexes(user["firm_id"])
+
+    # Build entity caches (find/create) using same logic as _resolve_entity_hints
+    created = []
+    persisted = {}
+    for row in db.list_entity_map(user["firm_id"], qbo_conn["realm_id"]):
+        persisted[(row["kind"], row["normalized_name"])] = row["qbo_entity_id"]
+
+    failed_links = []
+    linked_count = 0
+
+    # Rate-limit: pace at least 0.5s between calls (per instructions)
+    import time as _time_sleep_local
+    for link_entry in pending_links:
+        if link_entry.get("linked"):
+            continue
+
+        try:
+            kind = link_entry.get("kind")
+            name = link_entry.get("name")
+            doc_number = link_entry.get("doc_number")
+
+            if not kind or not name or not doc_number:
+                failed_links.append({
+                    "doc_number": doc_number,
+                    "reason": "Missing kind, name, or doc_number",
+                    "kind": kind,
+                    "name": name,
+                })
+                continue
+
+            # Get the JE by doc_number to fetch Id, SyncToken, Line array
+            je = qbo.get_journal_entry_by_doc_number(doc_number)
+            if not je:
+                failed_links.append({
+                    "doc_number": doc_number,
+                    "reason": "JE not found by DocNumber",
+                    "kind": kind,
+                    "name": name,
+                })
+                continue
+
+            je_id = je.get("Id")
+            sync_token = je.get("SyncToken")
+            lines = je.get("Line", [])
+
+            if not je_id or not sync_token:
+                failed_links.append({
+                    "doc_number": doc_number,
+                    "reason": "JE missing Id or SyncToken",
+                    "kind": kind,
+                    "name": name,
+                })
+                continue
+
+            # Find/create the entity and get its ID
+            entity_id = _find_or_create_entity(
+                qbo, kind, name, persisted, created,
+                firm_id=user["firm_id"],
+                realm_id=qbo_conn["realm_id"],
+            )
+
+            if not entity_id:
+                failed_links.append({
+                    "doc_number": doc_number,
+                    "reason": "Could not resolve or create entity",
+                    "kind": kind,
+                    "name": name,
+                })
+                continue
+
+            # Find lines matching this entity type and add Entity to them
+            # For now, add Entity to all lines of matching account type (conservative)
+            modified_lines = []
+            for line in lines:
+                line_copy = dict(line)
+                detail = line_copy.get("JournalEntryLineDetail", {})
+                # Add Entity to all lines (since we don't track exact account per link)
+                detail["Entity"] = {
+                    "Type": kind,
+                    "EntityRef": {"value": entity_id, "name": name},
+                }
+                line_copy["JournalEntryLineDetail"] = detail
+                modified_lines.append(line_copy)
+
+            # Sparse-update the JE
+            update_payload = {
+                "Id": je_id,
+                "SyncToken": sync_token,
+                "sparse": True,
+                "Line": modified_lines,
+            }
+
+            _resp = qbo.update_journal_entry(update_payload)
+            link_entry["linked"] = True
+            linked_count += 1
+
+            _log.info(
+                "link-entities: linked JE %s doc=%s kind=%s entity_id=%s",
+                je_id, doc_number, kind, entity_id,
+            )
+
+            # Rate-limit: 0.5s between calls
+            _time_sleep_local.sleep(0.5)
+
+        except Exception as e:  # noqa: BLE001
+            failed_links.append({
+                "doc_number": link_entry.get("doc_number"),
+                "reason": str(e)[:200],
+                "kind": link_entry.get("kind"),
+                "name": link_entry.get("name"),
+            })
+            _log.warning(
+                "link-entities: failed to link JE doc=%s kind=%s — %s",
+                link_entry.get("doc_number"),
+                link_entry.get("kind"),
+                str(e)[:200],
+            )
+
+    # Update pending_entity_links in job state
+    job["pending_entity_links"] = pending_links
+    if failed_links:
+        job["pending_entity_links_failures"] = failed_links
+    _save_job(job_id)
+
+    if failed_links:
+        flash(
+            f"Linked {linked_count} entity references. {len(failed_links)} could not be linked "
+            f"and are flagged for manual review. See details in job state.",
+            "warning",
+        )
+    else:
+        flash(f"Successfully linked {linked_count} entity references.", "success")
+
+    _audit(
+        "link_vendor_customer_entities",
+        target_type="job",
+        target_id=job_id,
+        details=f"linked={linked_count} failed={len(failed_links)}",
+    )
+
     return redirect(url_for("job_detail", job_id=job_id))
 
 

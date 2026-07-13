@@ -686,6 +686,34 @@ class QBOClient:
             return response.json().get("Customer")
         return None
 
+    def update_journal_entry(self, payload):
+        """Sparse-update a QBO JournalEntry. Adds Entity refs to existing lines.
+
+        ``payload`` must include ``Id``, ``SyncToken``, ``sparse: True``,
+        and the ``Line`` array with Entity modifications.
+        """
+        url = f"{self.base_url}/v3/company/{self.realm_id}/journalentry?minorversion=75"
+        response = requests.post(url, headers=self._headers(), json=payload, timeout=30)
+        tid = self._record_tid(response)
+        if response.status_code >= 400:
+            raise QBOError(
+                f"QBO returned {response.status_code} updating JournalEntry: {response.text}",
+                status_code=response.status_code,
+                body=response.text,
+                intuit_tid=tid,
+            )
+        return response.json()
+
+    def get_journal_entry_by_doc_number(self, doc_number):
+        """Fetch full JournalEntry by DocNumber — includes Id, SyncToken, Line array.
+
+        Used by sparse update to get the full record needed for modification.
+        """
+        safe = self._escape_qbo_string(str(doc_number))
+        result = self.query(f"SELECT * FROM JournalEntry WHERE DocNumber = '{safe}'")
+        items = result.get("QueryResponse", {}).get("JournalEntry", [])
+        return items[0] if items else None
+
     def get_all_customers(self) -> list[dict]:
         """Fetch all active customers from QBO for entity matching in Step 3.
 
