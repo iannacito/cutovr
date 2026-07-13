@@ -5491,23 +5491,22 @@ def _diag6000_payload(step, ids, job):
 
 
 @app.route("/operator/diag6000/<job_id>")
+@login_required
 def operator_diag6000(job_id):
-    """Operator-only diagnostic: step-by-step bisection to isolate QBO error 6000.
+    """Job-owner diagnostic: step-by-step bisection to isolate QBO error 6000.
 
-    Each request performs one step of the ladder (posts a $1 JE, deletes it,
-    returns the result). Helps determine which field/account/company-state is broken.
-    Temporary tool — remove after the verdict.
+    Any logged-in user can bisect only their own firm's jobs (firm ownership
+    checked via _job_or_403). Each request performs one step of the ladder
+    (posts a $1 JE, deletes it, returns the result). Helps determine which
+    field/account/company-state is broken. Temporary tool — remove after verdict.
     """
-    if not _is_operator():
-        abort(404)
+    _job, _user = _job_or_403(job_id)
 
     step = int(request.args.get("step", 0))
     if step > 7:
         return jsonify({"error": "invalid step"}), 400
 
-    job = db.hydrate_job(job_id)
-    if not job:
-        abort(404)
+    job = db.hydrate_job(job_id)  # Ensure we have the full hydrated job with all fields
 
     try:
         qbo, qbo_conn = _get_qbo_client(job_id, current_user())
@@ -9381,9 +9380,28 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
                         to_create_idx.append(idx)
                         to_create_payloads.append(payload)
 
-                # Batch create the new JEs
+                # Create JEs one at a time (proven transport; batch has unresolved -30006)
+                # create_journal_entry has full transient retry + Retry-After (better resilience)
                 if to_create_payloads:
-                    batch_results = qbo.create_journal_entries_batch(to_create_payloads)
+                    batch_results = []
+                    for _p in to_create_payloads:
+                        try:
+                            _resp = qbo.create_journal_entry(_p)
+                            # Normalize to batch response shape for downstream compatibility
+                            batch_results.append(
+                                _resp if "JournalEntry" in _resp else {"JournalEntry": _resp}
+                            )
+                        except QBOError as _e:
+                            batch_results.append({
+                                "Fault": {
+                                    "Error": [{
+                                        "Message": str(_e)[:500],
+                                        "code": str(_e.status_code),
+                                        "Detail": str(getattr(_e, "body", ""))[:1000],
+                                    }]
+                                },
+                                "_intuit_tid": _e.intuit_tid,
+                            })
                     for idx, result in zip(to_create_idx, batch_results):
                         txn_id, payload = chunk[idx]
                         doc_number = payload.get("DocNumber")

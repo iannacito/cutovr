@@ -130,6 +130,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     verification_json TEXT,
     tx_audit_json   TEXT,
     import_progress_json TEXT,
+    import_ledger_json TEXT,
     last_import_id  INTEGER,
     status          TEXT,
     checkpoint      TEXT,
@@ -412,6 +413,12 @@ class AppDB:
         # and see an empty in-memory dict. This column provides a cross-worker
         # source of truth for the /jobs/<id>/import-status poll fallback.
         add_col("jobs", "import_progress_json TEXT")
+        # GL import ledger: row conservation tracking (parsed → posted + reused +
+        # rejected + dropped). Ensures the import hasn't silently lost rows to
+        # filtering or batch rejections. Shape: {"parsed_rows": N, "dropped_rows": [...],
+        # "planned_txns": T, "posted": P, "reused_idempotent": R, "rejected": J,
+        # "conservation_ok": (T == P+R+J)}.
+        add_col("jobs", "import_ledger_json TEXT")
 
         # cutover_settings: AR/AP migration strategy (Task 4 in the
         # migration-workflow completion PR). Default empty so existing
@@ -831,6 +838,9 @@ class AppDB:
         if "import_progress" in job_dict:
             fields.append("import_progress_json")
             values.append(json.dumps(job_dict["import_progress"]) if job_dict["import_progress"] is not None else None)
+        if "import_ledger" in job_dict:
+            fields.append("import_ledger_json")
+            values.append(json.dumps(job_dict["import_ledger"]) if job_dict["import_ledger"] is not None else None)
         if "unmapped_accounts" in job_dict:
             fields.append("unmapped_accounts_json")
             values.append(json.dumps(job_dict["unmapped_accounts"]) if job_dict["unmapped_accounts"] else None)
@@ -967,6 +977,7 @@ class AppDB:
             ("verification_json", "verification"),
             ("tx_audit_json", "tx_audit"),
             ("import_progress_json", "import_progress"),
+            ("import_ledger_json", "import_ledger"),
             ("unmapped_accounts_json", "unmapped_accounts"),
             ("last_error_json", "last_error"),
             ("preflight_json", "preflight"),
