@@ -2385,6 +2385,14 @@ def send_to_qbo(job_id: str):
         # Leave _sample_lines empty — the Processing card just won't render this load,
         # rest of Step 5 (banner, checklist, Send button) is unaffected.
 
+    _entity_linking_debug_json = None
+    if job.get("entity_linking_status") or job.get("pending_entity_links"):
+        _entity_linking_debug_json = json.dumps({
+            "entity_linking_status": job.get("entity_linking_status"),
+            "pending_entity_links_count": len(job.get("pending_entity_links") or []),
+            "pending_entity_links_failures": job.get("pending_entity_links_failures") or [],
+        }, indent=2)
+
     return render_template(
         "send-to-qbo.html",
         job=job,
@@ -2401,6 +2409,7 @@ def send_to_qbo(job_id: str):
         workflow_progress=customer_workflow.progress_percent(stages),
         workflow_completed=customer_workflow.completed_count(stages),
         workflow_terms=customer_workflow.FRIENDLY_TERMS,
+        entity_linking_debug_json=_entity_linking_debug_json,
     )
 
 
@@ -10038,6 +10047,14 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
                     job_id, pass2_e, exc_info=True
                 )
                 job["entity_linking_status"] = "pending"  # Mark as still pending for manual retry
+                # Surface the failure without Render log access — visible via
+                # the Step 5 Entity Linking debug JSON card.
+                job["pending_entity_links_failures"] = [{
+                    "doc_number": None,
+                    "kind": None,
+                    "name": None,
+                    "reason": f"Pass 2 auto-chain did not run: {type(pass2_e).__name__}: {str(pass2_e)[:300]}",
+                }]
                 db.save_job_state(job_id, job)
                 jobs.pop(job_id, None)
     else:

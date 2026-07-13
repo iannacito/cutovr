@@ -464,6 +464,16 @@
     @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 
+  {% if entity_linking_debug_json %}
+  <section class="card" id="entity-linking-debug-card" style="padding:var(--space-4);margin-bottom:var(--space-5);">
+    <p class="eyebrow" style="margin:0 0 var(--space-2);">Entity Linking (Pass 2) &mdash; debug JSON</p>
+    <details>
+      <summary style="cursor:pointer;">{&hellip;}</summary>
+      <pre style="max-width:100%;max-height:24rem;overflow:auto;font-size:.75rem;">{{ entity_linking_debug_json }}</pre>
+    </details>
+  </section>
+  {% endif %}
+
   {% set _show_processing = (import_in_progress or (job.checkpoint == 'needs_attention' and job.last_error)) %}
   {% if _show_processing and sample_lines %}
   <section class="card" id="processing-table-card" style="padding:var(--space-4);margin-bottom:var(--space-5);">

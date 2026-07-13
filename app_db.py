@@ -430,6 +430,11 @@ class AppDB:
         # to show import completion and Step 6 reachability separately from entity linking
         # progress. Values: "pending" | "complete" | "partial".
         add_col("jobs", "entity_linking_status TEXT")
+        # Failure detail for Pass 2 entity linking — either per-entity failures
+        # from _run_pass2_entity_linking, or a single synthetic entry when the
+        # Pass 2 auto-chain itself crashes before entity linking can run.
+        # Surfaced in the UI so Cesar can see it without Render log access.
+        add_col("jobs", "pending_entity_links_failures_json TEXT")
 
         # cutover_settings: AR/AP migration strategy (Task 4 in the
         # migration-workflow completion PR). Default empty so existing
@@ -911,6 +916,13 @@ class AppDB:
                 if job_dict["pending_entity_links"]
                 else None
             )
+        if "pending_entity_links_failures" in job_dict:
+            fields.append("pending_entity_links_failures_json")
+            values.append(
+                json.dumps(job_dict["pending_entity_links_failures"])
+                if job_dict["pending_entity_links_failures"]
+                else None
+            )
         if "entity_linking_status" in job_dict:
             fields.append("entity_linking_status")
             values.append(job_dict["entity_linking_status"])
@@ -1008,6 +1020,7 @@ class AppDB:
             ("coa_type_overrides_json", "coa_type_overrides"),
             ("entity_name_blockers_json", "entity_name_blockers"),
             ("pending_entity_links_json", "pending_entity_links"),
+            ("pending_entity_links_failures_json", "pending_entity_links_failures"),
             ("opening_balance_history_json", "opening_balance_history"),
             ("auto_balance_rows_json", "auto_balance_rows"),
             ("parsed_trial_balance_json", "parsed_trial_balance"),
