@@ -14469,14 +14469,17 @@ def _run_pass2_entity_linking(job, job_id, qbo, user, qbo_conn, account_type_ind
             _time_sleep_local.sleep(0.5)
 
         except Exception as e:  # noqa: BLE001
-            failed_links.append({
-                "doc_number": link_entry.get("doc_number"),
-                "reason": str(e)[:200],
-                "kind": link_entry.get("kind"),
-                "name": link_entry.get("name"),
-            })
             _intuit_tid = getattr(e, "intuit_tid", None) if isinstance(e, QBOError) else None
             _status_code = str(e.status_code) if isinstance(e, QBOError) else "N/A"
+            failed_links.append({
+                "doc_number": link_entry.get("doc_number"),
+                "reason": str(e)[:1000],
+                "kind": link_entry.get("kind"),
+                "name": link_entry.get("name"),
+                "account_type": link_entry.get("account_type"),
+                "status_code": _status_code,
+                "intuit_tid": _intuit_tid,
+            })
             _log.warning(
                 "link-entities(DIAG): failed to link JE doc=%s kind=%s name=%s — "
                 "status=%s error=%s intuit_tid=%s",
@@ -14484,7 +14487,7 @@ def _run_pass2_entity_linking(job, job_id, qbo, user, qbo_conn, account_type_ind
                 link_entry.get("kind"),
                 link_entry.get("name"),
                 _status_code,
-                str(e)[:200],
+                str(e)[:1000],
                 _intuit_tid,
             )
 
