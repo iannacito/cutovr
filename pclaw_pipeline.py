@@ -339,11 +339,17 @@ def find_unmapped_accounts(rows, account_mapping, mapping_mode):
 
 
 def idempotency_doc_number(transaction_id: str) -> str:
-    """Return a stable DocNumber for QBO.
-    PCLaw transaction_ids are unique 6-digit numbers — no hash needed.
-    QBO cap is 21 chars."""
+    """Return a stable, QBO-valid (numeric-only, <=21 char) DocNumber.
+
+    Plain PCLaw transaction_ids are already digit-only, so this is a no-op
+    for the common case. Merged GROUP-<token>-<ids> transaction_ids (see
+    gl_grouping.py) contain letters — strip those so the result actually
+    matches QBO's documented ^\d{1,21}$ DocNumber format instead of
+    silently including them.
+    """
     ref = str(transaction_id or "").strip()
-    return ("".join(ch for ch in ref if ch.isalnum()) or "PCLAW")[:21]
+    digits_only = "".join(ch for ch in ref if ch.isdigit())
+    return (digits_only or "0")[:21]
 
 
 def build_journal_entry_payload(

@@ -9167,6 +9167,20 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
                 _t.sleep(0.5)
 
         except Exception as partial_e:
+            # Log DocNumbers from the last chunk being processed when the failure occurred.
+            # Since Cesar can't access Render logs directly, surface enough detail here
+            # so job.last_error can help confirm the hypothesis (format violation on
+            # merged transaction IDs) vs. a genuine QBO-side issue.
+            try:
+                doc_numbers_in_chunk = [p.get("DocNumber") for p in to_create_payloads if p]
+                non_digit_doc_numbers = [dn for dn in doc_numbers_in_chunk if dn and not dn.isdigit()]
+                _log.warning(
+                    "GL batch failed job=%s chunk_size=%s doc_numbers=%s non_digit=%s exception=%s",
+                    job_id, len(to_create_payloads), doc_numbers_in_chunk[:5], non_digit_doc_numbers, partial_e,
+                )
+            except Exception:  # noqa: BLE001
+                pass  # Logging failure shouldn't mask the real exception
+
             if created_transactions:
                 try:
                     partial_import_id = history.record_import(
