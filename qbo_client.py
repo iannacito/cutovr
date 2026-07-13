@@ -152,17 +152,6 @@ class QBOClient:
     def get_accounts(self):
         return self.query("SELECT Id, Name, AcctNum, AccountType, AccountSubType, Active FROM Account MAXRESULTS 1000")
 
-    def get_accounts_list(self):
-        """Unwrapped list of Account dicts (see get_accounts for the raw response).
-
-        Canonical accessor that prevents shape-confusion bugs where the full
-        response dict {"QueryResponse": {"Account": [...]}} is mistaken for
-        the unwrapped list. Use this when you need the account list; use
-        get_accounts() only when you need the raw response.
-        """
-        resp = self.get_accounts()
-        return resp.get("QueryResponse", {}).get("Account") or []
-
     def get_company_info(self):
         """Return the connected company's CompanyInfo for the current realmId.
 
