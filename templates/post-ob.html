@@ -18,8 +18,13 @@
 
       {% set last_entry = job.opening_balance_history | last %}
       <dl style="margin-top:var(--space-3);">
-        <dt>QuickBooks JE ID</dt>
-        <dd>{{ last_entry.qbo_je_id or '(demo)' }}</dd>
+        <dt>QBO reference</dt>
+        <dd>
+          {{ last_entry.qbo_je_id or '(demo)' }}
+          <span class="muted" style="font-size:.85rem;">
+            (shown as Journal no. <strong>OPEN-BAL</strong> inside QuickBooks, not this number)
+          </span>
+        </dd>
         <dt>As of date</dt>
         <dd>{{ last_entry.as_of_date }}</dd>
         <dt>Lines posted</dt>
@@ -106,7 +111,13 @@
       <ol style="margin:var(--space-3) 0 var(--space-4);padding-left:1.5rem;line-height:1.8;">
         <li>Log in to your QuickBooks company.</li>
         {% set _je = job.opening_balance_history | last %}
-        <li>Open Journal Entry #{{ _je.qbo_je_id or '(see above)' }}.</li>
+        <li>
+          <a href="https://qbo.intuit.com/app/journal?txnId={{ _je.qbo_je_id }}" target="_blank" rel="noopener">
+            Open the opening-balance journal entry in QuickBooks &rarr;
+          </a>
+          (you'll see it listed there as <strong>Journal no. OPEN-BAL</strong>, dated
+          {{ _je.as_of_date }}).
+        </li>
         <li>Compare the balances to your Trial Balance report from PCLaw.</li>
         <li>If everything matches, you've successfully migrated the opening balances.</li>
       </ol>
@@ -124,7 +135,7 @@
         <thead>
           <tr style="border-bottom:1px solid var(--border);">
             <th style="text-align:left;padding:var(--space-2);">Date</th>
-            <th style="text-align:left;padding:var(--space-2);">JE ID</th>
+            <th style="text-align:left;padding:var(--space-2);">QBO reference</th>
             <th style="text-align:right;padding:var(--space-2);">Lines</th>
             <th style="text-align:right;padding:var(--space-2);">Debits</th>
             <th style="text-align:right;padding:var(--space-2);">Credits</th>
@@ -164,14 +175,14 @@
       {% set _last = job.opening_balance_history | last %}
       {% if _last and _last.qbo_je_id %}
         <p class="muted" style="margin-top:var(--space-2);">
-          JE <strong>#{{ _last.qbo_je_id }}</strong> will be deleted from QuickBooks.
-          This action cannot be undone.
+          The opening-balance journal entry (shown as <strong>Journal no. OPEN-BAL</strong> in QuickBooks)
+          will be deleted from QuickBooks. This action cannot be undone.
         </p>
         <form method="post" action="{{ url_for('revert_ob', job_id=job.id) }}"
-              onsubmit="return confirm('Delete JE #{{ _last.qbo_je_id }} from QuickBooks? This cannot be undone.');">
+              onsubmit="return confirm('Delete the opening-balance journal entry (Journal no. OPEN-BAL) from QuickBooks? This cannot be undone.');">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit" class="btn btn-danger" style="margin-top:var(--space-3);">
-            Delete JE #{{ _last.qbo_je_id }} from QuickBooks
+            Delete opening-balance entry from QuickBooks
           </button>
         </form>
       {% elif _last and _last.demo_mode %}

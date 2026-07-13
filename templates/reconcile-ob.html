@@ -19,8 +19,13 @@
       <p class="eyebrow">Posting details</p>
       <dl>
         {% if posting.qbo_je_id %}
-          <dt>QuickBooks JE ID</dt>
-          <dd><strong>{{ posting.qbo_je_id }}</strong></dd>
+          <dt>QBO reference</dt>
+          <dd>
+            <strong>{{ posting.qbo_je_id }}</strong>
+            <span class="muted" style="font-size:.85rem;display:block;margin-top:0.25rem;">
+              (shown as Journal no. <strong>OPEN-BAL</strong> inside QuickBooks, not this number)
+            </span>
+          </dd>
         {% elif posting.demo_mode %}
           <dt>Status</dt>
           <dd><em>Demo mode — not posted to QuickBooks</em></dd>
@@ -56,7 +61,11 @@
       <li>Log in to your QuickBooks company.</li>
       <li>
         {% if posting.qbo_je_id %}
-          Open Journal Entry #{{ posting.qbo_je_id }}.
+          <a href="https://qbo.intuit.com/app/journal?txnId={{ posting.qbo_je_id }}" target="_blank" rel="noopener">
+            Open the opening-balance journal entry in QuickBooks &rarr;
+          </a>
+          (you'll see it listed there as <strong>Journal no. OPEN-BAL</strong>, dated
+          {{ posting.as_of_date }}).
         {% else %}
           Find the opening balance journal entry.
         {% endif %}
