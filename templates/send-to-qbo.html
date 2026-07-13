@@ -746,8 +746,20 @@
           }
           if (data.overall === 'done') {
             clearInterval(importPollTimer);
-            if (progressPanel) { progressPanel.style.display = 'none'; }
-            location.reload();
+            if (progressPanel) {
+              progressPanel.innerHTML =
+                '<p style="margin:0;font-weight:600;">' +
+                '<span style="color:var(--success,#2f7d32);">&#10003;</span> Import finished — ' +
+                data.pushed + ' of ' + data.total + ' posted' +
+                (data.skipped ? ', ' + data.skipped + ' skipped' : '') + '.' +
+                '</p>' +
+                '<p class="muted" style="margin:.5em 0 0;">' +
+                'Review the Processing and Rejected details below. ' +
+                '<a href="javascript:location.reload()">Refresh the page</a> any time for the ' +
+                'full summary view.' +
+                '</p>';
+            }
+            if (glBtn) { glBtn.textContent = 'Import complete'; }
           } else if (data.overall === 'failed') {
             clearInterval(importPollTimer);
             if (progressText) {
