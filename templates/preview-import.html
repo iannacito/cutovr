@@ -183,7 +183,11 @@
             </td>
             <td>{{ a.pclaw_account_name or a.pclaw_display }}</td>
             <td>
-              {% if a.mapped %}
+              {% if a.mapped and a.match_warning == 'qbo-continued-suffix' %}
+                <span class="badge warning">Yes — "- Continued" account</span>
+              {% elif a.mapped and a.match_warning == 'name-mismatch' %}
+                <span class="badge warning">Yes — name differs</span>
+              {% elif a.mapped %}
                 <span class="badge success">Yes</span>
               {% else %}
                 <span class="badge error">No</span>

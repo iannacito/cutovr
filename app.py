@@ -11621,6 +11621,8 @@ def _firm_coa_gap_analysis(
     valid_ids = {str(a.get("Id")) for a in _acct_list if a.get("Id")}
     qbo_numbers = {str(a.get("AcctNum") or "").strip() for a in _acct_list if a.get("AcctNum")}
     qbo_names_norm = {_norm(a.get("Name")) for a in _acct_list if a.get("Name")}
+    # Names WITHOUT suffix stripping (for detecting matches that only work via suffix normalization)
+    qbo_names_raw = {(a.get("Name") or "").strip().lower() for a in _acct_list if a.get("Name")}
 
     saved_numbers = {
         str(m["pclaw_account_number"])
@@ -11707,12 +11709,29 @@ def _firm_coa_gap_analysis(
     gl_only = [v for k, v in sorted(gl_accounts.items()) if k not in tb_accounts]
     tb_only = [v for k, v in sorted(tb_accounts.items()) if k not in gl_accounts]
 
+    # Detect accounts that match only via suffix normalization (the "-Continued" trap).
+    # An account is suffix-matched if its normalized name exists in QBO but its raw name doesn't.
+    suffix_matched = []
+    for acct_dict in list(gl_accounts.values()) + list(tb_accounts.values()):
+        name = acct_dict.get("name")
+        if not name:
+            continue
+        raw = name.strip().lower()
+        normalized = _norm(name)
+        # Match found after normalization but NOT before = suffix-only match
+        if (normalized in qbo_names_norm and
+            raw not in qbo_names_raw and
+            normalized and
+            acct_dict not in suffix_matched):
+            suffix_matched.append(acct_dict)
+
     return {
         "gl_missing_from_qbo": gl_missing,
         "tb_missing_from_qbo": tb_missing,
         "gl_only": gl_only,
         "tb_only": tb_only,
-        "has_gaps": bool(gl_missing or tb_missing),
+        "suffix_matched": suffix_matched,
+        "has_gaps": bool(gl_missing or tb_missing or suffix_matched),
     }
 
 

@@ -49,6 +49,32 @@ def _dollar(value) -> str:
     return f"{value:.2f}"
 
 
+def _match_warning(pclaw_name: str | None, qbo_name: str | None) -> str | None:
+    """Detect suspicious account matches that happened despite name differences.
+
+    Returns:
+      - None if names match (case/whitespace-insensitive) or if either is missing
+      - "qbo-continued-suffix" if matched only because "-Continued" was normalized away
+      - "name-mismatch" if number matched but actual names differ significantly
+    """
+    if not (pclaw_name and qbo_name):
+        return None
+    import re
+    p = (pclaw_name or "").strip().lower()
+    q = (qbo_name or "").strip().lower()
+    if p == q:
+        return None
+    # Both names normalized by stripping the "-Continued" suffix
+    cont = re.compile(r'\s*-?\s*\(?continued\)?\s*$', re.IGNORECASE)
+    p_normalized = cont.sub("", p).strip()
+    q_normalized = cont.sub("", q).strip()
+    if p_normalized == q_normalized and p != q:
+        return "qbo-continued-suffix"
+    if p_normalized != q_normalized:
+        return "name-mismatch"
+    return None
+
+
 def build_dry_run_preview(
     rows: list[dict],
     qbo_accounts_response: dict,
@@ -153,6 +179,7 @@ def build_dry_run_preview(
             display = f"{(r.get('account_number') or '').strip()} {(r.get('account_name') or '').strip()}".strip()
             mapped = bool(key and mapping.get(key))
             qbo_id = mapping.get(key) if mapped else None
+            qbo_name = qbo_name_by_id.get(qbo_id) if qbo_id else None
             entry = unique_accounts.setdefault(
                 display or "(blank)",
                 {
@@ -162,9 +189,9 @@ def build_dry_run_preview(
                     "mapping_key": key or "",
                     "mapped": mapped,
                     "qbo_account_id": qbo_id,
-                    "qbo_account_name": qbo_name_by_id.get(qbo_id) if qbo_id else None,
-                    "qbo_acct_num": (qbo_acctnum_by_id.get(qbo_id) if qbo_id else None)
-                                    or (r.get("account_number") or "").strip() or None,
+                    "qbo_account_name": qbo_name,
+                    "qbo_acct_num": qbo_acctnum_by_id.get(qbo_id) if qbo_id else None,
+                    "match_warning": _match_warning(r.get("account_name"), qbo_name) if mapped else None,
                     "line_count": 0,
                 },
             )
@@ -185,8 +212,7 @@ def build_dry_run_preview(
                     "date": r.get("date"),
                     "account": display,
                     "qbo_account_id": qbo_id,
-                    "qbo_acct_num": (qbo_acctnum_by_id.get(qbo_id) if qbo_id else None)
-                                    or (r.get("account_number") or "").strip() or None,
+                    "qbo_acct_num": qbo_acctnum_by_id.get(qbo_id) if qbo_id else None,
                     "posting_type": "Debit" if debit else "Credit",
                     "amount": _dollar(debit if debit else credit),
                     "description": (r.get("description") or "")[:120],
