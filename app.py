@@ -9005,21 +9005,44 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
         saved_mappings = db.list_account_mappings(user["firm_id"], qbo_conn["realm_id"])
 
         if auto_by_number or any(m.get("pclaw_account_number") for m in saved_mappings):
-            mapping = dict(auto_by_number)
+            mapping = {k: str(v) for k, v in auto_by_number.items()}  # Normalize IDs to strings
             mapping_mode = "number"
             for m in saved_mappings:
                 if m.get("pclaw_account_number"):
-                    mapping[str(m["pclaw_account_number"])] = m["qbo_account_id"]
+                    mapping[str(m["pclaw_account_number"])] = str(m["qbo_account_id"])
         else:
-            mapping = dict(auto_by_name)
+            mapping = {k: str(v) for k, v in auto_by_name.items()}  # Normalize IDs to strings
             mapping_mode = "name"
             for m in saved_mappings:
                 if m.get("pclaw_account_name"):
-                    mapping[m["pclaw_account_name"]] = m["qbo_account_id"]
+                    mapping[m["pclaw_account_name"]] = str(m["qbo_account_id"])
 
         unmapped = find_unmapped_accounts(rows, mapping, mapping_mode)
         if unmapped:
             raise RuntimeError(f"Unmapped accounts: {sorted(unmapped)}")
+
+        # Preflight: verify every mapped account still exists and is Active in QBO
+        # (accounts may have been deleted/deactivated between mapping time and import time).
+        # This converts "227 generic rejections" into one clear, actionable message.
+        qbo_ids = {str(a.get("Id")) for a in qbo_accounts if a.get("Id")}
+        qbo_active = {
+            str(a.get("Id")): a.get("Active", True)
+            for a in qbo_accounts
+            if a.get("Id")
+        }
+        missing_or_inactive = []
+        for _key, _qbo_id in mapping.items():
+            _id_str = str(_qbo_id)
+            if _id_str not in qbo_ids:
+                missing_or_inactive.append(f"{_key} (id {_id_str}): not found in QBO")
+            elif not qbo_active.get(_id_str, True):
+                missing_or_inactive.append(f"{_key} (id {_id_str}): inactive in QBO")
+        if missing_or_inactive:
+            raise RuntimeError(
+                f"Mapped accounts are missing or inactive in QuickBooks. "
+                f"Re-run Step 3 to update your mappings: {missing_or_inactive[:3]}"
+                + (f" (and {len(missing_or_inactive) - 3} more)" if len(missing_or_inactive) > 3 else "")
+            )
 
         type_index = build_account_type_index(qbo_accounts)
         from pclaw_pipeline import plan_balanced_payloads
