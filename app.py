@@ -140,6 +140,14 @@ app = Flask(
     static_folder=str(Path(__file__).resolve().parent / "static"),
 )
 
+# Configure logging to INFO level for visibility into background operations.
+# Gunicorn's own handlers may already be configured; only set if not already done.
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    )
+
 # Production-vs-local environment switch. Anything other than "local"/"dev"
 # means we expect the operator to provide a real SECRET_KEY and serve over
 # HTTPS. Set APP_ENV=production on Render.

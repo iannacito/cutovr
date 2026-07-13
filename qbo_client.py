@@ -295,18 +295,21 @@ class QBOClient:
         attempts = max(1, int(DEFAULT_MAX_RETRIES) + 1)
         last_exc = None
 
-        # Diagnostic logging: capture batch structure before posting
+        # Diagnostic logging: capture full batch payload before posting (DIAG6000:)
         if batch_items:
             sample_item = batch_items[0]
             sample_je = sample_item.get("JournalEntry", {})
             sample_lines = sample_je.get("Line", [])
-            _log.debug(
-                "create_journal_entries_batch: posting %d items, sample structure: "
-                "JE keys=%s, Line count=%d, Line[0] keys=%s",
+            # Log the full sample JE with descriptions truncated for readability
+            sample_je_display = dict(sample_je)
+            for line in sample_je_display.get("Line", []):
+                if "Description" in line and len(line["Description"]) > 80:
+                    line = dict(line)
+                    line["Description"] = line["Description"][:80] + "..."
+            _log.warning(
+                "DIAG6000: batch request — posting %d items, sample JE: %s",
                 len(batch_items),
-                list(sample_je.keys()) if sample_je else [],
-                len(sample_lines),
-                list(sample_lines[0].keys()) if sample_lines else [],
+                json.dumps(sample_je_display, default=str),
             )
 
         for attempt in range(attempts):
@@ -337,16 +340,16 @@ class QBOClient:
                 resp_items = response.json().get("BatchItemResponse", [])
                 by_bid = {item.get("bId"): item for item in resp_items}
 
-                # Log any faults for diagnosis
+                # Log any faults for diagnosis (DIAG6000:)
                 fault_count = sum(1 for item in resp_items if "Fault" in item)
                 if fault_count > 0:
                     sample_fault = next((item.get("Fault") for item in resp_items if "Fault" in item), {})
-                    sample_errors = sample_fault.get("Error", [{}])
                     _log.warning(
-                        "create_journal_entries_batch: %d of %d items returned Fault. "
-                        "Sample error: code=%s, message=%s",
+                        "DIAG6000: batch faults — %d of %d items returned Fault. "
+                        "Sample fault: %s, intuit_tid: %s",
                         fault_count, len(resp_items),
-                        sample_errors[0].get("code"), sample_errors[0].get("Message"),
+                        json.dumps(sample_fault, default=str),
+                        tid,
                     )
 
                 return [
