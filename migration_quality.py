@@ -27,7 +27,7 @@ from typing import Iterable, Optional
 
 from csv_safety import sanitize_csv_cell
 from gl_grouping import plan_posting_groups
-from gl_row_quality import classify_gl_rows, is_blank_row, is_droppable_row
+from gl_row_quality import classify_gl_rows, is_blank_row, is_droppable_row, parse_gl_date
 from pclaw_pipeline import (
     GL_REQUIRED_COLUMNS,
     build_account_mapping_from_names,
@@ -47,6 +47,14 @@ def _dollar(value) -> str:
     if not isinstance(value, Decimal):
         value = Decimal(str(value))
     return f"{value:.2f}"
+
+
+def _iso_date(raw) -> str:
+    """Normalize raw PCLaw date to ISO YYYY-MM-DD format, or return raw string."""
+    parsed = parse_gl_date(raw)
+    if parsed:
+        return parsed.strftime("%Y-%m-%d")
+    return str(raw or "").strip()
 
 
 def _match_warning(pclaw_name: str | None, qbo_name: str | None) -> str | None:
@@ -213,7 +221,7 @@ def build_dry_run_preview(
             if len(sample_lines) < sample_limit and (debit or credit):
                 sample_lines.append({
                     "transaction_id": txn_id,
-                    "date": r.get("date"),
+                    "date": _iso_date(r.get("date")),
                     "account": display,
                     "qbo_account_id": qbo_id,
                     "qbo_acct_num": qbo_acctnum_by_id.get(qbo_id) if qbo_id else None,
@@ -233,7 +241,7 @@ def build_dry_run_preview(
                 "transaction_id": txn_id,
                 "line_count": len(txn_rows),
                 "reasons": sorted(set(blockers)),
-                "date": (txn_rows[0].get("date") or "") if txn_rows else "",
+                "date": _iso_date(txn_rows[0].get("date")) if txn_rows else "",
                 "debits": _dollar(txn_debits),
                 "credits": _dollar(txn_credits),
                 "accounts": "; ".join(txn_accounts[:3]),
