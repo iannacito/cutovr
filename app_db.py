@@ -129,6 +129,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     import_summary_json TEXT,
     verification_json TEXT,
     tx_audit_json   TEXT,
+    import_progress_json TEXT,
     last_import_id  INTEGER,
     status          TEXT,
     checkpoint      TEXT,
@@ -405,6 +406,12 @@ class AppDB:
         # worker-switch failure mode, mirroring how gl_rows_json works.
         add_col("jobs", "parsed_trial_balance_json TEXT")
         add_col("jobs", "parsed_trust_listing_json TEXT")
+        # GL import progress state persisted across worker processes. With -w 2
+        # (two Gunicorn workers), the background thread updates may land in one
+        # worker's memory, but the polling requests may land on the other worker
+        # and see an empty in-memory dict. This column provides a cross-worker
+        # source of truth for the /jobs/<id>/import-status poll fallback.
+        add_col("jobs", "import_progress_json TEXT")
 
         # cutover_settings: AR/AP migration strategy (Task 4 in the
         # migration-workflow completion PR). Default empty so existing
@@ -821,6 +828,9 @@ class AppDB:
         if "tx_audit" in job_dict:
             fields.append("tx_audit_json")
             values.append(json.dumps(job_dict["tx_audit"]) if job_dict["tx_audit"] is not None else None)
+        if "import_progress" in job_dict:
+            fields.append("import_progress_json")
+            values.append(json.dumps(job_dict["import_progress"]) if job_dict["import_progress"] is not None else None)
         if "unmapped_accounts" in job_dict:
             fields.append("unmapped_accounts_json")
             values.append(json.dumps(job_dict["unmapped_accounts"]) if job_dict["unmapped_accounts"] else None)
@@ -956,6 +966,7 @@ class AppDB:
             ("import_summary_json", "import_summary"),
             ("verification_json", "verification"),
             ("tx_audit_json", "tx_audit"),
+            ("import_progress_json", "import_progress"),
             ("unmapped_accounts_json", "unmapped_accounts"),
             ("last_error_json", "last_error"),
             ("preflight_json", "preflight"),

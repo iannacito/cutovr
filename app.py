@@ -2153,12 +2153,16 @@ def import_status(job_id):
 
     state = importer.get_import_state_json(job_id)
     if state is None:
-        # No in-memory state — check DB for job checkpoint
-        job = db.get_job(job_id)
-        if job and job.get("checkpoint") == job_checkpoints.IMPORTING:
-            state = {"overall": "running", "pushed": 0, "total": 0, "skipped": 0, "msg": "Import in progress..."}
+        # No in-memory state (common when request lands on different Gunicorn worker
+        # than the one running the import thread). Fall back to persisted DB state.
+        job = db.hydrate_job(job_id)  # NOT db.get_job — need decoded import_progress_json
+        persisted = (job or {}).get("import_progress")
+        if persisted:
+            state = persisted
+        elif job and job.get("checkpoint") == job_checkpoints.IMPORTING:
+            state = {"overall": "running", "pushed": 0, "total": 0, "skipped": 0, "msg": "Import in progress...", "entries": []}
         else:
-            state = {"overall": "idle", "pushed": 0, "total": 0, "skipped": 0, "msg": "Not running"}
+            state = {"overall": "idle", "pushed": 0, "total": 0, "skipped": 0, "msg": "Not running", "entries": []}
     return jsonify(state)
 
 
