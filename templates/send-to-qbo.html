@@ -451,7 +451,7 @@
                    border:2px solid currentColor;border-right-color:transparent;
                    border-radius:50%;vertical-align:-2px;margin-right:.5em;
                    animation:spin 0.9s linear infinite;"></span>
-      Sending your data to QuickBooks&hellip;
+      <span id="import-progress-header-text">Sending your data to QuickBooks&hellip;</span>
     </p>
     <p class="muted" style="margin:.5em 0 0;">
       <span id="import-progress-text">This may take a few minutes for larger imports.
@@ -721,6 +721,7 @@
     var jobId = {{ job.id | tojson }};
     var progressPanel = document.getElementById('send-to-qbo-progress');
     var progressText = document.getElementById('import-progress-text');
+    var progressHeaderText = document.getElementById('import-progress-header-text');
     var pollErrors = 0;
 
     function pollImportStatus() {
@@ -734,6 +735,9 @@
           if (progressText && data.overall === 'running') {
             var pct = data.total > 0 ? Math.round((data.pushed / data.total) * 100) : 0;
             progressText.textContent = 'Progress: ' + data.pushed + ' of ' + data.total + ' posted (' + pct + '%)…';
+          }
+          if (progressHeaderText && data.overall === 'running' && data.total > 0 && data.pushed >= data.total) {
+            progressHeaderText.textContent = 'Finalizing import…';
           }
           // Update processing/rejected table rows from entries
           if (data.entries) {
