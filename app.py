@@ -3725,36 +3725,61 @@ def dev_reset_migration():
 
     qbo_reverted, qbo_failed = 0, 0
     if QBO_REAL_IMPORT:
+        import time as _t
         firm_job_rows = db.list_jobs_for_firm(firm_id, limit=200)
         for row in firm_job_rows:
-            job = db.hydrate_job(row["id"])
-            if not job:
-                continue
-            if job.get("checkpoint") != "completed":
-                continue
-            if not job.get("import_summary"):
-                continue
+            job_id = row["id"]
+            # Revert every import ATTEMPT recorded for this job — success AND
+            # partial — not just a job whose checkpoint reached "completed".
+            # A partial import (checkpoint stuck at needs_attention, or at
+            # importing per the stuck-checkpoint bug) still posted real JEs
+            # to QBO and must not be silently skipped.
             try:
-                qbo, qbo_conn = _get_qbo_client(row["id"], user)
+                import_records = history.get_history_for_job(job_id)
+            except Exception as exc:  # noqa: BLE001
+                _log.warning("dev_reset_migration: history lookup failed for %s: %s", job_id, exc)
+                continue
+
+            relevant = [r for r in import_records if r.get("status") in ("success", "partial")]
+            if not relevant:
+                continue
+
+            try:
+                qbo, qbo_conn = _get_qbo_client(job_id, user)
                 if not qbo_conn:
                     qbo_failed += 1
                     continue
-                for result in (job.get("qbo_results") or []):
-                    je_id = result.get("Id")
+            except Exception as exc:  # noqa: BLE001
+                _log.warning("dev_reset_migration: QBO client failed for %s: %s", job_id, exc)
+                qbo_failed += 1
+                continue
+
+            job_ok = True
+            _delete_count = 0
+            for imp in relevant:
+                for tx in imp.get("transactions", []):
+                    je_id = tx.get("qbo_je_id")
                     if not je_id:
                         continue
                     try:
                         je = qbo.get_journal_entry(je_id)
                         if not je:
-                            continue
+                            continue  # already gone — fine
                         sync_token = je.get("SyncToken")
                         if sync_token:
                             qbo.delete_journal_entry(je_id, sync_token)
-                    except Exception:  # noqa: BLE001
-                        pass
+                    except Exception as exc:  # noqa: BLE001
+                        _log.warning(
+                            "dev_reset_migration: could not delete JE %s for job %s: %s",
+                            je_id, job_id, exc,
+                        )
+                        job_ok = False
+                    _delete_count += 1
+                    if _delete_count % 25 == 0:
+                        _t.sleep(0.5)
+            if job_ok:
                 qbo_reverted += 1
-            except Exception as exc:  # noqa: BLE001
-                _log.warning("dev_reset_migration: revert failed for %s: %s", row["id"], exc)
+            else:
                 qbo_failed += 1
 
     # Purge all local job data for the firm.
