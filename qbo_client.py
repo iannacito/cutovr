@@ -291,7 +291,7 @@ class QBOClient:
             {"bId": str(i + 1), "operation": "create", "JournalEntry": p}
             for i, p in enumerate(payloads)
         ]
-        url = f"{self.base_url}/batch?minorversion=75"
+        url = f"{self.base_url}/v3/company/{self.realm_id}/batch?minorversion=75"
         attempts = max(1, int(DEFAULT_MAX_RETRIES) + 1)
         last_exc = None
 
@@ -496,7 +496,7 @@ class QBOClient:
             {"bId": str(i + 1), "operation": "update", "Account": p}
             for i, p in enumerate(payloads)
         ]
-        url = f"{self.base_url}/batch?minorversion=75"
+        url = f"{self.base_url}/v3/company/{self.realm_id}/batch?minorversion=75"
         resp = self._post(url, {"BatchItemRequest": batch_items})
         return resp.get("BatchItemResponse", [])
 
