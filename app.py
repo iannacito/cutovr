@@ -3846,6 +3846,81 @@ def dev_reset_migration():
     return redirect(url_for("migration_nexus"))
 
 
+@app.route("/delete-local-migration-data", methods=["POST"])
+@login_required
+def delete_local_migration_data():
+    """Wipe all local job data + import history for the firm.
+
+    Does NOT touch QuickBooks — any JEs already posted stay in QuickBooks.
+    Account/entity mappings are preserved (separate DB tables, untouched).
+    Safe for use on the live site — NOT gated behind IS_PRODUCTION.
+
+    Tradeoff: because QBO JEs are NOT deleted, and import_history IS cleared,
+    re-running the same GL file will re-post to QBO and create duplicates
+    alongside any old JEs still there. Use Reset Migration or manual QBO
+    cleanup to keep the QBO company clean.
+    """
+    user = current_user()
+    firm_id = user["firm_id"]
+
+    # Collect realms FIRST — the purge loop below deletes qbo_connections
+    # rows (via db.delete_job), after which the realms are unrecoverable.
+    _realms = {
+        c["realm_id"]
+        for c in db.list_qbo_connections_for_firm(firm_id)
+        if c.get("realm_id")
+    }
+
+    # Purge all local job data for the firm (does NOT touch QBO).
+    all_rows = db.list_jobs_for_firm(firm_id, limit=200)
+    all_job_ids = [row["id"] for row in all_rows]
+    deleted_count = 0
+    for row in all_rows:
+        try:
+            job = db.hydrate_job(row["id"]) or {}
+            _purge_job_local(row["id"], job)
+            deleted_count += 1
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("delete_local_migration_data: purge failed for %s: %s", row["id"], exc)
+
+    # Purge import history for every realm this firm was connected to.
+    hist_deleted = 0
+    for _realm in _realms:
+        try:
+            hist_deleted += history.delete_all_for_firm_realm(_realm)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("delete_local_migration_data: history purge failed for realm %s: %s", _realm, exc)
+
+    # Belt-and-suspenders: also delete by job_id in case realm_id was None.
+    try:
+        orphan_deleted = history.delete_by_job_ids(all_job_ids)
+        if orphan_deleted:
+            hist_deleted += orphan_deleted
+            _log.info("delete_local_migration_data: deleted %d orphaned history record(s)", orphan_deleted)
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("delete_local_migration_data: job_id history purge failed: %s", exc)
+
+    # Belt-and-suspenders: flush in-memory state
+    keys_to_drop = [k for k, v in list(qbo_connections.items())]
+    for k in keys_to_drop:
+        qbo_connections.pop(k, None)
+    jobs.clear()
+
+    _audit(
+        "delete_local_migration_data",
+        target_type="firm", target_id=str(firm_id),
+        details=f"jobs_deleted={deleted_count} hist_deleted={hist_deleted} qbo_untouched=true mappings_preserved=true",
+    )
+
+    flash(
+        f"Deleted {deleted_count} local job(s) and cleared import history ({hist_deleted} records). "
+        "QuickBooks data was NOT touched — any journal entries already posted are still there. "
+        "Account and vendor/customer mappings were preserved.",
+        "success",
+    )
+    return redirect(url_for("migration_nexus"))
+
+
 @app.route("/jobs/<job_id>/push-entity-list", methods=["POST"])
 @login_required
 def push_entity_list(job_id):

@@ -210,6 +210,27 @@
     </form>
   </div>
 
+  <div style="background:var(--info-soft,#dbeafe);border:1px solid var(--info,#3b82f6);
+              border-radius:var(--radius);padding:var(--space-4);margin-bottom:var(--space-6);
+              display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);">
+    <div>
+      <span style="font-weight:700;font-size:.875rem;color:var(--info,#3b82f6);">
+        Delete Local Data
+      </span>
+      <span style="font-size:.8rem;color:var(--ink-muted);margin-left:var(--space-3);">
+        Wipes local job data &amp; import history. QuickBooks stays untouched. Mappings preserved.
+      </span>
+    </div>
+    <form action="{{ url_for('delete_local_migration_data') }}" method="post" style="margin:0;"
+          onsubmit="return confirm('Delete all local job data and import history for this firm? QuickBooks data (already-posted journal entries) will NOT be touched or removed. Account and vendor/customer mappings will be preserved. This cannot be undone. Continue?');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-sm"
+              style="color:var(--info,#3b82f6);border-color:var(--info,#3b82f6);background:transparent;white-space:nowrap;">
+        Delete local data
+      </button>
+    </form>
+  </div>
+
   {# Active batches #}
   <section class="hub-section">
     <div class="hub-section__hd">
