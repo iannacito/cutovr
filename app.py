@@ -2355,6 +2355,22 @@ def send_to_qbo(job_id: str):
     # Check if import is already running (page reload/navigate-back during import)
     _import_in_progress = (job or {}).get("checkpoint") == job_checkpoints.IMPORTING
 
+    # Compute a small sample of what would post, same approach as Step 4's preview,
+    # so the Processing card has real rows to show without re-inventing storage.
+    _sample_lines = []
+    try:
+        _rows, _fieldnames = _load_job_gl_rows(job)
+        if _rows:
+            _qbo, _ = _get_qbo_client(job_id, user)
+            _qbo_accounts = _qbo.get_accounts()
+            _saved_mappings = db.list_account_mappings(user["firm_id"], qbo_conn["realm_id"])
+            _preview = build_dry_run_preview(_rows, _qbo_accounts, _saved_mappings, sample_limit=10)
+            _sample_lines = _preview.get("sample_lines") or []
+    except Exception:  # noqa: BLE001
+        _log.warning("send_to_qbo: could not build sample preview for job %s", job_id, exc_info=True)
+        # Leave _sample_lines empty — the Processing card just won't render this load,
+        # rest of Step 5 (banner, checklist, Send button) is unaffected.
+
     return render_template(
         "send-to-qbo.html",
         job=job,
@@ -2365,6 +2381,7 @@ def send_to_qbo(job_id: str):
         import_in_progress=_import_in_progress,
         init_state=_init_state,
         pregl_coa_ob_bypass=False,
+        sample_lines=_sample_lines,
         workflow_stages=[s.to_dict() for s in stages],
         workflow_current=current.to_dict() if current else None,
         workflow_progress=customer_workflow.progress_percent(stages),

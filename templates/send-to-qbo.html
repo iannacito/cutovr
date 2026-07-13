@@ -465,7 +465,7 @@
   </style>
 
   {% set _show_processing = (import_in_progress or (job.checkpoint == 'needs_attention' and job.last_error)) %}
-  {% if _show_processing and job.preview and job.preview.sample_lines %}
+  {% if _show_processing and sample_lines %}
   <section class="card" id="processing-table-card" style="padding:var(--space-4);margin-bottom:var(--space-5);">
     <p class="eyebrow" style="margin:0 0 var(--space-2);">Processing</p>
     <table id="processing-table" style="width:100%;border-collapse:collapse;font-size:.85rem;">
@@ -480,7 +480,7 @@
         </tr>
       </thead>
       <tbody id="processing-table-body">
-        {% for l in job.preview.sample_lines %}
+        {% for l in sample_lines %}
         <tr data-txn-id="{{ l.transaction_id }}">
           <td style="padding:4px 8px;">{{ l.date }}</td>
           <td style="padding:4px 8px;">{{ l.account }}{% if l.qbo_acct_num %} <small class="muted">&middot; #{{ l.qbo_acct_num }}</small>{% endif %}</td>
@@ -494,9 +494,9 @@
         {% endfor %}
       </tbody>
     </table>
-    {% if job.preview.sample_lines|length < (job.summary or {}).row_count|default(0) %}
+    {% if sample_lines|length < (job.summary or {}).row_count|default(0) %}
     <p class="muted" style="font-size:.8rem;margin-top:var(--space-2);">
-      Showing the first {{ job.preview.sample_lines|length }} of
+      Showing the first {{ sample_lines|length }} of
       {{ (job.summary or {}).row_count }} lines — the rest post the same way, just not
       all individually listed here.
     </p>
@@ -646,6 +646,8 @@
       if (formSubmitted) { return; }
       formSubmitted = true;
 
+      // Immediate visual feedback so users see the button disabled before network round-trip
+      if (glBtn) { glBtn.disabled = true; glBtn.textContent = 'Checking…'; }
       card.style.display = 'block';
       if (actionMsg) actionMsg.textContent = 'Checking pre-GL steps…';
 
