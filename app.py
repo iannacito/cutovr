@@ -9229,10 +9229,15 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
         # Preflight: verify every mapped account still exists and is Active in QBO
         # (accounts may have been deleted/deactivated between mapping time and import time).
         # This converts "227 generic rejections" into one clear, actionable message.
-        qbo_ids = {str(a.get("Id")) for a in qbo_accounts if a.get("Id")}
+        # Unwrap qbo_accounts from the full query response dict (same as _diag6000_account_ids does)
+        _account_list = (
+            qbo_accounts.get("QueryResponse", {}).get("Account") or []
+            if isinstance(qbo_accounts, dict) else (qbo_accounts or [])
+        )
+        qbo_ids = {str(a.get("Id")) for a in _account_list if a.get("Id")}
         qbo_active = {
             str(a.get("Id")): a.get("Active", True)
-            for a in qbo_accounts
+            for a in _account_list
             if a.get("Id")
         }
         missing_or_inactive = []
