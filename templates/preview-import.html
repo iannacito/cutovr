@@ -217,25 +217,67 @@
     <h2>Names we&rsquo;ll add to QuickBooks for you</h2>
     <p class="muted">
       QuickBooks needs a customer on receivable lines and a vendor on
-      payable lines. We&rsquo;ll create only the names needed for this
-      import &mdash; nothing more. Any name shown below that isn&rsquo;t
-      already in QuickBooks will be added as part of the import.
+      payable lines. Review the suggested type below &mdash; the entry
+      breakdown shows which accounts each name touched so you can
+      verify or override before anything is created. Names already in
+      QuickBooks are skipped automatically, so this is safe to re-run.
     </p>
-    {% if preview.customers %}
-    <h3 style="margin-top:var(--space-3);">Customers</h3>
-    <ul>
-      {% for c in preview.customers %}
-        <li>{{ c.name }} <span class="muted">&middot; {{ c.lines }} line(s)</span></li>
-      {% endfor %}
-    </ul>
-    {% endif %}
-    {% if preview.vendors %}
-    <h3>Vendors</h3>
-    <ul>
-      {% for v in preview.vendors %}
-        <li>{{ v.name }} <span class="muted">&middot; {{ v.lines }} line(s)</span></li>
-      {% endfor %}
-    </ul>
+    {% if not qbo_connection.realm_id %}
+      <p class="note">Connect QuickBooks first to create these names.</p>
+    {% else %}
+    <form method="post" action="{{ url_for('push_vc_mapping', job_id=job.id) }}">
+      <div class="table-wrap" style="margin-top:var(--space-3);">
+        <table>
+          <thead>
+            <tr>
+              <th>Include</th>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Entries by account type</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for c in preview.customers %}
+            <tr>
+              <td>
+                <input type="hidden" name="vc_name_{{ loop.index0 }}_c" value="{{ c.name }}">
+                <input type="checkbox" name="vc_include_{{ loop.index0 }}_c" value="1" checked>
+              </td>
+              <td>{{ c.name }}</td>
+              <td>
+                <select name="vc_kind_{{ loop.index0 }}_c">
+                  <option value="Customer" selected>Customer</option>
+                  <option value="Vendor">Vendor</option>
+                </select>
+              </td>
+              <td class="muted">
+                {% for t, n in c.by_account_type.items() %}{{ t }}: {{ n }}{% if not loop.last %}, {% endif %}{% endfor %}
+              </td>
+            </tr>
+            {% endfor %}
+            {% for v in preview.vendors %}
+            <tr>
+              <td>
+                <input type="hidden" name="vc_name_{{ loop.index0 }}_v" value="{{ v.name }}">
+                <input type="checkbox" name="vc_include_{{ loop.index0 }}_v" value="1" checked>
+              </td>
+              <td>{{ v.name }}</td>
+              <td>
+                <select name="vc_kind_{{ loop.index0 }}_v">
+                  <option value="Customer">Customer</option>
+                  <option value="Vendor" selected>Vendor</option>
+                </select>
+              </td>
+              <td class="muted">
+                {% for t, n in v.by_account_type.items() %}{{ t }}: {{ n }}{% if not loop.last %}, {% endif %}{% endfor %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <button type="submit" class="btn btn-primary" style="margin-top:var(--space-3);">Create in QuickBooks</button>
+    </form>
     {% endif %}
   </section>
   {% endif %}

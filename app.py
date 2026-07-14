@@ -4037,6 +4037,95 @@ def push_entity_list(job_id):
     return redirect(url_for("migration_nexus"))
 
 
+@app.route("/jobs/<job_id>/push-vc-mapping", methods=["POST"])
+@login_required
+def push_vc_mapping(job_id):
+    """Live-create Customer/Vendor names derived from this GL job's rows.
+
+    Unlike push_entity_list (which pushes a dedicated uploaded Vendor
+    List / Customer List file), this reads the same derive_entity_hint()
+    output already shown on the Step 4 preview card. The submitted form
+    can only include/exclude/reclassify names that were already
+    legitimately derived server-side — it never creates an arbitrary
+    name. Idempotent: checks the persisted entity map first (same
+    cache _run_pass2_entity_linking uses), so re-running only creates
+    what's actually missing.
+    """
+    job, user = _job_or_403(job_id)
+    qbo_conn = _get_qbo_connection(job_id)
+    if not qbo_conn:
+        flash("Connect QuickBooks before creating vendors/customers.", "error")
+        return redirect(url_for("preview_import", job_id=job_id))
+
+    try:
+        qbo, qbo_conn = _get_qbo_client(job_id, user)
+    except QBOAuthExpired:
+        flash("Your QuickBooks connection has expired. Reconnect and try again.", "error")
+        return redirect(url_for("preview_import", job_id=job_id))
+
+    try:
+        rows, _fieldnames = _load_job_gl_rows(job)
+        saved_mappings = db.list_account_mappings(user["firm_id"], qbo_conn["realm_id"])
+        qbo_accounts = qbo.get_accounts()
+        preview = build_dry_run_preview(rows, qbo_accounts, saved_mappings)
+    except Exception as e:  # noqa: BLE001
+        flash(f"Could not rebuild the name list: {e}", "error")
+        return redirect(url_for("preview_import", job_id=job_id))
+
+    valid_names = {c["name"]: "Customer" for c in (preview.get("customers") or [])}
+    valid_names.update({v["name"]: "Vendor" for v in (preview.get("vendors") or [])})
+
+    persisted = {}
+    for row in db.list_entity_map(user["firm_id"], qbo_conn["realm_id"]):
+        persisted[(row["kind"], row["normalized_name"])] = row["qbo_entity_id"]
+    created = []
+
+    included = []
+    for key in request.form:
+        if not key.startswith("vc_include_") or request.form.get(key) != "1":
+            continue
+        suffix = key[len("vc_include_"):]
+        name = request.form.get(f"vc_name_{suffix}")
+        kind = request.form.get(f"vc_kind_{suffix}")
+        if not name or name not in valid_names or kind not in ("Customer", "Vendor"):
+            continue
+        included.append((name, kind))
+
+    pushed, already_exists, errors = 0, 0, 0
+    for name, kind in included:
+        norm = entity_resolution._normalize_name(name)
+        if persisted.get((kind, norm)):
+            already_exists += 1
+            continue
+        try:
+            _find_or_create_entity(
+                qbo, kind, name, persisted, created,
+                firm_id=user["firm_id"], realm_id=qbo_conn["realm_id"],
+            )
+            pushed += 1
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("push_vc_mapping: %s %r failed: %s", kind, name, exc)
+            errors += 1
+
+    _audit(
+        "vc_mapping_pushed",
+        target_type="job", target_id=job_id,
+        details=f"pushed={pushed} already_exists={already_exists} errors={errors}",
+    )
+    if errors:
+        flash(
+            f"Created {pushed} name(s) in QuickBooks ({already_exists} already existed, "
+            f"{errors} failed — check logs). Safe to re-run.",
+            "warning",
+        )
+    else:
+        flash(
+            f"Created {pushed} name(s) in QuickBooks ({already_exists} already existed).",
+            "success",
+        )
+    return redirect(url_for("preview_import", job_id=job_id))
+
+
 def _resolve_entity_hints(qbo, payloads, customer_index=None, vendor_index=None,
                           firm_id=None, realm_id=None):
     """Replace `_pclaw_entity_hint` markers on JE lines with real Entity refs.

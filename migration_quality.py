@@ -221,8 +221,12 @@ def build_dry_run_preview(
                 if hint:
                     kind, name = hint[0], hint[1]
                     bucket = customers_needed if kind == "Customer" else vendors_needed
-                    rec = bucket.setdefault(name, {"name": name, "kind": kind, "lines": 0})
+                    rec = bucket.setdefault(
+                        name, {"name": name, "kind": kind, "lines": 0, "by_account_type": {}}
+                    )
                     rec["lines"] += 1
+                    _at = qbo_type or "Unknown"
+                    rec["by_account_type"][_at] = rec["by_account_type"].get(_at, 0) + 1
 
             if len(sample_lines) < sample_limit and (debit or credit):
                 sample_line = {
