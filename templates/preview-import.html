@@ -226,6 +226,7 @@
       <p class="note">Connect QuickBooks first to create these names.</p>
     {% else %}
     <form method="post" action="{{ url_for('push_vc_mapping', job_id=job.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="table-wrap" style="margin-top:var(--space-3);">
         <table>
           <thead>
