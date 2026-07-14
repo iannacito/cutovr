@@ -4112,24 +4112,6 @@ def push_vc_mapping(job_id):
         target_type="job", target_id=job_id,
         details=f"pushed={pushed} already_exists={already_exists} errors={errors}",
     )
-
-    # If entities were created (pushed > 0) and job has pending entity links,
-    # trigger Pass 2 entity linking to update the linked status.
-    if pushed > 0 and job.get("pending_entity_links"):
-        try:
-            qbo_accounts = qbo.get_accounts()
-            account_type_index = build_account_type_index(qbo_accounts)
-            linked_count, failed_links = _run_pass2_entity_linking(
-                job, job_id, qbo, user, qbo_conn, account_type_index
-            )
-            # Update job state after Pass 2 completes
-            db.save_job_state(job_id, job)
-            jobs.pop(job_id, None)  # Clear in-memory cache so fresh data is loaded
-            if linked_count > 0:
-                _log.info("push_vc_mapping: Pass 2 linked %d entities after entity creation", linked_count)
-        except Exception as exc:  # noqa: BLE001
-            _log.warning("push_vc_mapping: Pass 2 entity linking failed: %s", exc, exc_info=True)
-
     if errors:
         flash(
             f"Created {pushed} name(s) in QuickBooks ({already_exists} already existed, "
