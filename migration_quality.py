@@ -285,9 +285,15 @@ def build_dry_run_preview(
     )
     je_count = max(je_count, 0)
 
-    def _infer_entity_kind_from_accounts(by_account_type):
-        """Infer Customer or Vendor based on which accounts predominated."""
+    def _infer_entity_kind_from_accounts(by_account_type, name=""):
+        """Infer Customer or Vendor based on which accounts predominated.
+
+        Exception: "Expense Recovery" always defaults to Vendor.
+        """
         if not by_account_type:
+            return "Vendor"
+        # Exception: "Expense Recovery" is a vendor-type expense account
+        if (name or "").strip().lower() == "expense recovery":
             return "Vendor"
         # Find account type with most occurrences
         dominant = max(by_account_type.items(), key=lambda x: x[1])[0]
@@ -298,9 +304,13 @@ def build_dry_run_preview(
     # Reclass entities based on their actual account-type breakdown.
     # If an entity touched mostly Income lines (not AR/AP/Expense), suggest Customer.
     # If mostly Expense (not AP), suggest Vendor. AR → Customer, AP → Vendor.
+    # Exception: "Expense Recovery" always → Vendor.
     for entity_list in [customers_needed, vendors_needed]:
         for rec in entity_list.values():
-            rec["kind"] = _infer_entity_kind_from_accounts(rec.get("by_account_type", {}))
+            rec["kind"] = _infer_entity_kind_from_accounts(
+                rec.get("by_account_type", {}),
+                name=rec.get("name", "")
+            )
 
     # Re-partition by inferred kind (customers vs vendors buckets)
     final_customers, final_vendors = {}, {}
