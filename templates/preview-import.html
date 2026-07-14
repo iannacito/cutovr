@@ -246,8 +246,8 @@
               <td>{{ c.name }}</td>
               <td>
                 <select name="vc_kind_{{ loop.index0 }}_c">
-                  <option value="Customer" selected>Customer</option>
-                  <option value="Vendor">Vendor</option>
+                  <option value="Customer"{% if c.kind == "Customer" %} selected{% endif %}>Customer</option>
+                  <option value="Vendor"{% if c.kind == "Vendor" %} selected{% endif %}>Vendor</option>
                 </select>
               </td>
               <td class="muted">
@@ -264,8 +264,8 @@
               <td>{{ v.name }}</td>
               <td>
                 <select name="vc_kind_{{ loop.index0 }}_v">
-                  <option value="Customer">Customer</option>
-                  <option value="Vendor" selected>Vendor</option>
+                  <option value="Customer"{% if v.kind == "Customer" %} selected{% endif %}>Customer</option>
+                  <option value="Vendor"{% if v.kind == "Vendor" %} selected{% endif %}>Vendor</option>
                 </select>
               </td>
               <td class="muted">

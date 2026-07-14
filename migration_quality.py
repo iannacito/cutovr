@@ -285,6 +285,32 @@ def build_dry_run_preview(
     )
     je_count = max(je_count, 0)
 
+    def _infer_entity_kind_from_accounts(by_account_type):
+        """Infer Customer or Vendor based on which accounts predominated."""
+        if not by_account_type:
+            return "Vendor"
+        # Find account type with most occurrences
+        dominant = max(by_account_type.items(), key=lambda x: x[1])[0]
+        if dominant in ("Accounts Receivable", "Income"):
+            return "Customer"
+        return "Vendor"
+
+    # Reclass entities based on their actual account-type breakdown.
+    # If an entity touched mostly Income lines (not AR/AP/Expense), suggest Customer.
+    # If mostly Expense (not AP), suggest Vendor. AR → Customer, AP → Vendor.
+    for entity_list in [customers_needed, vendors_needed]:
+        for rec in entity_list.values():
+            rec["kind"] = _infer_entity_kind_from_accounts(rec.get("by_account_type", {}))
+
+    # Re-partition by inferred kind (customers vs vendors buckets)
+    final_customers, final_vendors = {}, {}
+    for customers in customers_needed.values():
+        bucket = final_customers if customers["kind"] == "Customer" else final_vendors
+        bucket[customers["name"]] = customers
+    for vendors in vendors_needed.values():
+        bucket = final_customers if vendors["kind"] == "Customer" else final_vendors
+        bucket[vendors["name"]] = vendors
+
     return {
         "would_post": (
             unmapped_count == 0
@@ -307,8 +333,8 @@ def build_dry_run_preview(
         "unmapped_account_count": unmapped_count,
         "unmapped_accounts": unmapped_accounts,
         "accounts": list(unique_accounts.values()),
-        "customers": sorted(customers_needed.values(), key=lambda x: x["name"].lower()),
-        "vendors": sorted(vendors_needed.values(), key=lambda x: x["name"].lower()),
+        "customers": sorted(final_customers.values(), key=lambda x: x["name"].lower()),
+        "vendors": sorted(final_vendors.values(), key=lambda x: x["name"].lower()),
         "blocked_transactions": blocked_transactions,
         "merged_groups": merged_groups_public,
         "cross_token_offsets": posting_plan.get("cross_token_offsets") or [],
