@@ -6478,6 +6478,8 @@ def _process_uploaded_csv(
         jobs[job_id]["last_validation_error"] = {
             "headline": headline,
             "action": action,
+            "raw_error_type": type(e).__name__,
+            "raw_error": str(e)[:500],
         }
         message = f"{headline} {action}"
         category = "error"

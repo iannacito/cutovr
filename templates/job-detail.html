@@ -57,6 +57,11 @@
       <strong>{{ job.last_validation_error.headline }}</strong>
       {{ job.last_validation_error.action }}
       <a href="{{ url_for('onboarding') }}">See the onboarding guide</a> for required columns.
+      {% if job.last_validation_error.raw_error_type %}
+      <div style="margin-top: 1rem; font-size: 0.85rem; color: #666;">
+        <code>{{ job.last_validation_error.raw_error_type }}: {{ job.last_validation_error.raw_error }}</code>
+      </div>
+      {% endif %}
     </div>
   {% endif %}
 
