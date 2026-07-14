@@ -4261,7 +4261,26 @@ def _find_or_create_entity(qbo, kind, name, persisted, created,
     norm = entity_resolution._normalize_name(name)
     cached_id = persisted.get((kind, norm))
     if cached_id:
-        return cached_id
+        reader = qbo.get_customer_by_id if kind == "Customer" else qbo.get_vendor_by_id
+        _cached_entity = reader(cached_id)
+        if _cached_entity is None:
+            # Cached id no longer resolves at all (hard-deleted, wrong
+            # realm, etc.) — don't trust it. Fall through to re-resolve
+            # via finder/creator below instead of returning a dead ref.
+            pass
+        elif _cached_entity.get("Active", True):
+            return cached_id
+        else:
+            # Cached entity exists but is Inactive. QBO's query API
+            # (used by finder() below and by the firm's own Supplier/
+            # Customer search UI) silently skips Inactive records, which
+            # is why this can look like "doesn't exist" even though we
+            # have a real cached Id for it. Reactivate rather than
+            # silently reusing a broken reference or creating a
+            # duplicate under a slightly different name.
+            reactivator = qbo.reactivate_customer if kind == "Customer" else qbo.reactivate_vendor
+            reactivator(cached_id, _cached_entity["SyncToken"])
+            return cached_id
 
     finder = qbo.find_customer_by_name if kind == "Customer" else qbo.find_vendor_by_name
     creator = qbo.create_customer if kind == "Customer" else qbo.create_vendor

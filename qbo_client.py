@@ -704,6 +704,43 @@ class QBOClient:
             )
         return response.json()
 
+    def reactivate_vendor(self, entity_id, sync_token):
+        """Sparse-update a Vendor back to Active=true.
+
+        Used when a cached entity_map row points at an entity that
+        became Inactive in QBO. Referencing an Inactive Vendor from a
+        new JournalEntry line triggers QBO's generic validation error
+        rather than a clean, specific one, so we reactivate rather than
+        silently reusing a broken reference or creating a duplicate.
+        """
+        url = f"{self.base_url}/v3/company/{self.realm_id}/vendor?minorversion=75"
+        payload = {"Id": entity_id, "SyncToken": sync_token, "sparse": True, "Active": True}
+        response = requests.post(url, headers=self._headers(), json=payload, timeout=30)
+        tid = self._record_tid(response)
+        if response.status_code >= 400:
+            raise QBOError(
+                f"QBO returned {response.status_code} reactivating Vendor: {response.text}",
+                status_code=response.status_code,
+                body=response.text,
+                intuit_tid=tid,
+            )
+        return response.json().get("Vendor")
+
+    def reactivate_customer(self, entity_id, sync_token):
+        """Sparse-update a Customer back to Active=true. See reactivate_vendor."""
+        url = f"{self.base_url}/v3/company/{self.realm_id}/customer?minorversion=75"
+        payload = {"Id": entity_id, "SyncToken": sync_token, "sparse": True, "Active": True}
+        response = requests.post(url, headers=self._headers(), json=payload, timeout=30)
+        tid = self._record_tid(response)
+        if response.status_code >= 400:
+            raise QBOError(
+                f"QBO returned {response.status_code} reactivating Customer: {response.text}",
+                status_code=response.status_code,
+                body=response.text,
+                intuit_tid=tid,
+            )
+        return response.json().get("Customer")
+
     def get_journal_entry_by_doc_number(self, doc_number):
         """Fetch full JournalEntry by DocNumber — includes Id, SyncToken, Line array.
 
