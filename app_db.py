@@ -365,6 +365,13 @@ class AppDB:
         # instance whose uploads/ tree was wiped would 500 on the
         # decrypt_file call at the top of /jobs/<id>/import-to-qbo.
         add_col("jobs", "gl_rows_json TEXT")
+        # Vendor List / Customer List parsed rows captured at upload time.
+        # Without this, initialpost.py's auto-push sequence and
+        # push_entity_list must always re-decrypt the original upload from
+        # disk — which fails after any Render redeploy wipes the ephemeral
+        # uploads/ tree. Mirrors gl_rows_json / parsed_trial_balance_json.
+        add_col("jobs", "parsed_vendor_list_json TEXT")
+        add_col("jobs", "parsed_customer_list_json TEXT")
         # COA create history: the per-run record of QuickBooks accounts
         # created from a Chart-of-Accounts job (counts, intuit_tids, the
         # created/failed account lists). Without persistence the dashboard
@@ -888,6 +895,20 @@ class AppDB:
                 if job_dict["gl_rows"] is not None
                 else None
             )
+        if "parsed_vendor_list" in job_dict:
+            fields.append("parsed_vendor_list_json")
+            values.append(
+                json.dumps(job_dict["parsed_vendor_list"])
+                if job_dict["parsed_vendor_list"] is not None
+                else None
+            )
+        if "parsed_customer_list" in job_dict:
+            fields.append("parsed_customer_list_json")
+            values.append(
+                json.dumps(job_dict["parsed_customer_list"])
+                if job_dict["parsed_customer_list"] is not None
+                else None
+            )
         if "coa_create_history" in job_dict:
             fields.append("coa_create_history_json")
             values.append(
@@ -1016,6 +1037,8 @@ class AppDB:
             ("preflight_json", "preflight"),
             ("pclaw_accounts_json", "pclaw_accounts"),
             ("gl_rows_json", "gl_rows"),
+            ("parsed_vendor_list_json", "parsed_vendor_list"),
+            ("parsed_customer_list_json", "parsed_customer_list"),
             ("coa_create_history_json", "coa_create_history"),
             ("coa_type_overrides_json", "coa_type_overrides"),
             ("entity_name_blockers_json", "entity_name_blockers"),

@@ -3972,7 +3972,8 @@ def push_entity_list(job_id):
         flash("Connect QuickBooks before pushing the entity list.", "error")
         return redirect(url_for("migration_nexus"))
 
-    rows = _reparse_report_rows(job, report_type)
+    parsed_key = "parsed_vendor_list" if report_type == REPORT_VENDOR_LIST else "parsed_customer_list"
+    rows = job.get(parsed_key) or _reparse_report_rows(job, report_type)
     if not rows:
         flash("Could not read the uploaded file. Please re-upload and try again.", "error")
         return redirect(url_for("migration_nexus"))
