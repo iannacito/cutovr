@@ -9581,6 +9581,15 @@ def import_to_qbo(job_id):
         # embed the polling script, leaving the user with a static page forever.
         # This moves the race from "hope the thread writes first" to "guarantee the
         # checkpoint is already set before the client ever reads it."
+
+        # Single-pass entity mode (Step 5 toggle): attach Vendor/Customer at
+        # JE creation instead of via Pass 2 linking. Stored on the job because
+        # the background thread re-hydrates the job from DB.
+        if request.form.get("single_pass") == "1":
+            job["entity_attach_mode"] = "single_pass"
+        else:
+            job.pop("entity_attach_mode", None)
+
         _record_checkpoint(job, job_id, job_checkpoints.IMPORTING)
         db.save_job_state(job_id, job)
 
@@ -9782,36 +9791,60 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
 
         customer_index, vendor_index = _firm_entity_indexes(user["firm_id"])
 
-        # PASS 1: Capture entity hints for Pass 2 linking, then strip them from payloads
-        # before posting. This avoids 6000/-30006 errors that occur when entity is
-        # attached at JE creation time.
+        single_pass = job.get("entity_attach_mode") == "single_pass"
         pending_entity_links = []
-        for payload in payloads:
-            for line in payload.get("Line", []):
-                hint = line.get("_pclaw_entity_hint")
-                if hint:
-                    doc_number = payload.get("DocNumber", "")
-                    # Find which transaction this line belongs to (via matching amount/account)
-                    # For now, create a link entry
-                    link_entry = {
-                        "doc_number": doc_number,
-                        "kind": hint.get("type"),  # "Customer" or "Vendor"
-                        "name": hint.get("name"),
-                        "account_type": hint.get("account_type"),
-                        "linked": False,
-                    }
-                    pending_entity_links.append(link_entry)
-                # Strip the hint so it won't be sent to QBO
-                line.pop("_pclaw_entity_hint", None)
 
-        # Save pending entity links to job state (will be persisted after posting)
-        if pending_entity_links:
-            job["pending_entity_links"] = pending_entity_links
+        if single_pass:
+            # SINGLE PASS (Step 5 toggle): resolve Vendor/Customer up front and
+            # attach Entity to hinted lines BEFORE posting. Re-introduced
+            # 2026-07-14 now that the actual root cause of the earlier -30006
+            # failures (Pass 2's stale-Inactive-entity cache, fixed in 9e7bd79)
+            # is known and fixed — _find_or_create_entity is shared by both
+            # this path and Pass 2, so this inherits that fix automatically.
+            # Fail-fast by design: a blank or unresolvable name (EntityNameError)
+            # or any QBO error aborts the import immediately rather than
+            # posting partial/ambiguous data. Pass 2 is skipped (no pending
+            # links); stale links from a previous two-pass run are cleared so
+            # auto-chaining cannot fire on top of this.
+            job.pop("pending_entity_links", None)
+            job.pop("pending_entity_links_failures", None)
+            new_entities = _resolve_entity_hints(
+                qbo, payloads,
+                customer_index=customer_index,
+                vendor_index=vendor_index,
+                firm_id=user["firm_id"],
+                realm_id=realm_id,
+            )
+        else:
+            # PASS 1 (default): Capture entity hints for Pass 2 linking, then strip
+            # them from payloads before posting. This avoids 6000/-30006 errors that
+            # occur when entity is attached at JE creation time.
+            for payload in payloads:
+                for line in payload.get("Line", []):
+                    hint = line.get("_pclaw_entity_hint")
+                    if hint:
+                        doc_number = payload.get("DocNumber", "")
+                        # Find which transaction this line belongs to (via matching amount/account)
+                        # For now, create a link entry
+                        link_entry = {
+                            "doc_number": doc_number,
+                            "kind": hint.get("type"),  # "Customer" or "Vendor"
+                            "name": hint.get("name"),
+                            "account_type": hint.get("account_type"),
+                            "linked": False,
+                        }
+                        pending_entity_links.append(link_entry)
+                    # Strip the hint so it won't be sent to QBO
+                    line.pop("_pclaw_entity_hint", None)
 
-        # Pass 1 creates zero QBO entities by design — Vendor/Customer resolution
-        # now happens in Pass 2. Keep this defined so downstream history.record_import()
-        # calls still work and accurately report "0 entities created in this pass."
-        new_entities = []
+            # Save pending entity links to job state (will be persisted after posting)
+            if pending_entity_links:
+                job["pending_entity_links"] = pending_entity_links
+
+            # Pass 1 creates zero QBO entities by design — Vendor/Customer resolution
+            # now happens in Pass 2. Keep this defined so downstream history.record_import()
+            # calls still work and accurately report "0 entities created in this pass."
+            new_entities = []
 
         source_debit = sum(money(r["debit"]) for r in rows if not _gate_row_filter(r))
         source_credit = sum(money(r["credit"]) for r in rows if not _gate_row_filter(r))

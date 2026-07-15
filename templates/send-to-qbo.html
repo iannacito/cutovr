@@ -252,20 +252,32 @@
     </div>
   {% endif %}
 
-  {# ── Pre-GL Initialization Card ── only show when V/C steps are still pending #}
-  {% if init_state is defined and init_state and not already_imported and init_state.overall not in ('done',) %}
+  {# ── Pre-GL Initialization Card ──
+     Shown when V/C steps are still pending, OR when they're done but the
+     GL hasn't been imported yet (widened 2026-07-14 so the Single Pass
+     toggle below is always reachable before a send, not just while Pre-GL
+     is in progress — see 2026-07-14_step5_single_pass_toggle_reintroduce.md). #}
+  {% if init_state is defined and init_state and not already_imported %}
   <section class="card" id="init-seq-card"
            style="padding:var(--space-5);margin-bottom:var(--space-5);">
 
     <div style="display:flex;justify-content:space-between;
                 align-items:center;margin-bottom:var(--space-3);">
       <p class="eyebrow" style="margin:0;">Pre-GL Checklist</p>
-      <button type="button" id="init-toggle"
-              onclick="initToggle()"
-              style="background:none;border:none;cursor:pointer;
-                     font-size:.85rem;color:var(--primary,#1d4ed8);padding:0;">
-        <span id="init-toggle-icon">−</span> Details
-      </button>
+      <div style="display:flex;align-items:center;gap:var(--space-4);">
+        <label style="display:flex;align-items:center;gap:6px;font-size:.85rem;
+                       color:var(--text-muted);cursor:pointer;" title="Attach vendor/customer names while posting instead of linking them afterward (Pass 2). Leave off for the normal two-pass flow.">
+          <input type="checkbox" id="single-pass-toggle" name="single_pass"
+                 value="1" form="gl-send-form">
+          Single pass
+        </label>
+        <button type="button" id="init-toggle"
+                onclick="initToggle()"
+                style="background:none;border:none;cursor:pointer;
+                       font-size:.85rem;color:var(--primary,#1d4ed8);padding:0;">
+          <span id="init-toggle-icon">−</span> Details
+        </button>
+      </div>
     </div>
 
     <div id="init-seq-body">
