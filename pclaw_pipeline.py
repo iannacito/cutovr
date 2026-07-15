@@ -468,7 +468,7 @@ def build_journal_entry_payload(
         # posting and reuses any existing entry instead of double-posting.
         "DocNumber": idempotency_doc_number(transaction_id),
         "PrivateNote": (
-            f"Imported from PCLaw via pclaw-qbo | transaction_id={transaction_id}"
+            f"Imported from PCLaw via Cutovr | transaction_id={transaction_id}"
         ),
         "Line": lines,
     }

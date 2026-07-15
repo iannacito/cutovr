@@ -5681,7 +5681,7 @@ def _diag6000_payload(step, ids, job):
     if step >= 2:
         payload["DocNumber"] = "999000001"
     if step >= 3:
-        payload["PrivateNote"] = f"Imported from PCLaw via pclaw-qbo | transaction_id=DIAG"
+        payload["PrivateNote"] = f"Imported from PCLaw via Cutovr | transaction_id=DIAG"
     if step >= 4:
         # Add a real description from the job if available
         gl_rows = job.get("gl_rows") or []
@@ -9772,7 +9772,31 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
         type_index = build_account_type_index(qbo_accounts)
         name_index = build_account_name_index(qbo_accounts)
         from pclaw_pipeline import plan_balanced_payloads
-        from gl_grouping import plan_posting_groups
+        from gl_grouping import plan_posting_groups, plan_total_recoveries_group
+
+        # Detect and group Total Expense Recoveries entries before payload creation.
+        # Modifies rows in-place to use shared tokens for validated groups.
+        grouped_for_tot_rec = group_rows_by_transaction(rows)
+        tot_rec_groups = plan_total_recoveries_group(grouped_for_tot_rec)
+
+        # Build a mapping of original transaction_id -> shared token for Total Recoveries rows
+        tot_rec_txn_to_token: dict[str, str] = {}
+        tot_rec_all_txn_ids: set[str] = set()
+        for grp in tot_rec_groups:
+            token = grp.get("token", "")
+            for txn_id in grp.get("transaction_ids", []):
+                tot_rec_txn_to_token[txn_id] = token
+                tot_rec_all_txn_ids.add(txn_id)
+
+        # Rewrite transaction_id for Total Recoveries rows so they group together naturally
+        for row in rows:
+            old_txn_id = row.get("transaction_id", "")
+            if old_txn_id in tot_rec_txn_to_token:
+                # Store original txn_id in a new field for traceability
+                if "_original_txn_id" not in row:
+                    row["_original_txn_id"] = old_txn_id
+                # Rewrite to shared token so payloads naturally group them
+                row["transaction_id"] = tot_rec_txn_to_token[old_txn_id]
 
         payloads, posted_ids = plan_balanced_payloads(
             rows, mapping, mapping_mode=mapping_mode, account_type_index=type_index, account_name_index=name_index
@@ -9785,6 +9809,13 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
             sub_refs_by_posted_id[ref] = [ref]
         for grp in _grouping_plan["merged_groups"]:
             sub_refs_by_posted_id[grp["group_id"]] = list(grp["transaction_ids"])
+
+        # Add Total Recoveries groups to sub_refs mapping
+        for grp in tot_rec_groups:
+            token = grp.get("token", "")
+            if token:
+                # Map the token to all original transaction_ids in the group
+                sub_refs_by_posted_id[token] = list(grp.get("transaction_ids", []))
 
         def _row_span(txn_id: str) -> int:
             return len(sub_refs_by_posted_id.get(txn_id, [txn_id]))

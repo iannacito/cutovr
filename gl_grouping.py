@@ -535,3 +535,134 @@ def auto_balance_by_token_group(
             })
 
     return synthetic
+
+
+def plan_total_recoveries_group(
+    grouped_by_txn: "OrderedDict[str, list[dict]]",
+) -> list[dict]:
+    """Detect and group Total Expense Recoveries entries per month.
+
+    For each month found in the data, searches for:
+    1. CER row with description == "Total of Recoveries"
+    2. All CER rows with vendor_name == "Expense Recovery" (detail lines)
+    3. All GB (or any journal) rows where text contains "refund" (case-insensitive,
+       anywhere in vendor_name, description, memo, or reference_number)
+
+    Verifies the group balances exactly using the formula:
+        sum(CER "Expense Recovery" credits) == total_of_recoveries_debit + sum(GB "Refund" debits)
+
+    Returns a list of validated groups ready to merge. Each group has:
+        {
+            "group_id": "YYYY-MMTOTREC",
+            "token": "YYYY-MMTOTREC",
+            "transaction_ids": [...],
+            "rows": [...],
+            "debits": Decimal,
+            "credits": Decimal,
+            "balanced": True,
+            "total_of_recoveries_debit": Decimal,
+            "month_key": "YYYY-MM",
+        }
+
+    Groups that don't balance exactly are skipped (no silent corrections) —
+    the caller should flag them for manual review instead of forcing.
+    """
+    groups: list[dict] = []
+    rows_by_month: "dict[str, list[dict]]" = {}
+
+    # Collect all rows grouped by month (YYYY-MM from date field).
+    all_rows: list[dict] = []
+    for txn_rows in grouped_by_txn.values():
+        all_rows.extend(txn_rows)
+
+    for row in all_rows:
+        date_str = (row.get("date") or "").strip()
+        if not date_str or len(date_str) < 7:
+            continue
+        month_key = date_str[:7]  # "YYYY-MM"
+        if month_key not in rows_by_month:
+            rows_by_month[month_key] = []
+        rows_by_month[month_key].append(row)
+
+    # Process each month for Total Recoveries grouping.
+    for month_key, month_rows in rows_by_month.items():
+        # Find the Total of Recoveries adjustment row (CER, description == "Total of Recoveries").
+        tot_rec_row = None
+        for r in month_rows:
+            journal = source_journal_token(r) or ""
+            if (
+                journal == "CER"
+                and (r.get("description") or "").strip() == "Total of Recoveries"
+            ):
+                tot_rec_row = r
+                break
+
+        if not tot_rec_row:
+            continue
+
+        # Extract the Total of Recoveries debit from the source file.
+        tot_rec_debit = _row_money(tot_rec_row, "debit")
+        if tot_rec_debit <= 0:
+            continue
+
+        # Find all CER "Expense Recovery" detail lines in the same month.
+        exp_rec_rows = []
+        for r in month_rows:
+            journal = source_journal_token(r) or ""
+            if (
+                journal == "CER"
+                and (r.get("vendor_name") or "").strip() == "Expense Recovery"
+            ):
+                exp_rec_rows.append(r)
+
+        # Find all "refund"-tagged rows (case-insensitive) in the same month.
+        # Search vendor_name, description, memo, reference_number.
+        refund_rows = []
+        for r in month_rows:
+            for key in ("vendor_name", "description", "memo", "reference_number"):
+                text = (r.get(key) or "").strip().lower()
+                if "refund" in text:
+                    refund_rows.append(r)
+                    break
+
+        # Build the group: Total of Recoveries + CER Expense Recovery lines + refund lines.
+        group_rows = [tot_rec_row] + exp_rec_rows + refund_rows
+        if not group_rows:
+            continue
+
+        # Compute totals for the group.
+        debits, credits = _txn_totals(group_rows)
+
+        # Verify the group balances using the formula:
+        # sum(CER "Expense Recovery" credits) == total_of_recoveries_debit + sum(GB "Refund" debits)
+        exp_rec_credits = sum(_row_money(r, "credit") for r in exp_rec_rows)
+        refund_debits = sum(_row_money(r, "debit") for r in refund_rows)
+        expected_credits = tot_rec_debit + refund_debits
+
+        # Strict balance check — must match to the cent.
+        if exp_rec_credits != expected_credits:
+            # Does not balance exactly; skip and flag for manual review.
+            continue
+
+        # The group balances exactly. Collect unique transaction IDs from all rows.
+        transaction_ids: set[str] = set()
+        for r in group_rows:
+            tid = (r.get("transaction_id") or r.get("reference_number") or "").strip()
+            if tid:
+                transaction_ids.add(tid)
+
+        # Create the group with the shared token.
+        token = f"{month_key}TotRec"
+        groups.append({
+            "group_id": token,
+            "token": token,
+            "transaction_ids": sorted(transaction_ids),
+            "rows": group_rows,
+            "debits": debits,
+            "credits": credits,
+            "balanced": debits == credits,
+            "total_of_recoveries_debit": tot_rec_debit,
+            "month_key": month_key,
+        })
+
+    return groups
