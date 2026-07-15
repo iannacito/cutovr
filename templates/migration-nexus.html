@@ -234,15 +234,19 @@
   {# COA Consolidation — moved out of One-time Setup per Cesar 2026-07-14,
      surfaced ahead of In Progress since it's a blocking prerequisite most
      firms hit early and repeatedly before every GL batch. #}
-  <div class="hub-setup-grid" style="margin-bottom:var(--space-6);">
-    <a href="{{ url_for('coa_consolidation') }}"
-       class="hub-setup-card"
-       style="text-decoration:none;color:inherit;display:block;">
-      <div class="hub-setup-card__title">COA Consolidation</div>
-      <div class="hub-setup-card__desc">Assign QBO Account Type to every PCLaw account before the first GL batch.</div>
-      <div class="hub-setup-card__status" style="color:var(--accent);">Open &rarr;</div>
-    </a>
-  </div>
+  <a href="{{ url_for('coa_consolidation') }}"
+     class="hub-setup-card"
+     style="text-decoration:none;color:inherit;display:block;margin-bottom:var(--space-6);
+             padding:var(--space-4);border:1px solid var(--line);border-radius:var(--radius);
+             background:var(--bg-muted);">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+      <div>
+        <div class="hub-setup-card__title">COA Consolidation</div>
+        <div class="hub-setup-card__desc">Assign QBO Account Type to every PCLaw account before the first GL batch.</div>
+      </div>
+      <div class="hub-setup-card__status" style="color:var(--accent);white-space:nowrap;margin-left:var(--space-4);">Open &rarr;</div>
+    </div>
+  </a>
 
   {# Active batches #}
   <section class="hub-section">
