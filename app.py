@@ -3127,8 +3127,11 @@ def _hub_batch_label(job: dict) -> str:
     type_label = _REPORT_TYPE_LABELS.get(rt, rt.replace("_", " ").title())
     if rt not in _HUB_PERIOD_REPORT_TYPES:
         return type_label
-    src = _hub_display_filename(job.get("source_file") or "")
-    period = _hub_period_label(src)
+    # Prefer period_label first (upload-time or user-selected); fall back to filename
+    period = (job.get("period_label") or "").strip()
+    if not period:
+        src = _hub_display_filename(job.get("source_file") or "")
+        period = _hub_period_label(src)
     return f"{type_label} {period}" if period else type_label
 
 
@@ -9774,6 +9777,9 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
         for grp in _grouping_plan["merged_groups"]:
             sub_refs_by_posted_id[grp["group_id"]] = list(grp["transaction_ids"])
 
+        def _row_span(txn_id: str) -> int:
+            return len(sub_refs_by_posted_id.get(txn_id, [txn_id]))
+
         customer_index, vendor_index = _firm_entity_indexes(user["firm_id"])
 
         # PASS 1: Capture entity hints for Pass 2 linking, then strip them from payloads
@@ -9964,7 +9970,7 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
                                 "payload": payload if _reject_count < 10 else None,
                             }
                             tx_audit.append(audit_record)
-                            qbo_error_count += 1
+                            qbo_error_count += _row_span(txn_id)
                             _update_entry_with_subrefs(txn_id, {
                                 "status": "rejected",
                                 "reason": str(errors)[:300],
@@ -10052,15 +10058,15 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
 
         # Build row-conservation ledger
         gate_excluded_rows: list = []  # No rows excluded at gate (fail-closed on any blocker)
-        posted_count = len(created)
+        posted_rows = sum(_row_span(c["transaction_id"]) for c in created)
         rejected_count = qbo_error_count
 
         import_ledger = {
             "parsed_rows": len(parsed_rows),
-            "dropped_rows": dropped_rows,
-            "gate_excluded_rows": gate_excluded_rows,
+            "dropped_rows": len(dropped_rows),
+            "gate_excluded_rows": len(gate_excluded_rows),
             "planned_txns": len(txn_ids),
-            "posted": posted_count,
+            "posted": posted_rows,
             "reused_idempotent": reused_count,
             "rejected": rejected_count,
         }
@@ -10069,7 +10075,7 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
         total_accounted = (
             len(dropped_rows)
             + len(gate_excluded_rows)
-            + posted_count
+            + posted_rows
             + reused_count
             + rejected_count
         )
@@ -10084,7 +10090,7 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
                 total_accounted,
                 len(dropped_rows),
                 len(gate_excluded_rows),
-                posted_count,
+                posted_rows,
                 reused_count,
                 rejected_count,
             )
