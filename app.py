@@ -11161,37 +11161,71 @@ def preview_import(job_id):
 
             # Auto-balance single-sided transactions silently using the job's bank
             # account (detected from saved_mappings). No user input required.
+            # Total Recoveries grouping runs first; old auto-balance is fallback.
             try:
                 if preview.get("blocked_transactions") and not job.get("auto_balance_rows"):
-                    from gl_grouping import plan_posting_groups, auto_balance_by_token_group
+                    from gl_grouping import plan_posting_groups, plan_total_recoveries_group, auto_balance_by_token_group
                     grouped = group_rows_by_transaction(rows)
                     posting_plan = plan_posting_groups(grouped)
                     still_blocked = posting_plan.get("still_blocked") or []
-                    if still_blocked:
-                        _bank, _expense = _detect_accounts_for_auto_balance(
-                            still_blocked, rows, saved_mappings
-                        )
-                        if _bank["name"]:
-                            _synthetic = auto_balance_by_token_group(
-                                still_blocked=still_blocked,
-                                original_rows=rows,
-                                bank_account_name=_bank["name"],
-                                bank_account_number=_bank["number"],
-                                expense_offset_name=_expense["name"],
-                                expense_offset_number=_expense["number"],
-                            )
-                            if _synthetic:
-                                job["auto_balance_rows"] = _synthetic
-                                jobs[job_id] = job
-                                db.save_job_state(job_id, job)
-                                logging.getLogger("app").info(
-                                    "auto_balance: added %d synthetic rows for job %s "
-                                    "(bank=%r, expense=%r)",
-                                    len(_synthetic), job_id, _bank["name"], _expense["name"],
-                                )
-                                preview["blocked_transactions"] = []
-                                preview["would_post"] = True
-                                preview["balanced"] = True
+
+                    # Total Recoveries grouping: resolves CER "Expense Recovery" + GB "Refund"
+                    # patterns at preview time, preventing them from falling through to the
+                    # old auto-balance mechanism which would neutralize them incorrectly.
+                    # See 2026-07-15_totalrec_overpowered_by_old_autobalance.md.
+                    tot_rec_groups = plan_total_recoveries_group(grouped)
+                    tot_rec_txn_ids = set()
+                    for grp in tot_rec_groups:
+                        tot_rec_txn_ids.update(grp.get("transaction_ids", []))
+
+                    # Remove TotalRec-handled transactions from still_blocked so they don't
+                    # get re-balanced by the old mechanism.
+                    still_blocked_after_totrec = [
+                        b for b in still_blocked
+                        if str(b.get("transaction_id") or "") not in tot_rec_txn_ids
+                    ]
+
+                    # If TotalRec groups were found, mark preview as balanced.
+                    if tot_rec_groups:
+                        preview["blocked_transactions"] = [
+                            b for b in preview.get("blocked_transactions", [])
+                            if str(b.get("transaction_id") or "") not in tot_rec_txn_ids
+                        ]
+                        if not preview["blocked_transactions"]:
+                            preview["would_post"] = True
+                            preview["balanced"] = True
+
+                    # Old auto-balance mechanism: commented out per 2026-07-15 TotalRec
+                    # priority. Cesar asked to comment (not delete) so it can be reactivated
+                    # for firms that don't have TotalRec patterns and need fallback.
+                    # TODO: Consider re-enabling as fallback for non-TotalRec single-sided
+                    # rows once TotalRec fully stabilizes, or decide to force manual review
+                    # for all unbalanced rows not covered by TotalRec (stricter, safer).
+                    # if still_blocked_after_totrec:
+                    #     _bank, _expense = _detect_accounts_for_auto_balance(
+                    #         still_blocked_after_totrec, rows, saved_mappings
+                    #     )
+                    #     if _bank["name"]:
+                    #         _synthetic = auto_balance_by_token_group(
+                    #             still_blocked=still_blocked_after_totrec,
+                    #             original_rows=rows,
+                    #             bank_account_name=_bank["name"],
+                    #             bank_account_number=_bank["number"],
+                    #             expense_offset_name=_expense["name"],
+                    #             expense_offset_number=_expense["number"],
+                    #         )
+                    #         if _synthetic:
+                    #             job["auto_balance_rows"] = _synthetic
+                    #             jobs[job_id] = job
+                    #             db.save_job_state(job_id, job)
+                    #             logging.getLogger("app").info(
+                    #                 "auto_balance: added %d synthetic rows for job %s "
+                    #                 "(bank=%r, expense=%r)",
+                    #                 len(_synthetic), job_id, _bank["name"], _expense["name"],
+                    #             )
+                    #             preview["blocked_transactions"] = []
+                    #             preview["would_post"] = True
+                    #             preview["balanced"] = True
 
                 elif job.get("auto_balance_rows") and preview.get("blocked_transactions"):
                     preview["blocked_transactions"] = []
