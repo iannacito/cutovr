@@ -296,11 +296,23 @@ def _stage_cta(
         # build_customer_stages now suppresses this CTA entirely when the
         # user is already on the page (on_match_page=True), letting the
         # page's own forward CTA to Step 4 stand alone.
-        return ("Match accounts",
-                u("match_accounts_entry", "/match-accounts"))
+        if gl_job_id:
+            try:
+                _url = url_for("account_mapping", job_id=gl_job_id)
+            except Exception:
+                _url = f"/jobs/{gl_job_id}/account-mapping"
+        else:
+            _url = u("match_accounts_entry", "/match-accounts")
+        return ("Match accounts", _url)
     if stage_key == STAGE_REVIEW:
-        return ("Proceed to Step 4: Review import",
-                u("import_job_entry", "/import-job"))
+        if gl_job_id:
+            try:
+                _url = url_for("preview_import", job_id=gl_job_id)
+            except Exception:
+                _url = f"/jobs/{gl_job_id}/preview-import"
+        else:
+            _url = u("import_job_entry", "/import-job")
+        return ("Proceed to Step 4: Review import", _url)
     if stage_key == STAGE_IMPORT:
         # The customer is *on* Step 5 — point the stepper CTA at the
         # actual send action rather than telling them to "Proceed to
@@ -357,6 +369,18 @@ def _stage_back_link(
     # Per-stage previous-step entry: (customer-facing label, route).
     # Keyed by the *current* stage; value describes the step before it.
     # Every URL must be a real, working route — never a bare '#'.
+    if current_key == STAGE_REVIEW and gl_job_id:
+        try:
+            back_url = url_for("account_mapping", job_id=gl_job_id)
+        except Exception:
+            back_url = f"/jobs/{gl_job_id}/account-mapping"
+        return ("Back to Step 3: Match accounts", back_url)
+    if current_key == STAGE_IMPORT and gl_job_id:
+        try:
+            back_url = url_for("preview_import", job_id=gl_job_id)
+        except Exception:
+            back_url = f"/jobs/{gl_job_id}/preview-import"
+        return ("Back to Step 4: Review import", back_url)
     if current_key == STAGE_RECONCILE and gl_job_id:
         try:
             back_url = url_for("send_to_qbo", job_id=gl_job_id)
@@ -402,6 +426,12 @@ def _stage_nav_url(
         except Exception:
             return fallback
 
+    if stage_key == STAGE_MATCH and gl_job_id:
+        return (url_for("account_mapping", job_id=gl_job_id)
+                if url_for else f"/jobs/{gl_job_id}/account-mapping")
+    if stage_key == STAGE_REVIEW and gl_job_id:
+        return (url_for("preview_import", job_id=gl_job_id)
+                if url_for else f"/jobs/{gl_job_id}/preview-import")
     if stage_key == STAGE_IMPORT and gl_job_id:
         return (url_for("send_to_qbo", job_id=gl_job_id)
                 if url_for else f"/jobs/{gl_job_id}/send-to-qbo")
