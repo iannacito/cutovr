@@ -268,7 +268,9 @@
         <label style="display:flex;align-items:center;gap:6px;font-size:.85rem;
                        color:var(--text-muted);cursor:pointer;" title="Attach vendor/customer names while posting instead of linking them afterward (Pass 2). Leave off for the normal two-pass flow.">
           <input type="checkbox" id="single-pass-toggle" name="single_pass"
-                 value="1" form="gl-send-form">
+                 value="1" form="gl-send-form"
+                 {% if job.get('entity_attach_mode') == 'single_pass' %}checked{% endif %}
+                 {% if import_in_progress %}disabled title="Import already in progress — can't change posting mode mid-run."{% endif %}>
           Single pass
         </label>
         <button type="button" id="init-toggle"

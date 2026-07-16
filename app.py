@@ -3222,14 +3222,30 @@ def migration_nexus():
                 j["period_label"] = _hub_period_label(j.get("source_file") or "")
 
     # Split: completed vs active; exclude unknown/parse-failure jobs
+    # Chart of Accounts job auto-completion: treat a COA job as effectively
+    # complete once a GL has posted (at checkpoint == "completed"), since the
+    # mapping is already proven to work. See 2026-07-15_ledger_reused_count_gap_
+    # and_coa_autocomplete.md. This does NOT change checkpoint in the DB —
+    # it's purely a display-bucket decision in this route.
+    _any_gl_completed = any(
+        (j.get("report_type") or "general_ledger") == "general_ledger"
+        and j.get("checkpoint") == "completed"
+        for j in all_jobs
+    )
+
+    def _is_effectively_complete(j):
+        if j.get("checkpoint") == "completed":
+            return True
+        return j.get("report_type") == "chart_of_accounts" and _any_gl_completed
+
     completed_batches = [
         j for j in all_jobs
-        if j.get("checkpoint") == "completed"
+        if _is_effectively_complete(j)
         and (j.get("report_type") or "general_ledger") != "unknown"
     ]
     active_batches = [
         j for j in all_jobs
-        if j.get("checkpoint") != "completed"
+        if not _is_effectively_complete(j)
         and (j.get("report_type") or "general_ledger") != "unknown"
     ]
 
@@ -3250,8 +3266,7 @@ def migration_nexus():
     coa_done = (
         any(j.get("report_type") == "chart_of_accounts"
             and j.get("checkpoint") == "completed" for j in all_jobs)
-        or any((j.get("report_type") or "general_ledger") == "general_ledger"
-               and j.get("checkpoint") == "completed" for j in all_jobs)
+        or _any_gl_completed
         or _gl_mapping_done
     )
     ob_done     = any(j.get("report_type") == "trial_balance"
@@ -9855,13 +9870,15 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
                     hint = line.get("_pclaw_entity_hint")
                     if hint:
                         doc_number = payload.get("DocNumber", "")
-                        # Find which transaction this line belongs to (via matching amount/account)
-                        # For now, create a link entry
+                        # Capture amount too — account_type alone can't tell apart
+                        # multiple same-account-type lines in a merged/grouped JE
+                        # (see 2026-07-15_pass2_grouped_transaction_line_matching_fix.md).
                         link_entry = {
                             "doc_number": doc_number,
                             "kind": hint.get("type"),  # "Customer" or "Vendor"
                             "name": hint.get("name"),
                             "account_type": hint.get("account_type"),
+                            "amount": line.get("Amount"),
                             "linked": False,
                         }
                         pending_entity_links.append(link_entry)
@@ -9983,7 +10000,7 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
                             details=f"reused existing JE for DocNumber {doc_number}",
                             firm_id=user.get("firm_id"),
                         )
-                        reused_count += 1
+                        reused_count += _row_span(txn_id)
                         _record_created(existing_je, txn_id)
                         _update_entry_with_subrefs(txn_id, {"status": "ok"})
                     else:
@@ -14609,6 +14626,8 @@ def _run_pass2_entity_linking(job, job_id, qbo, user, qbo_conn, account_type_ind
             modified_lines = []
             any_line_matched = False
             account_type = link_entry.get("account_type")
+            target_amount = link_entry.get("amount")
+            _claimed_this_link = False
             for line in lines:
                 line_copy = dict(line)
                 detail = line_copy.get("JournalEntryLineDetail", {})
@@ -14616,16 +14635,29 @@ def _run_pass2_entity_linking(job, job_id, qbo, user, qbo_conn, account_type_ind
                 account_id = str(account_ref.get("value") or "")
                 line_account_type = account_type_index.get(account_id)
 
-                # Match the line whose CURRENT account type equals what Pass 1
-                # recorded when it captured this hint (link_entry["account_type"]),
-                # not a hardcoded AR/AP-only category. Per Bug 43/VERDICT
-                # (2026-07-13), legitimate Vendor hints also originate on non-AR/AP
-                # lines (e.g. a Bank or Income line carrying a real PCLaw "Pd
-                # To/Rcvd From" value) — restricting Vendor matches to (None,
-                # "Accounts Payable") silently excluded those lines: the sparse
-                # update succeeded at QBO with no actual change, so it was recorded
-                # as "linked" even though nothing attached.
-                should_add_entity = bool(account_type) and line_account_type == account_type
+                # Match on account_type AND amount, and only the first
+                # still-unclaimed (no Entity yet) line — account_type alone
+                # can't distinguish multiple same-type lines in one merged/
+                # grouped JE (e.g. GROUP-<token>-... combining several
+                # original PCLaw transactions into one JE), which silently
+                # let a later link_entry overwrite an earlier one's correctly
+                # -attached name. See 2026-07-15_pass2_grouped_transaction_
+                # line_matching_fix.md. Per Bug 43/VERDICT (2026-07-13),
+                # legitimate Vendor hints also originate on non-AR/AP lines,
+                # so account_type is still intentionally not restricted to
+                # AR/AP only.
+                already_has_entity = bool(detail.get("Entity"))
+                amount_matches = (
+                    target_amount is None
+                    or abs(float(line_copy.get("Amount") or 0) - float(target_amount)) < 0.005
+                )
+                should_add_entity = (
+                    not _claimed_this_link
+                    and bool(account_type)
+                    and line_account_type == account_type
+                    and not already_has_entity
+                    and amount_matches
+                )
 
                 if should_add_entity:
                     detail["Entity"] = {
@@ -14634,6 +14666,7 @@ def _run_pass2_entity_linking(job, job_id, qbo, user, qbo_conn, account_type_ind
                     }
                     line_copy["JournalEntryLineDetail"] = detail
                     any_line_matched = True
+                    _claimed_this_link = True
                 modified_lines.append(line_copy)
 
             if not any_line_matched:
