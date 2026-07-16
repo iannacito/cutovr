@@ -63,7 +63,7 @@
            twice (Cesar 2026-06-03 QA — the doubled, stretched CTAs). Same
            destination as the footer. #}
         <a class="btn btn-primary btn-lg"
-           href="{{ url_for('import_job_entry') }}"
+           href="{{ url_for('preview_import', job_id=job.id) }}"
            data-testid="step3-top-proceed-to-step4">
           Review import &rarr;
         </a>
@@ -436,53 +436,6 @@
                     </button>
                   {% elif r.is_suggestion %}
                     <span class="badge">Auto-match</span>
-                    {# Show undo button so the user can dismiss the suggestion and
-                       interact with the row like an unmatched account. #}
-                    {% if r.idx is defined and not r.is_system_calculated %}
-                      <button class="btn btn-sm"
-                              type="button"
-                              data-testid="row-undo-button-{{ r.idx }}"
-                              style="margin-left:.35rem;"
-                              onclick="toggleMappingOverride({{ r.idx }})">
-                        Change mapping
-                      </button>
-                    {% endif %}
-                    {# Override panel — hidden by default. Clicking "Change mapping"
-                       calls toggleMappingOverride() to reveal it. #}
-                    <div id="mapping-override-{{ r.idx }}"
-                         style="display:none;margin:.35rem 0 0;">
-                      <label style="display:block;margin:0 0 .25rem;font-size:.8rem;">
-                        What kind of account is this? (to override the auto-match)
-                      </label>
-                      <div style="display:flex;flex-wrap:wrap;gap:.35rem;align-items:flex-end;margin-bottom:.35rem;">
-                        <select id="row-acct-type-{{ r.idx }}"
-                                name="account_type"
-                                form="add-form-{{ r.idx }}"
-                                data-testid="row-category-select-{{ r.idx }}"
-                                data-detail-target="row-detail-type-{{ r.idx }}"
-                                style="max-width:18rem;">
-                          <option value="">&mdash; accept auto-match or pick a type &mdash;</option>
-                          {% for at in coa_override_account_types %}
-                            <option value="{{ at }}">{{ at }}</option>
-                          {% endfor %}
-                        </select>
-                        <select id="row-detail-type-{{ r.idx }}"
-                                name="detail_type"
-                                form="add-form-{{ r.idx }}"
-                                style="max-width:18rem;">
-                          <option value="">&mdash; default for type &mdash;</option>
-                        </select>
-                      </div>
-                      <button class="btn btn-sm" type="submit"
-                              form="add-form-{{ r.idx }}"
-                              data-testid="row-add-button-{{ r.idx }}">
-                        Add to QuickBooks (with selected category)
-                      </button>
-                      <p class="muted" style="margin:.25rem 0 0;font-size:.75rem;max-width:36ch;">
-                        Leave blank to accept the auto-match, or pick a type
-                        to create this account with a specific QBO account type.
-                      </p>
-                    </div>
                   {% else %}
                     <span class="badge error">Unmatched</span>
                     {# Row-level "Add to QuickBooks" CTA. Three states:
@@ -592,7 +545,7 @@
           and mapping_summary.matched_saved == mapping_summary.total
           and mapping_summary.total > 0 %}
       <a class="btn btn-primary"
-         href="{{ url_for('import_job_entry') }}"
+         href="{{ url_for('preview_import', job_id=job.id) }}"
          data-testid="step3-proceed-to-step4">
         Proceed to Step 4: Review import &rarr;
       </a>

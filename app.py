@@ -3246,14 +3246,22 @@ def migration_nexus():
     # mapping is already proven to work. See 2026-07-15_ledger_reused_count_gap_
     # and_coa_autocomplete.md. This does NOT change checkpoint in the DB —
     # it's purely a display-bucket decision in this route.
+    def _gl_cleanly_posted(j):
+        if (j.get("report_type") or "general_ledger") != "general_ledger":
+            return False
+        s = j.get("import_summary") or {}
+        return bool(s) and int(s.get("skipped_je_count", 0) or 0) == 0
+
     _any_gl_completed = any(
         (j.get("report_type") or "general_ledger") == "general_ledger"
-        and j.get("checkpoint") == "completed"
+        and (j.get("checkpoint") == "completed" or _gl_cleanly_posted(j))
         for j in all_jobs
     )
 
     def _is_effectively_complete(j):
         if j.get("checkpoint") == "completed":
+            return True
+        if _gl_cleanly_posted(j):
             return True
         return j.get("report_type") == "chart_of_accounts" and _any_gl_completed
 
@@ -7251,6 +7259,23 @@ def job_detail(job_id):
         )
         extra_ctx = tb_workflow.tb_stages_context(_tb_stages)
 
+    # Per-job current stage for GL jobs — mirror the body's _detail_step logic
+    # (templates/job-detail.html) so the rail reflects THIS job, not the firm rollup.
+    def _gl_job_current_stage():
+        _pf = job.get("preflight") or {}
+        step_validated = bool(_pf) and not _pf.get("missing_required_columns") and (
+            _pf.get("balanced") or ((job.get("preview") or {}).get("balanced"))
+        )
+        if not step_validated:
+            return customer_workflow.STAGE_UPLOAD      # Step 2 — fix/re-upload the file
+        if unmapped_count > 0:
+            return customer_workflow.STAGE_MATCH        # Step 3 — match accounts
+        if not job.get("qbo_connected"):
+            return customer_workflow.STAGE_MATCH        # Step 3 — connect QBO
+        if not job.get("qbo_results"):
+            return customer_workflow.STAGE_REVIEW       # Step 4 — review & send
+        return customer_workflow.STAGE_RECONCILE        # Step 6 — done/reconcile
+
     _gl_already_imported = (
         bool((job or {}).get("import_summary"))
         and (job.get("report_type") or "general_ledger") == "general_ledger"
@@ -7278,7 +7303,8 @@ def job_detail(job_id):
                 else None
             ),
             force_current_stage=(
-                customer_workflow.STAGE_RECONCILE if _gl_already_imported else None
+                _gl_job_current_stage() if (job.get("report_type") or "") == "general_ledger"
+                else (customer_workflow.STAGE_RECONCILE if _gl_already_imported else None)
             ),
         )),
     )
@@ -9830,11 +9856,17 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
             sub_refs_by_posted_id[grp["group_id"]] = list(grp["transaction_ids"])
 
         # Add Total Recoveries groups to sub_refs mapping
+        # Account for id-less rows (e.g. "Total of Recoveries" adjustment) by
+        # creating synthetic sub-refs for each physical row in the group, not just
+        # the ones with transaction_ids. This fixes the row-conservation ledger
+        # under-count that keeps the checkpoint at NEEDS_ATTENTION for TotRec batches.
         for grp in tot_rec_groups:
             token = grp.get("token", "")
             if token:
-                # Map the token to all original transaction_ids in the group
-                sub_refs_by_posted_id[token] = list(grp.get("transaction_ids", []))
+                # Create one sub-ref entry per folded row (including id-less rows)
+                # so _row_span(token) matches the physical row count, not just txn_ids
+                rows_in_group = grp.get("rows", [])
+                sub_refs_by_posted_id[token] = [token] * len(rows_in_group) if rows_in_group else [token]
 
         def _row_span(txn_id: str) -> int:
             return len(sub_refs_by_posted_id.get(txn_id, [txn_id]))
