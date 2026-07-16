@@ -414,6 +414,21 @@
     <p class="eyebrow" style="color:#2b5d28;">Related rows grouped safely</p>
     <h2>We found {{ preview.merged_groups|length }} group{% if preview.merged_groups|length != 1 %}s{% endif %}
       of PCLaw rows that balance together.</h2>
+    {% if preview.total_recoveries %}
+    <p class="muted" data-testid="totrec-status" style="max-width:62ch;">
+      Total Recoveries:
+      {% if preview.total_recoveries.groups_found %}
+        <strong>{{ preview.total_recoveries.groups_found }}</strong>
+        group{% if preview.total_recoveries.groups_found != 1 %}s{% endif %}
+        found and validated this run.
+      {% else %}
+        <strong>0 found</strong> this run
+        ({{ preview.total_recoveries.months_inspected }} month(s) inspected &mdash;
+        none matched the CER &ldquo;Total of Recoveries&rdquo; + &ldquo;Expense
+        Recovery&rdquo; + refund pattern that balances to the cent).
+      {% endif %}
+    </p>
+    {% endif %}
     <p class="muted" style="max-width:62ch;">
       Some PCLaw reference numbers don&rsquo;t balance on their own, but the
       related rows that share the same source-journal tag (for example

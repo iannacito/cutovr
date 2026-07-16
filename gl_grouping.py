@@ -67,6 +67,7 @@ from collections import OrderedDict
 from decimal import Decimal
 from typing import Iterable, Optional
 
+from gl_row_quality import parse_gl_date
 from pclaw_pipeline import money
 
 
@@ -539,6 +540,7 @@ def auto_balance_by_token_group(
 
 def plan_total_recoveries_group(
     grouped_by_txn: "OrderedDict[str, list[dict]]",
+    diag_sink: "list | None" = None,
 ) -> list[dict]:
     """Detect and group Total Expense Recoveries entries per month.
 
@@ -566,6 +568,9 @@ def plan_total_recoveries_group(
 
     Groups that don't balance exactly are skipped (no silent corrections) —
     the caller should flag them for manual review instead of forcing.
+
+    If diag_sink is provided, appends one diagnostic dict per month inspected,
+    recording whether the group was detected and why it was or wasn't grouped.
     """
     groups: list[dict] = []
     rows_by_month: "dict[str, list[dict]]" = {}
@@ -576,10 +581,11 @@ def plan_total_recoveries_group(
         all_rows.extend(txn_rows)
 
     for row in all_rows:
-        date_str = (row.get("date") or "").strip()
-        if not date_str or len(date_str) < 7:
+        iso = parse_gl_date(row.get("date"))
+        if not iso:
+            # unparseable / beginning-balance token — cannot month-bucket it
             continue
-        month_key = date_str[:7]  # "YYYY-MM"
+        month_key = iso[:7]  # "YYYY-MM", now reliable
         if month_key not in rows_by_month:
             rows_by_month[month_key] = []
         rows_by_month[month_key].append(row)
@@ -598,11 +604,39 @@ def plan_total_recoveries_group(
                 break
 
         if not tot_rec_row:
+            result = "no_total_of_recoveries_row"
+            if diag_sink is not None:
+                diag_sink.append({
+                    "month_key": month_key,
+                    "found_total_of_recoveries_row": False,
+                    "expense_recovery_line_count": 0,
+                    "refund_row_count": 0,
+                    "total_of_recoveries_debit": None,
+                    "expense_recovery_credits": None,
+                    "expected_credits": None,
+                    "balance_delta": None,
+                    "result": result,
+                    "token": None,
+                })
             continue
 
         # Extract the Total of Recoveries debit from the source file.
         tot_rec_debit = _row_money(tot_rec_row, "debit")
         if tot_rec_debit <= 0:
+            result = "nonpositive_debit"
+            if diag_sink is not None:
+                diag_sink.append({
+                    "month_key": month_key,
+                    "found_total_of_recoveries_row": True,
+                    "expense_recovery_line_count": 0,
+                    "refund_row_count": 0,
+                    "total_of_recoveries_debit": f"{tot_rec_debit:.2f}" if tot_rec_debit else None,
+                    "expense_recovery_credits": None,
+                    "expected_credits": None,
+                    "balance_delta": None,
+                    "result": result,
+                    "token": None,
+                })
             continue
 
         # Find all CER "Expense Recovery" detail lines in the same month.
@@ -625,9 +659,27 @@ def plan_total_recoveries_group(
                     refund_rows.append(r)
                     break
 
+        # Dedupe: exclude rows already claimed by tot_rec_row or exp_rec_rows from refund_rows.
+        claimed = {id(tot_rec_row)} | {id(r) for r in exp_rec_rows}
+        refund_rows = [r for r in refund_rows if id(r) not in claimed]
+
         # Build the group: Total of Recoveries + CER Expense Recovery lines + refund lines.
         group_rows = [tot_rec_row] + exp_rec_rows + refund_rows
         if not group_rows:
+            result = "no_group_rows"
+            if diag_sink is not None:
+                diag_sink.append({
+                    "month_key": month_key,
+                    "found_total_of_recoveries_row": True,
+                    "expense_recovery_line_count": len(exp_rec_rows),
+                    "refund_row_count": len(refund_rows),
+                    "total_of_recoveries_debit": f"{tot_rec_debit:.2f}",
+                    "expense_recovery_credits": None,
+                    "expected_credits": None,
+                    "balance_delta": None,
+                    "result": result,
+                    "token": None,
+                })
             continue
 
         # Compute totals for the group.
@@ -640,8 +692,23 @@ def plan_total_recoveries_group(
         expected_credits = tot_rec_debit + refund_debits
 
         # Strict balance check — must match to the cent.
-        if exp_rec_credits != expected_credits:
+        balance_delta = exp_rec_credits - expected_credits
+        if round(exp_rec_credits, 2) != round(expected_credits, 2):
             # Does not balance exactly; skip and flag for manual review.
+            result = "unbalanced"
+            if diag_sink is not None:
+                diag_sink.append({
+                    "month_key": month_key,
+                    "found_total_of_recoveries_row": True,
+                    "expense_recovery_line_count": len(exp_rec_rows),
+                    "refund_row_count": len(refund_rows),
+                    "total_of_recoveries_debit": f"{tot_rec_debit:.2f}",
+                    "expense_recovery_credits": f"{exp_rec_credits:.2f}",
+                    "expected_credits": f"{expected_credits:.2f}",
+                    "balance_delta": f"{balance_delta:.2f}",
+                    "result": result,
+                    "token": None,
+                })
             continue
 
         # The group balances exactly. Collect unique transaction IDs from all rows.
@@ -653,6 +720,21 @@ def plan_total_recoveries_group(
 
         # Create the group with the shared token.
         token = f"{month_key}TotRec"
+        result = "grouped"
+        if diag_sink is not None:
+            diag_sink.append({
+                "month_key": month_key,
+                "found_total_of_recoveries_row": True,
+                "expense_recovery_line_count": len(exp_rec_rows),
+                "refund_row_count": len(refund_rows),
+                "total_of_recoveries_debit": f"{tot_rec_debit:.2f}",
+                "expense_recovery_credits": f"{exp_rec_credits:.2f}",
+                "expected_credits": f"{expected_credits:.2f}",
+                "balance_delta": f"{balance_delta:.2f}",
+                "result": result,
+                "token": token,
+            })
+
         groups.append({
             "group_id": token,
             "token": token,

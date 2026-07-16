@@ -165,9 +165,11 @@ def build_dry_run_preview(
     # groups into the legitimate merged_groups list, making them appear in the
     # "Related rows grouped safely" card with the real token and folded PCLaw refs.
     # See 2026-07-15_totalrec_overpowered_by_old_autobalance.md (REVISED section).
+    _totrec_diag: list = []
+    tot_rec_groups: list = []
     if grouped:
         from gl_grouping import plan_total_recoveries_group
-        tot_rec_groups = plan_total_recoveries_group(grouped)
+        tot_rec_groups = plan_total_recoveries_group(grouped, diag_sink=_totrec_diag)
         for grp in tot_rec_groups:
             # Add all transaction_ids from this TotalRec group to rescued_set
             for txn_id in grp.get("transaction_ids", []):
@@ -177,9 +179,9 @@ def build_dry_run_preview(
                 "group_id": grp.get("token", ""),
                 "token": grp.get("token", ""),
                 "transaction_ids": list(grp.get("transaction_ids", [])),
-                "line_count": len(grp.get("rows", [])),
-                "debits": f"{grp.get('debits') or '0.00':.2f}",
-                "credits": f"{grp.get('credits') or '0.00':.2f}",
+                "rows": list(grp.get("rows", [])),
+                "debits": f"{grp.get('debits') or 0:.2f}",
+                "credits": f"{grp.get('credits') or 0:.2f}",
             })
 
     for txn_id, txn_rows in grouped.items():
@@ -371,6 +373,11 @@ def build_dry_run_preview(
         "cross_token_offsets": posting_plan.get("cross_token_offsets") or [],
         "rescued_transaction_ids": sorted(rescued_set),
         "would_post_via_grouping": bool(merged_groups_public),
+        "total_recoveries": {
+            "groups_found": len([g for g in tot_rec_groups if g]),
+            "months_inspected": len(_totrec_diag),
+            "detail": _totrec_diag,
+        },
         "problem_rows": [r.to_dict() for r in quality.problem_rows],
         "beginning_balance_rows": [r.to_dict() for r in quality.beginning_balance_rows],
         "row_quality_counts": quality.counts_by_kind(),

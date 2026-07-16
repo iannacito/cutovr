@@ -9805,7 +9805,7 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
 
         # Rewrite transaction_id for Total Recoveries rows so they group together naturally
         for row in rows:
-            old_txn_id = row.get("transaction_id", "")
+            old_txn_id = (row.get("transaction_id") or row.get("reference_number") or "").strip()
             if old_txn_id in tot_rec_txn_to_token:
                 # Store original txn_id in a new field for traceability
                 if "_original_txn_id" not in row:
