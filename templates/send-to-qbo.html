@@ -265,12 +265,15 @@
                 align-items:center;margin-bottom:var(--space-3);">
       <p class="eyebrow" style="margin:0;">Pre-GL Checklist</p>
       <div style="display:flex;align-items:center;gap:var(--space-4);">
-        <label style="display:flex;align-items:center;gap:6px;font-size:.85rem;
+        <label class="toggle-switch" style="display:flex;align-items:center;gap:8px;font-size:.85rem;
                        color:var(--text-muted);cursor:pointer;" title="Attach vendor/customer names while posting instead of linking them afterward (Pass 2). Leave off for the normal two-pass flow.">
-          <input type="checkbox" id="single-pass-toggle" name="single_pass"
-                 value="1" form="gl-send-form"
-                 {% if job.get('entity_attach_mode') == 'single_pass' %}checked{% endif %}
-                 {% if import_in_progress %}disabled title="Import already in progress — can't change posting mode mid-run."{% endif %}>
+          <span class="toggle-switch-track">
+            <input type="checkbox" id="single-pass-toggle" name="single_pass"
+                   value="1" form="gl-send-form"
+                   {% if job.get('entity_attach_mode') == 'single_pass' %}checked{% endif %}
+                   {% if import_in_progress %}disabled title="Import already in progress — can't change posting mode mid-run."{% endif %}>
+            <span class="toggle-switch-thumb" aria-hidden="true"></span>
+          </span>
           Single pass
         </label>
         <button type="button" id="init-toggle"
@@ -476,6 +479,56 @@
 
   <style>
     @keyframes spin { to { transform: rotate(360deg); } }
+    .toggle-switch-track {
+      position: relative;
+      display: inline-block;
+      width: 34px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+    .toggle-switch-track input {
+      position: absolute;
+      inset: 0;
+      margin: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+    .toggle-switch-thumb {
+      position: absolute;
+      inset: 0;
+      background: var(--line, #d1d5db);
+      border-radius: 999px;
+      transition: background-color .15s ease;
+    }
+    .toggle-switch-thumb::before {
+      content: "";
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 1px 2px rgba(0,0,0,.25);
+      transition: transform .15s ease;
+    }
+    .toggle-switch-track input:checked + .toggle-switch-thumb {
+      background: var(--primary, #1d4ed8);
+    }
+    .toggle-switch-track input:checked + .toggle-switch-thumb::before {
+      transform: translateX(14px);
+    }
+    .toggle-switch-track input:disabled + .toggle-switch-thumb {
+      opacity: .5;
+      cursor: not-allowed;
+    }
+    .toggle-switch-track input:disabled {
+      cursor: not-allowed;
+    }
+    .toggle-switch-track input:focus-visible + .toggle-switch-thumb {
+      outline: 2px solid var(--primary, #1d4ed8);
+      outline-offset: 2px;
+    }
   </style>
 
   {% if entity_linking_debug_json %}
