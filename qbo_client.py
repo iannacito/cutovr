@@ -499,6 +499,41 @@ class QBOClient:
             )
         return response.json()
 
+    def find_cutovr_journal_entries(self, marker: str) -> list[dict]:
+        """Return [{Id, SyncToken, DocNumber, PrivateNote}] for every JournalEntry
+        in this realm whose PrivateNote starts with the Cutovr marker.
+
+        Job/history-independent: reads QBO itself, so it works even after all
+        local data has been wiped. Only marker-bearing entries are returned, so
+        callers can hard-delete safely without risking user-created JEs.
+
+        Paginated via STARTPOSITION (1-based) and MAXRESULTS (capped at 1000).
+        """
+        out: list[dict] = []
+        start = 1
+        page = 1000
+        while True:
+            resp = self.query(
+                f"SELECT Id, SyncToken, DocNumber, PrivateNote FROM JournalEntry "
+                f"STARTPOSITION {start} MAXRESULTS {page}"
+            )
+            batch = (resp.get("QueryResponse") or {}).get("JournalEntry") or []
+            if not batch:
+                break
+            for je in batch:
+                note = (je.get("PrivateNote") or "")
+                if note.startswith(marker):
+                    out.append({
+                        "Id": je.get("Id"),
+                        "SyncToken": je.get("SyncToken"),
+                        "DocNumber": je.get("DocNumber"),
+                        "PrivateNote": note,
+                    })
+            if len(batch) < page:
+                break
+            start += page
+        return out
+
     def create_account(self, payload):
         """Create a QBO Account. Returns the parsed JSON response.
 

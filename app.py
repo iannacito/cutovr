@@ -995,6 +995,25 @@ def _get_qbo_client(job_id, user):
     return qbo, qbo_conn
 
 
+def _get_qbo_client_for_connection(qbo_conn, user):
+    """Return a ready-to-call (QBOClient, qbo_conn) from a connection row, no job needed.
+
+    Used by dev/reset routes that need to reach QBO for a firm, even if the
+    originating jobs have been deleted. Refreshes the access token if stale.
+    Raises QBOAuthExpired on token refresh failure.
+    """
+    if not qbo_conn:
+        return None, None
+    if not _qbo_token_is_fresh(qbo_conn):
+        qbo_conn = _refresh_qbo_tokens(None, qbo_conn, user["firm_id"])
+    qbo = QBOClient(
+        access_token=decrypt_token(qbo_conn["access_token_enc"]),
+        realm_id=qbo_conn["realm_id"],
+        environment=QBO_ENVIRONMENT,
+    )
+    return qbo, qbo_conn
+
+
 def _redact_email_for_audit(email: str) -> str:
     """Return a privacy-preserving rendering of an email for audit logs.
 
@@ -3732,84 +3751,72 @@ def coa_add_missing_accounts():
 def dev_reset_migration():
     """Revert all posted QBO journal entries then wipe all local job data.
 
-    Step 1 — delete every GL JE from QBO for completed batches (when
-              QBO_REAL_IMPORT=1; skipped in demo mode to avoid API calls).
-    Step 2 — purge all local jobs for the firm (_purge_job_local removes
-              encrypted files, in-memory cache, and DB rows).
-    Step 3 — flush remaining in-memory state.
+    Step 1 — delete every Cutovr-marked JE from QBO via realm-wide sweep,
+              independent of local job/history state (when QBO_REAL_IMPORT=1).
+    Step 2 — purge all local jobs, history, and in-memory state for the firm.
+
+    Uses the PrivateNote marker to identify Cutovr JEs, so it works even after
+    all local data has been deleted (no dependence on jobs or import_history).
 
     Intentionally not gated by IS_PRODUCTION — the user needs this on the
     live site to start a fresh migration run.
     """
+    import time as _t
+    from pclaw_pipeline import CUTOVR_JE_MARKER
+
     user = current_user()
     firm_id = user["firm_id"]
 
-    # Collect realms FIRST — the purge loop below deletes qbo_connections
-    # rows (via db.delete_job), after which the realms are unrecoverable.
-    _realms = {
-        c["realm_id"]
-        for c in db.list_qbo_connections_for_firm(firm_id)
-        if c.get("realm_id")
-    }
+    # Realm-scoped, marker-driven QBO sweep (before any local purge that would
+    # destroy the connection info).
+    qbo_reverted, qbo_failed, je_deleted = 0, 0, 0
+    connections = db.list_qbo_connections_for_firm(firm_id)
 
-    qbo_reverted, qbo_failed = 0, 0
+    if QBO_REAL_IMPORT and not connections:
+        # No live connection => can't reach QBO to clear it. Tell the user
+        # plainly instead of silently reporting success.
+        flash(
+            "Local data was cleared, but QuickBooks could NOT be cleared because "
+            "there is no active QuickBooks connection. Reconnect QuickBooks, then "
+            "run Reset migration again to remove the imported journal entries.",
+            "warning",
+        )
+
     if QBO_REAL_IMPORT:
-        import time as _t
-        firm_job_rows = db.list_jobs_for_firm(firm_id, limit=200)
-        for row in firm_job_rows:
-            job_id = row["id"]
-            # Revert every import ATTEMPT recorded for this job — success AND
-            # partial — not just a job whose checkpoint reached "completed".
-            # A partial import (checkpoint stuck at needs_attention, or at
-            # importing per the stuck-checkpoint bug) still posted real JEs
-            # to QBO and must not be silently skipped.
+        for conn in connections:
             try:
-                import_records = history.get_history_for_job(job_id)
-            except Exception as exc:  # noqa: BLE001
-                _log.warning("dev_reset_migration: history lookup failed for %s: %s", job_id, exc)
-                continue
-
-            relevant = [r for r in import_records if r.get("status") in ("success", "partial")]
-            if not relevant:
-                continue
-
-            try:
-                qbo, qbo_conn = _get_qbo_client(job_id, user)
+                qbo, qbo_conn = _get_qbo_client_for_connection(conn, user)
                 if not qbo_conn:
                     qbo_failed += 1
                     continue
+                targets = qbo.find_cutovr_journal_entries(CUTOVR_JE_MARKER)
             except Exception as exc:  # noqa: BLE001
-                _log.warning("dev_reset_migration: QBO client failed for %s: %s", job_id, exc)
+                _log.warning("dev_reset_migration: QBO sweep failed for realm %s: %s",
+                             conn.get("realm_id"), exc)
                 qbo_failed += 1
                 continue
 
-            job_ok = True
-            _delete_count = 0
-            for imp in relevant:
-                for tx in imp.get("transactions", []):
-                    je_id = tx.get("qbo_je_id")
-                    if not je_id:
+            realm_ok = True
+            for i, je in enumerate(targets, 1):
+                if not (je.get("Id") and je.get("SyncToken")):
+                    continue
+                try:
+                    qbo.delete_journal_entry(je["Id"], je["SyncToken"])
+                    je_deleted += 1
+                except QBOError as exc:
+                    # 404 / already-deleted is success, not failure
+                    if getattr(exc, "status_code", None) == 404:
                         continue
-                    try:
-                        je = qbo.get_journal_entry(je_id)
-                        if not je:
-                            continue  # already gone — fine
-                        sync_token = je.get("SyncToken")
-                        if sync_token:
-                            qbo.delete_journal_entry(je_id, sync_token)
-                    except Exception as exc:  # noqa: BLE001
-                        _log.warning(
-                            "dev_reset_migration: could not delete JE %s for job %s: %s",
-                            je_id, job_id, exc,
-                        )
-                        job_ok = False
-                    _delete_count += 1
-                    if _delete_count % 25 == 0:
-                        _t.sleep(0.5)
-            if job_ok:
-                qbo_reverted += 1
-            else:
-                qbo_failed += 1
+                    _log.warning("dev_reset_migration: delete JE %s failed: %s",
+                                 je.get("Id"), exc)
+                    realm_ok = False
+                if i % 25 == 0:
+                    _t.sleep(0.5)   # api-resilience.md #8 pacing
+            qbo_reverted += 1 if realm_ok else 0
+            qbo_failed += 0 if realm_ok else 1
+
+    # Collect realms/realms for the history purge.
+    _realms = {c["realm_id"] for c in connections if c.get("realm_id")}
 
     # Purge all local job data for the firm.
     # Collect job_ids FIRST — _purge_job_local deletes the DB rows.
@@ -3822,16 +3829,14 @@ def dev_reset_migration():
         except Exception as exc:  # noqa: BLE001
             _log.warning("dev_reset_migration: purge failed for %s: %s", row["id"], exc)
 
-    # Purge import history for every realm this firm was connected to, so a
-    # full reset really allows re-importing the same files.
+    # Purge import history for every realm this firm was connected to.
     hist_deleted = 0
     for _realm in _realms:
         try:
             hist_deleted += history.delete_all_for_firm_realm(_realm)
         except Exception as exc:  # noqa: BLE001
             _log.warning("dev_reset_migration: history purge failed for realm %s: %s", _realm, exc)
-    # Belt-and-suspenders: also delete by job_id in case realm_id was None
-    # on the qbo_connections row (leaving _realms empty above).
+    # Belt-and-suspenders: also delete by job_id in case realm_id was None.
     try:
         orphan_deleted = history.delete_by_job_ids(all_job_ids)
         if orphan_deleted:
@@ -3840,7 +3845,7 @@ def dev_reset_migration():
     except Exception as exc:  # noqa: BLE001
         _log.warning("dev_reset_migration: job_id history purge failed: %s", exc)
 
-    # Belt-and-suspenders: flush any orphaned in-memory state
+    # Belt-and-suspenders: flush any orphaned in-memory state.
     keys_to_drop = [k for k, v in list(qbo_connections.items())]
     for k in keys_to_drop:
         qbo_connections.pop(k, None)
@@ -3848,29 +3853,29 @@ def dev_reset_migration():
     _audit(
         "dev_migration_reset",
         target_type="firm", target_id=str(firm_id),
-        details=f"qbo_reverted={qbo_reverted} qbo_failed={qbo_failed} hist_deleted={hist_deleted}",
+        details=f"je_deleted={je_deleted} qbo_reverted={qbo_reverted} qbo_failed={qbo_failed} hist_deleted={hist_deleted}",
     )
 
-    if qbo_failed:
+    # Report the honest result: focus on actual JEs deleted, not batch count.
+    if qbo_failed > 0:
         flash(
-            f"Reset complete. Reverted {qbo_reverted} QBO batch(es); "
-            f"{qbo_failed} could not be removed from QBO — delete them manually. "
-            f"All local data cleared. Cleared {hist_deleted} import-history record(s).",
+            f"Reset complete. Removed {je_deleted} imported journal entr{'y' if je_deleted == 1 else 'ies'} from QuickBooks, "
+            f"but {qbo_failed} realm(s) encountered errors — check QuickBooks and retry if needed. "
+            f"All local data cleared.",
             "warning",
         )
+    elif je_deleted > 0:
+        flash(
+            f"Reset complete. Removed {je_deleted} imported journal entr{'y' if je_deleted == 1 else 'ies'} from "
+            f"QuickBooks and cleared all local data. Ready for a new run.",
+            "success",
+        )
     else:
-        if qbo_reverted:
-            flash(
-                f"Reset complete. Reverted {qbo_reverted} QBO batch(es) and "
-                f"cleared all local data. Cleared {hist_deleted} import-history record(s). Ready for a new run.",
-                "success",
-            )
-        else:
-            flash(
-                f"Reset complete. All local migration data cleared. "
-                f"Cleared {hist_deleted} import-history record(s).",
-                "success",
-            )
+        flash(
+            f"Reset complete. No Cutovr-imported journal entries were found in QuickBooks; "
+            f"all local data cleared. Ready for a new run.",
+            "success",
+        )
     return redirect(url_for("migration_nexus"))
 
 

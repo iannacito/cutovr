@@ -20,6 +20,10 @@ from csv_decode import open_csv_text
 
 GL_REQUIRED_COLUMNS = ["transaction_id", "date", "account_number", "account_name", "debit", "credit"]
 
+# Marker written to every JE's PrivateNote so the reset button can identify
+# (and hard-delete) Cutovr-created entries independent of local job/history state.
+CUTOVR_JE_MARKER = "Imported from PCLaw via Cutovr"
+
 # Maps each pipeline column name to all known raw PCLaw header variants.
 # Keys are the normalized (lowercase alphanumeric) form of each synonym.
 _GL_PIPELINE_SYNONYMS: dict[str, tuple[str, ...]] = {
@@ -467,9 +471,7 @@ def build_journal_entry_payload(
         # idempotent: the import route probes QBO for this DocNumber before
         # posting and reuses any existing entry instead of double-posting.
         "DocNumber": idempotency_doc_number(transaction_id),
-        "PrivateNote": (
-            f"Imported from PCLaw via Cutovr | transaction_id={transaction_id}"
-        ),
+        "PrivateNote": f"{CUTOVR_JE_MARKER} | transaction_id={transaction_id}",
         "Line": lines,
     }
 
