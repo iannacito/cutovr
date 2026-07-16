@@ -414,19 +414,12 @@
     <p class="eyebrow" style="color:#2b5d28;">Related rows grouped safely</p>
     <h2>We found {{ preview.merged_groups|length }} group{% if preview.merged_groups|length != 1 %}s{% endif %}
       of PCLaw rows that balance together.</h2>
-    {% if preview.total_recoveries %}
+    {% if preview.total_recoveries and preview.total_recoveries.groups_found %}
     <p class="muted" data-testid="totrec-status" style="max-width:62ch;">
       Total Recoveries:
-      {% if preview.total_recoveries.groups_found %}
-        <strong>{{ preview.total_recoveries.groups_found }}</strong>
-        group{% if preview.total_recoveries.groups_found != 1 %}s{% endif %}
-        found and validated this run.
-      {% else %}
-        <strong>0 found</strong> this run
-        ({{ preview.total_recoveries.months_inspected }} month(s) inspected &mdash;
-        none matched the CER &ldquo;Total of Recoveries&rdquo; + &ldquo;Expense
-        Recovery&rdquo; + refund pattern that balances to the cent).
-      {% endif %}
+      <strong>{{ preview.total_recoveries.groups_found }}</strong>
+      group{% if preview.total_recoveries.groups_found != 1 %}s{% endif %}
+      found and validated this run.
     </p>
     {% endif %}
     <p class="muted" style="max-width:62ch;">
@@ -451,7 +444,15 @@
         <tbody>
           {% for g in preview.merged_groups %}
           <tr>
-            <td><code>{{ g.token }}</code></td>
+            <td>
+              {% if g.is_total_recoveries %}
+                <span data-testid="totrec-badge"
+                      style="background:#2b5d28;color:#fff;padding:2px 8px;border-radius:10px;font-size:.8rem;white-space:nowrap;">Total Recoveries</span>
+                {% if g.month_key %}<span class="muted" style="margin-left:6px;">{{ g.month_key }}</span>{% endif %}
+              {% else %}
+                <code>{{ g.token }}</code>
+              {% endif %}
+            </td>
             <td>{{ g.transaction_ids|join(', ') }}</td>
             <td>{{ g.line_count }}</td>
             <td>{{ g.debits }}</td>

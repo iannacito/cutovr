@@ -182,6 +182,8 @@ def build_dry_run_preview(
                 "rows": list(grp.get("rows", [])),
                 "debits": f"{grp.get('debits') or 0:.2f}",
                 "credits": f"{grp.get('credits') or 0:.2f}",
+                "is_total_recoveries": True,
+                "month_key": grp.get("month_key", ""),
             })
 
     for txn_id, txn_rows in grouped.items():
@@ -296,6 +298,8 @@ def build_dry_run_preview(
             "line_count": len(g["rows"]),
             "debits": g["debits"],
             "credits": g["credits"],
+            "is_total_recoveries": g.get("is_total_recoveries", False),
+            "month_key": g.get("month_key", ""),
         }
         for g in (posting_plan.get("merged_groups") or [])
     ]
