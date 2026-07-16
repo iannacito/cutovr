@@ -379,13 +379,14 @@ def find_unmapped_accounts(rows, account_mapping, mapping_mode):
 
 
 def idempotency_doc_number(transaction_id: str) -> str:
-    """Return a stable, QBO-valid (numeric-only, <=21 char) DocNumber.
+    """Return a stable, deterministic DocNumber (numeric, <=21 char).
 
-    Plain PCLaw transaction_ids are already digit-only, so this is a no-op
-    for the common case. Merged GROUP-<token>-<ids> transaction_ids (see
-    gl_grouping.py) contain letters — strip those so the result actually
-    matches QBO's documented ^\d{1,21}$ DocNumber format instead of
-    silently including them.
+    QBO's DocNumber is a free String field (max 21 chars), not numeric-only.
+    This function normalizes PCLaw ids by stripping non-digit characters for
+    internal consistency when a friendly override is not provided. Plain
+    PCLaw transaction_ids are already digit-only, so this is a no-op for the
+    common case. Merged GROUP-<token>-<ids> ids contain letters — this strips
+    them for the fallback path.
     """
     ref = str(transaction_id or "").strip()
     digits_only = "".join(ch for ch in ref if ch.isdigit())
@@ -394,13 +395,34 @@ def idempotency_doc_number(transaction_id: str) -> str:
 
 def build_journal_entry_payload(
     transaction_id, rows, account_mapping, mapping_mode="number",
-    account_type_index=None, account_name_index=None,
+    account_type_index=None, account_name_index=None, doc_number_override=None,
 ):
     validate_transaction_group(transaction_id, rows)
     first_row = rows[0]
     lines = []
     account_type_index = account_type_index or {}
     account_name_index = account_name_index or {}
+
+    # A JE is "grouped" if it folds >1 distinct original PCLaw transaction id
+    # (TotRec token JE, or a source-journal GROUP JE). Non-grouped JEs post 1:1.
+    _orig_ids = {
+        (r.get("_original_txn_id") or r.get("transaction_id") or "").strip()
+        for r in rows
+    }
+    _orig_ids.discard("")
+    is_grouped = (
+        len(_orig_ids) > 1
+        or str(transaction_id).startswith("GROUP-")
+        or str(transaction_id).endswith("TotRec")
+    )
+
+    def _row_reference(r):
+        # Fast-path files keep the raw header "reference number"; be defensive.
+        for k in ("reference number", "reference", "ref no", "ref_no"):
+            v = (r.get(k) or "").strip()
+            if v:
+                return v
+        return ""
 
     for row in rows:
         debit = money(row["debit"])
@@ -426,7 +448,16 @@ def build_journal_entry_payload(
                 f"(transaction {transaction_id})."
             )
 
-        description = row.get("description") or f"PCLaw import {transaction_id}"
+        base = row.get("description") or f"PCLaw import {transaction_id}"
+        ref = _row_reference(row)
+        parts = [base]
+        if ref:
+            parts.append(f"Ref: {ref}")
+        if is_grouped:
+            trans = (row.get("_original_txn_id") or row.get("transaction_id") or "").strip()
+            if trans:
+                parts.append(f"Trans ID: {trans}")
+        description = " | ".join(parts)
         line = {
             "Description": description[:4000],
             "Amount": float(amount),
@@ -470,7 +501,7 @@ def build_journal_entry_payload(
         # Deterministic DocNumber makes a retry after a lost response
         # idempotent: the import route probes QBO for this DocNumber before
         # posting and reuses any existing entry instead of double-posting.
-        "DocNumber": idempotency_doc_number(transaction_id),
+        "DocNumber": (doc_number_override or idempotency_doc_number(transaction_id)),
         "PrivateNote": f"{CUTOVR_JE_MARKER} | transaction_id={transaction_id}",
         "Line": lines,
     }
@@ -497,6 +528,42 @@ def plan_balanced_payloads(rows, account_mapping, mapping_mode="number", account
 
     grouped = group_rows_by_transaction(rows)
     plan = plan_posting_groups(grouped)
+
+    # Helper functions for friendly DocNumbers on grouped entries.
+    def _is_payroll_group(group_rows):
+        refs = []
+        for r in group_rows:
+            for k in ("reference number", "reference", "ref no", "ref_no"):
+                v = (r.get(k) or "").strip()
+                if v:
+                    refs.append(v.lower())
+                    break
+        if not refs:
+            return False
+        return sum(1 for x in refs if x == "payroll") / len(refs) >= 0.70
+
+    def _iso_month(group_rows):
+        # reuse the same date parser the payload uses; first parseable row wins
+        from gl_row_quality import parse_gl_date
+        for r in group_rows:
+            iso = parse_gl_date(r.get("date"))
+            if iso:
+                return iso[:7]  # "YYYY-MM"
+        return ""
+
+    payroll_counts: dict[str, int] = {}   # month -> how many payroll groups so far
+
+    def _friendly_doc_number(transaction_id, group_rows):
+        tid = str(transaction_id)
+        if tid.endswith("TotRec"):                        # "YYYY-MMTotRec"
+            month = tid[:7]
+            return f"{month}TotalExpRecovr"               # 21 chars exactly
+        if tid.startswith("GROUP-") and _is_payroll_group(group_rows):
+            month = _iso_month(group_rows) or "0000-00"
+            n = payroll_counts.get(month, 0) + 1
+            payroll_counts[month] = n
+            return f"{month} Payroll" if n == 1 else f"{month} Payroll_{n}"
+        return None   # fall back to numeric idempotency_doc_number
 
     if plan["still_blocked"]:
         # Last-line safety net: the validator should have refused to
@@ -534,6 +601,7 @@ def plan_balanced_payloads(rows, account_mapping, mapping_mode="number", account
                 mapping_mode=mapping_mode,
                 account_type_index=account_type_index,
                 account_name_index=account_name_index,
+                doc_number_override=_friendly_doc_number(transaction_id, transaction_rows),
             )
         )
         posted_ids.append(transaction_id)
@@ -546,6 +614,7 @@ def plan_balanced_payloads(rows, account_mapping, mapping_mode="number", account
                 mapping_mode=mapping_mode,
                 account_type_index=account_type_index,
                 account_name_index=account_name_index,
+                doc_number_override=_friendly_doc_number(group["group_id"], group["rows"]),
             )
         )
         posted_ids.append(group["group_id"])
