@@ -9799,24 +9799,23 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
         grouped_for_tot_rec = group_rows_by_transaction(rows)
         tot_rec_groups = plan_total_recoveries_group(grouped_for_tot_rec)
 
-        # Build a mapping of original transaction_id -> shared token for Total Recoveries rows
-        tot_rec_txn_to_token: dict[str, str] = {}
-        tot_rec_all_txn_ids: set[str] = set()
+        # Stamp the shared token onto EVERY row the detector grouped, matched by
+        # object identity — NOT by transaction_id. The "Total of Recoveries"
+        # adjustment row carries no transaction_id and no reference_number, so a
+        # txn_id lookup can never reach it; excluding it drops its balancing
+        # debit (e.g. 1,407.99) and the merged JE fails QBO's debit=credit check.
+        # group_rows_by_transaction() returns the same row objects, so mutating
+        # grp["rows"] mutates the dicts plan_balanced_payloads() reads below.
+        tot_rec_tokens: set[str] = set()
         for grp in tot_rec_groups:
             token = grp.get("token", "")
-            for txn_id in grp.get("transaction_ids", []):
-                tot_rec_txn_to_token[txn_id] = token
-                tot_rec_all_txn_ids.add(txn_id)
-
-        # Rewrite transaction_id for Total Recoveries rows so they group together naturally
-        for row in rows:
-            old_txn_id = (row.get("transaction_id") or row.get("reference_number") or "").strip()
-            if old_txn_id in tot_rec_txn_to_token:
-                # Store original txn_id in a new field for traceability
+            if not token:
+                continue
+            tot_rec_tokens.add(token)
+            for row in grp.get("rows", []):
                 if "_original_txn_id" not in row:
-                    row["_original_txn_id"] = old_txn_id
-                # Rewrite to shared token so payloads naturally group them
-                row["transaction_id"] = tot_rec_txn_to_token[old_txn_id]
+                    row["_original_txn_id"] = row.get("transaction_id", "")
+                row["transaction_id"] = token
 
         payloads, posted_ids = plan_balanced_payloads(
             rows, mapping, mapping_mode=mapping_mode, account_type_index=type_index, account_name_index=name_index

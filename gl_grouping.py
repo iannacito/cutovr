@@ -711,6 +711,27 @@ def plan_total_recoveries_group(
                 })
             continue
 
+        # Belt-and-suspenders: the rows we actually post as one JE must balance
+        # to the cent, independent of the net-recovery formula above. If not,
+        # do NOT group — let auto_balance_by_token_group handle these rows the
+        # way it did before Total Recoveries existed (fail safe, never abort).
+        if round(debits, 2) != round(credits, 2):
+            result = "je_unbalanced"
+            if diag_sink is not None:
+                diag_sink.append({
+                    "month_key": month_key,
+                    "found_total_of_recoveries_row": True,
+                    "expense_recovery_line_count": len(exp_rec_rows),
+                    "refund_row_count": len(refund_rows),
+                    "total_of_recoveries_debit": f"{tot_rec_debit:.2f}",
+                    "expense_recovery_credits": f"{exp_rec_credits:.2f}",
+                    "expected_credits": f"{expected_credits:.2f}",
+                    "balance_delta": f"{(debits - credits):.2f}",
+                    "result": result,
+                    "token": None,
+                })
+            continue
+
         # The group balances exactly. Collect unique transaction IDs from all rows.
         transaction_ids: set[str] = set()
         for r in group_rows:
