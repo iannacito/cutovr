@@ -161,6 +161,27 @@ def build_dry_run_preview(
     }
     rescued_set = set(posting_plan.get("rescued_transaction_ids") or [])
 
+    # Total Recoveries grouping: fold validated CER "Expense Recovery" + GB "Refund"
+    # groups into the legitimate merged_groups list, making them appear in the
+    # "Related rows grouped safely" card with the real token and folded PCLaw refs.
+    # See 2026-07-15_totalrec_overpowered_by_old_autobalance.md (REVISED section).
+    if grouped:
+        from gl_grouping import plan_total_recoveries_group
+        tot_rec_groups = plan_total_recoveries_group(grouped)
+        for grp in tot_rec_groups:
+            # Add all transaction_ids from this TotalRec group to rescued_set
+            for txn_id in grp.get("transaction_ids", []):
+                rescued_set.add(txn_id)
+            # Reformat to match merged_groups shape and append
+            posting_plan["merged_groups"].append({
+                "group_id": grp.get("token", ""),
+                "token": grp.get("token", ""),
+                "transaction_ids": list(grp.get("transaction_ids", [])),
+                "line_count": len(grp.get("rows", [])),
+                "debits": f"{grp.get('debits') or '0.00':.2f}",
+                "credits": f"{grp.get('credits') or '0.00':.2f}",
+            })
+
     for txn_id, txn_rows in grouped.items():
         txn_debits = sum(money(r["debit"]) for r in txn_rows)
         txn_credits = sum(money(r["credit"]) for r in txn_rows)
