@@ -14524,6 +14524,15 @@ def _run_pass2_entity_linking(job, job_id, qbo, user, qbo_conn, account_type_ind
     for row in db.list_entity_map(user["firm_id"], qbo_conn["realm_id"]):
         persisted[(row["kind"], row["normalized_name"])] = row["qbo_entity_id"]
 
+    # Run-scoped de-dupe: the same Vendor/Customer name commonly recurs
+    # across many JE lines in one GL batch. _find_or_create_entity's
+    # cache-hit path now does a live QBO GET (and sometimes a reactivate
+    # POST) per call to verify the cached entity is still Active — correct
+    # per name, but wasteful if repeated for every occurrence of the same
+    # name in this run. Resolve each unique (kind, normalized name) once
+    # per Pass 2 run and reuse the result for every other line referencing it.
+    resolved_this_run: dict = {}
+
     failed_links = []
     linked_count = 0
 
@@ -14570,12 +14579,22 @@ def _run_pass2_entity_linking(job, job_id, qbo, user, qbo_conn, account_type_ind
                 })
                 continue
 
-            # Find/create the entity and get its ID
-            entity_id = _find_or_create_entity(
-                qbo, kind, name, persisted, created,
-                firm_id=user["firm_id"],
-                realm_id=qbo_conn["realm_id"],
-            )
+            # Find/create the entity and get its ID — reuse this run's
+            # own resolution if we've already handled this exact name,
+            # instead of re-verifying the same entity's Active status
+            # again via a fresh QBO call.
+            _run_cache_key = (kind, entity_resolution._normalize_name(
+                _sanitize_qbo_display_name(name)
+            ))
+            if _run_cache_key in resolved_this_run:
+                entity_id = resolved_this_run[_run_cache_key]
+            else:
+                entity_id = _find_or_create_entity(
+                    qbo, kind, name, persisted, created,
+                    firm_id=user["firm_id"],
+                    realm_id=qbo_conn["realm_id"],
+                )
+                resolved_this_run[_run_cache_key] = entity_id
 
             if not entity_id:
                 failed_links.append({
