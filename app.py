@@ -1014,6 +1014,15 @@ def _get_qbo_client_for_connection(qbo_conn, user):
     return qbo, qbo_conn
 
 
+def _is_inactive_ref_error(e) -> bool:
+    """True if a QBOError is QBO's 'referenced object inactive/not found' (code 610)."""
+    body = str(getattr(e, "body", "") or "")
+    if '"code":"610"' in body or '"code": "610"' in body or "code=610" in body or ">610<" in body:
+        return True
+    msg = str(e).lower()
+    return "610" in msg or "inactive" in msg
+
+
 def _redact_email_for_audit(email: str) -> str:
     """Return a privacy-preserving rendering of an email for audit logs.
 
@@ -14500,7 +14509,7 @@ def revert_import(job_id):
                 je_id, result.get("DocNumber"), job_id,
             )
         except QBOError as e:  # noqa: BLE001
-            if e.is_inactive_ref:
+            if _is_inactive_ref_error(e):
                 inactive_count += 1
                 _log = logging.getLogger("app")
                 _log.warning(
