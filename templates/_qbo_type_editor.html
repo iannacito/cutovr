@@ -1,0 +1,333 @@
+{# Reusable QBO Account Type / Sub-Type Editor Partial
+
+   Usage:
+   {% set unmatched_rows = rows | selectattr('creatable') | list %}
+   {% set editor_rows = unmatched_rows %}
+   {% include "_qbo_type_editor.html" %}
+
+   Required context variables:
+   - editor_rows: list of account rows with at least:
+     - idx or loop.index0 (unique identifier for form inputs)
+     - account_name or pclaw_name (display name)
+     - [optional] account_type_value (current selected type)
+     - [optional] detail_type_value (current selected sub-type)
+   - coa_override_account_types: list of available QBO account types
+
+   Optional context variables:
+   - form_id_template: template string for form binding, e.g. 'add-form-{idx}' (optional)
+                       If provided, selects will have form="form_id_template.format(idx=row.idx)"
+   - hide_bulk_bar: boolean to hide bulk bar and checkboxes (optional, defaults to false)
+
+   This partial includes:
+   - Per-row pair of selects for account type and sub-type
+   - Type → sub-type cascade using data-detail-target pattern
+   - Row checkboxes with "select all" functionality
+   - Bulk bar with type selector and "Apply to Selected" button
+   - Shared cascade JS that ties account_type select changes to sub-type population
+#}
+
+{# Bulk action bar - shows when rows are selected #}
+<div id="qbo-editor-bulk-bar"
+     class="qbo-editor-bulk-bar"
+     style="display:none;
+             align-items:center;
+             gap:var(--space-3);
+             padding:var(--space-3) var(--space-4);
+             margin-bottom:var(--space-3);
+             background:var(--bg-2,#fafafa);
+             border:1px solid var(--line);
+             border-radius:var(--radius,4px);
+             font-size:.875rem;">
+  <span id="qbo-editor-bulk-count" style="font-weight:600;min-width:6ch;"></span>
+  <select id="qbo-editor-bulk-type"
+          class="qbo-editor-bulk-type"
+          style="font-size:.82rem;max-width:18rem;">
+    <option value="">— choose type to apply —</option>
+    {% for at in coa_override_account_types %}
+      <option value="{{ at }}">{{ at }}</option>
+    {% endfor %}
+  </select>
+  <select id="qbo-editor-bulk-subtype"
+          class="qbo-editor-bulk-subtype"
+          style="font-size:.82rem;max-width:18rem;" disabled>
+    <option value="">— sub-type (optional) —</option>
+  </select>
+  <button type="button" id="qbo-editor-bulk-apply" class="btn btn-sm btn-primary">
+    Apply to Selected
+  </button>
+</div>
+
+{# Table of rows with type/subtype selects #}
+<div class="qbo-editor-table-wrap" style="overflow-x:auto;">
+  <table class="qbo-editor-table"
+         style="width:100%;
+                 border-collapse:collapse;
+                 background:var(--surface,#fff);
+                 border:1px solid var(--line);
+                 border-radius:var(--radius,4px);
+                 overflow:hidden;">
+    <thead>
+      <tr style="background:var(--bg-2,#fafafa);border-bottom:1px solid var(--line);">
+        <th style="text-align:left;
+                   padding:var(--space-3,0.75rem) var(--space-4,1rem);
+                   font-size:.72rem;
+                   font-weight:600;
+                   text-transform:uppercase;
+                   letter-spacing:.06em;
+                   color:var(--ink-muted,#6b7280);
+                   width:7%;">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="checkbox" id="qbo-editor-check-all" style="cursor:pointer;">
+          </label>
+        </th>
+        <th style="text-align:left;
+                   padding:var(--space-3,0.75rem) var(--space-4,1rem);
+                   font-size:.72rem;
+                   font-weight:600;
+                   text-transform:uppercase;
+                   letter-spacing:.06em;
+                   color:var(--ink-muted,#6b7280);">
+          Account
+        </th>
+        <th style="text-align:left;
+                   padding:var(--space-3,0.75rem) var(--space-4,1rem);
+                   font-size:.72rem;
+                   font-weight:600;
+                   text-transform:uppercase;
+                   letter-spacing:.06em;
+                   color:var(--ink-muted,#6b7280);
+                   width:24%;">
+          QBO Account Type
+        </th>
+        <th style="text-align:left;
+                   padding:var(--space-3,0.75rem) var(--space-4,1rem);
+                   font-size:.72rem;
+                   font-weight:600;
+                   text-transform:uppercase;
+                   letter-spacing:.06em;
+                   color:var(--ink-muted,#6b7280);
+                   width:22%;">
+          QBO Sub-Type
+        </th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in editor_rows %}
+      <tr style="border-bottom:1px solid var(--line);">
+        <td style="padding:var(--space-3,0.75rem) var(--space-4,1rem);
+                   vertical-align:middle;
+                   font-size:.875rem;">
+          <input type="checkbox" class="qbo-editor-row-check" style="cursor:pointer;">
+          {# Hidden inputs for form submission (preserve account identifiers) #}
+          {% if r.pclaw_number %}
+            <input type="hidden" name="gl_number" value="{{ r.pclaw_number }}">
+          {% endif %}
+          {% if r.account_name %}
+            <input type="hidden" name="account_name" value="{{ r.account_name }}">
+          {% endif %}
+        </td>
+        <td style="padding:var(--space-3,0.75rem) var(--space-4,1rem);
+                   vertical-align:middle;
+                   font-size:.875rem;">
+          <div style="font-weight:600;">
+            {% if r.pclaw_number %}
+              <code style="font-family:monospace;font-size:.8rem;">{{ r.pclaw_number }}</code>
+              &middot;
+            {% endif %}
+            {{ r.account_name or r.pclaw_name or '(no name)' }}
+          </div>
+          {% if r.raw_names and r.raw_names|length > 1 %}
+            <div style="font-size:.78rem;color:var(--ink-muted,#6b7280);margin-top:2px;">
+              {{ r.raw_names|length }} variant(s):
+              {% for rn in r.raw_names %}
+                {% if rn != (r.account_name or r.pclaw_name) %}
+                  &ldquo;{{ rn }}&rdquo;{% if not loop.last %},{% endif %}
+                {% endif %}
+              {% endfor %}
+            </div>
+          {% endif %}
+        </td>
+        <td style="padding:var(--space-3,0.75rem) var(--space-4,1rem);
+                   vertical-align:middle;">
+          <select class="qbo-editor-type-select"
+                  id="qbo-editor-type-{{ r.idx or loop.index0 }}"
+                  name="account_type"
+                  data-detail-target="qbo-editor-sub-{{ r.idx or loop.index0 }}"
+                  {% if form_id_template %}form="{{ form_id_template|format(idx=r.idx or loop.index0) }}"{% endif %}
+                  style="width:100%;
+                          max-width:16rem;
+                          font-size:.82rem;
+                          padding:.4rem;
+                          border:1px solid var(--line);
+                          border-radius:var(--radius,4px);">
+            <option value="">&mdash; auto-match &mdash;</option>
+            {% for at in coa_override_account_types %}
+              <option value="{{ at }}"
+                      {% if r.account_type_value == at %}selected{% endif %}>
+                {{ at }}
+              </option>
+            {% endfor %}
+          </select>
+        </td>
+        <td style="padding:var(--space-3,0.75rem) var(--space-4,1rem);
+                   vertical-align:middle;">
+          <select id="qbo-editor-sub-{{ r.idx or loop.index0 }}"
+                  class="qbo-editor-sub-select"
+                  name="detail_type"
+                  {% if form_id_template %}form="{{ form_id_template|format(idx=r.idx or loop.index0) }}"{% endif %}
+                  style="width:100%;
+                          max-width:16rem;
+                          font-size:.82rem;
+                          padding:.4rem;
+                          border:1px solid var(--line);
+                          border-radius:var(--radius,4px);"
+                  disabled>
+            <option value="">&mdash; default &mdash;</option>
+          </select>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script nonce="{{ csp_nonce() }}">
+(function () {
+  'use strict';
+
+  {# Cascade mapping: account type -> available sub-types
+     NOTE: This is duplicated in the consuming template's scripts for compatibility.
+     The template's main cascade script will handle all account_type selects. #}
+  var ACCT_DETAIL_TYPES = {
+    "Bank": ["Checking","Savings","MoneyMarket","CashOnHand","TrustAccounts"],
+    "Accounts Receivable": ["AccountsReceivable"],
+    "Other Current Asset": ["AllowanceForBadDebts","DevelopmentCosts","EmployeeCashAdvances","OtherCurrentAssets","PrepaidExpenses","Retainage","UndepositedFunds"],
+    "Fixed Asset": ["AccumulatedDepreciation","Buildings","DepletableAssets","FurnitureAndFixtures","Land","LeaseholdImprovements","MachineryAndEquipment","OtherFixedAssets","Vehicles"],
+    "Other Asset": ["LeaseBuyout","OtherLongTermAssets","SecurityDeposits"],
+    "Accounts Payable": ["AccountsPayable"],
+    "Credit Card": ["CreditCard"],
+    "Other Current Liability": ["DirectDepositPayable","InsurancePayable","LineOfCredit","LoanPayable","OtherCurrentLiabilities","PayrollClearing","SalesTaxPayable","TrustAccountsLiabilities"],
+    "Long Term Liability": ["NotesPayable","OtherLongTermLiabilities"],
+    "Equity": ["AccumulatedAdjustment","CommonStock","EstimatedTaxes","HealthInsurancePremium","HealthSavingsAccountContribution","OpeningBalanceEquity","OwnersEquity","PaidInCapitalOrSurplus","PartnerContributions","PartnerDistributions","PartnerEquity","PersonalExpense","PersonalIncome","PreferredStock","RetainedEarnings"],
+    "Income": ["NonProfitIncome","OtherPrimaryIncome","SalesOfProductIncome","ServiceFeeIncome","UnappliedCashPaymentIncome"],
+    "Other Income": ["DividendIncome","InterestEarned","OtherInvestmentIncome","OtherMiscellaneousIncome","TaxExemptInterest"],
+    "Cost of Goods Sold": ["CostOfLabor","EquipmentRentalCOGS","GoodsCostOfGoodsSold","OtherCostsOfServicesCOGS","ShippingFreightAndDeliveryCogs"],
+    "Expense": ["AdvertisingPromotional","BadDebts","BankCharges","CommissionsAndFees","Entertainment","EntertainmentMeals","EquipmentRental","FilingFees","Insurance","InterestPaid","LegalProfessionalFees","Meals","OfficeExpenses","OtherBusinessExpenses","PenaltiesAndSettlements","Rent","RepairMaintenance","ShippingFreightAndDelivery","Supplies","Taxes","Travel","TravelMeals","Utilities"],
+    "Other Expense": ["Depreciation","ExchangeGainOrLoss","OtherMiscellaneousExpense","PenaltyForEarlyWithdrawal"]
+  };
+
+  function populateSubTypes(typeSelect) {
+    var targetId = typeSelect.getAttribute('data-detail-target');
+    if (!targetId) return;
+    var subSelect = document.getElementById(targetId);
+    if (!subSelect) return;
+    var chosen = typeSelect.value;
+    var options = ACCT_DETAIL_TYPES[chosen] || [];
+    subSelect.innerHTML = '<option value="">— default —</option>';
+    options.forEach(function (subtype) {
+      var opt = document.createElement('option');
+      opt.value = subtype;
+      opt.textContent = subtype.replace(/([A-Z])/g, ' $1').trim();
+      subSelect.appendChild(opt);
+    });
+    subSelect.disabled = options.length === 0;
+  }
+
+  {# Bulk type selector cascading to bulk sub-type selector #}
+  var bulkTypeSelect = document.getElementById('qbo-editor-bulk-type');
+  var bulkSubTypeSelect = document.getElementById('qbo-editor-bulk-subtype');
+  if (bulkTypeSelect) {
+    bulkTypeSelect.addEventListener('change', function () {
+      var chosen = bulkTypeSelect.value;
+      var options = ACCT_DETAIL_TYPES[chosen] || [];
+      bulkSubTypeSelect.innerHTML = '<option value="">— sub-type (optional) —</option>';
+      options.forEach(function (subtype) {
+        var opt = document.createElement('option');
+        opt.value = subtype;
+        opt.textContent = subtype.replace(/([A-Z])/g, ' $1').trim();
+        bulkSubTypeSelect.appendChild(opt);
+      });
+      bulkSubTypeSelect.disabled = options.length === 0;
+    });
+  }
+
+  {# ────────────────────────────────────────────────────────────────
+     Bulk checkbox selection and apply logic
+     ──────────────────────────────────────────────────────────────── #}
+
+  var checkAllBox = document.getElementById('qbo-editor-check-all');
+  var bulkBar = document.getElementById('qbo-editor-bulk-bar');
+  var bulkCount = document.getElementById('qbo-editor-bulk-count');
+  var bulkApplyBtn = document.getElementById('qbo-editor-bulk-apply');
+
+  function getRowCheckboxes() {
+    return Array.from(document.querySelectorAll('.qbo-editor-row-check'));
+  }
+
+  function getCheckedRows() {
+    return getRowCheckboxes().filter(function (cb) { return cb.checked; });
+  }
+
+  function updateBulkBar() {
+    var checked = getCheckedRows();
+    if (bulkBar) {
+      bulkBar.style.display = checked.length > 0 ? 'flex' : 'none';
+    }
+    if (bulkCount) {
+      bulkCount.textContent = checked.length + ' selected';
+    }
+    if (checkAllBox) {
+      var allChecks = getRowCheckboxes();
+      checkAllBox.indeterminate = checked.length > 0 && checked.length < allChecks.length;
+    }
+  }
+
+  if (checkAllBox) {
+    checkAllBox.addEventListener('change', function () {
+      getRowCheckboxes().forEach(function (cb) {
+        cb.checked = checkAllBox.checked;
+      });
+      updateBulkBar();
+    });
+  }
+
+  document.addEventListener('change', function (e) {
+    if (e.target && e.target.classList.contains('qbo-editor-row-check')) {
+      updateBulkBar();
+    }
+  });
+
+  if (bulkApplyBtn) {
+    bulkApplyBtn.addEventListener('click', function () {
+      var chosenType = bulkTypeSelect ? bulkTypeSelect.value : '';
+      var chosenSubType = bulkSubTypeSelect ? bulkSubTypeSelect.value : '';
+
+      if (!chosenType) {
+        alert('Choose a QBO Account Type first.');
+        return;
+      }
+
+      getCheckedRows().forEach(function (checkbox) {
+        var tr = checkbox.closest('tr');
+        if (!tr) return;
+
+        var typeSelect = tr.querySelector('select[name="account_type"]');
+        if (typeSelect) {
+          typeSelect.value = chosenType;
+          populateSubTypes(typeSelect);
+
+          if (chosenSubType) {
+            var subId = typeSelect.getAttribute('data-detail-target');
+            if (subId) {
+              var subSelect = document.getElementById(subId);
+              if (subSelect) {
+                subSelect.value = chosenSubType;
+              }
+            }
+          }
+        }
+      });
+    });
+  }
+}());
+</script>

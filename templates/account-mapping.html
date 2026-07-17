@@ -244,6 +244,20 @@
         ask you to upload your account list first.
       {% endif %}
     </p>
+
+    {% set unmatched_rows = rows | selectattr('creatable') | list %}
+    {% if unmatched_rows %}
+    <div style="margin:var(--space-4) 0;">
+      <h3 style="margin:0 0 var(--space-3);font-size:.95rem;">Assign account types (optional)</h3>
+      <p style="margin:0 0 var(--space-3);font-size:.85rem;color:var(--muted);">
+        Choose a QBO account type for each account below, or leave blank to auto-assign.
+      </p>
+      {% set editor_rows = unmatched_rows %}
+      {% set form_id_template = 'add-form-{idx}' %}
+      {% include "_qbo_type_editor.html" %}
+    </div>
+    {% endif %}
+
     <div class="actions-row" style="margin-top:var(--space-4);gap:var(--space-3);">
       <form method="post"
             action="{{ url_for('account_mapping_create_missing', job_id=job.id) }}"
