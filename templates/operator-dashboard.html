@@ -29,6 +29,19 @@
        data-testid="operator-intake-link-btn">View intake submissions</a>
   </section>
 
+  <section class="card" data-testid="operator-clio-accounting-link">
+    <p class="eyebrow">Internal &middot; Back-pocket</p>
+    <h2>Clio Accounting API readiness</h2>
+    <p class="muted" style="max-width:64ch;">
+      Internal-only foundation for the future Clio Accounting migration
+      service. Shows the assumed API capability matrix, the disabled-by-default
+      adapter configuration, and the two per-lane data-flow plans. Readiness /
+      dry-run until Clio opens production API access — nothing posts.
+    </p>
+    <a class="btn btn-secondary" href="{{ url_for('operator_clio_accounting') }}"
+       data-testid="operator-clio-accounting-link-btn">View Clio Accounting readiness</a>
+  </section>
+
   <section class="card" data-testid="operator-retention">
     <p class="eyebrow">Data retention</p>
     <h2>Cleanup</h2>

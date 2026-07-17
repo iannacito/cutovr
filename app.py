@@ -13034,6 +13034,36 @@ def operator_dashboard():
     )
 
 
+@app.route("/operator/clio-accounting")
+@operator_required
+def operator_clio_accounting():
+    """INTERNAL operator readiness view for the future Clio Accounting API v1.
+
+    Read-only, operator-gated, and never linked from any public surface. Shows
+    the assumed capability matrix (per endpoint family), the adapter's current
+    live/dry-run configuration (secret-free — never the token), and the two
+    per-lane data-flow plans with each step's Clio-side status.
+
+    This makes it obvious internally that Cutovr is in readiness/dry-run until
+    Clio opens production API access. It renders no action that could post to
+    Clio or QuickBooks.
+    """
+    import clio_accounting_capabilities as clio_caps
+    import clio_accounting_lanes as clio_lanes
+    import clio_accounting_payloads as clio_payloads
+
+    adapter = clio_accounting.get_adapter()
+    return render_template(
+        "operator-clio-accounting.html",
+        registry=clio_caps.registry_snapshot(),
+        adapter_config=adapter.config_summary(),
+        integration_status=clio_accounting.integration_status().to_dict(),
+        lane_plans=clio_lanes.all_plans(),
+        idempotency_header=clio_accounting.IDEMPOTENCY_HEADER,
+        payload_schema_version=clio_payloads.PAYLOAD_SCHEMA_VERSION,
+    )
+
+
 @app.route("/operator/firm/<int:firm_id>")
 @operator_required
 def operator_firm_detail(firm_id):
