@@ -1,0 +1,107 @@
+{% extends "_base.html" %}
+{% block title %}Clio Accounting readiness &mdash; Operator{% endblock %}
+{% block head_extra %}<meta name="robots" content="noindex,nofollow">{% endblock %}
+{% block content %}
+<section class="page">
+  <div class="hero">
+    <p class="eyebrow">Internal &middot; Operator view &middot; Back-pocket</p>
+    <h1>Clio Accounting <em>API readiness</em>.</h1>
+    <p style="max-width:72ch;">
+      Internal-only foundation for the future Clio Accounting migration service.
+      Cutovr is in <strong>readiness / dry-run</strong> mode until Clio opens
+      production API access. Nothing on this page posts to Clio or QuickBooks.
+      Statuses below are <strong>assumed from the internal roadmap</strong> — not
+      official developer-portal docs.
+    </p>
+  </div>
+
+  <section class="card" data-testid="clio-adapter-config">
+    <p class="eyebrow">Adapter</p>
+    <h2>Live-mode configuration</h2>
+    <ul class="stack-sm">
+      <li>Mode: <code data-testid="clio-adapter-mode">{{ adapter_config.mode }}</code></li>
+      <li>API enabled flag: <code>{{ adapter_config.enabled }}</code></li>
+      <li>Base URL configured: <code>{{ adapter_config.base_url_configured }}</code></li>
+      <li>Token configured: <code>{{ adapter_config.token_configured }}</code> (never displayed)</li>
+      <li>Live writes allowed: <code>{{ adapter_config.live_writes_allowed }}</code></li>
+      <li>Idempotency header: <code>{{ idempotency_header }}</code></li>
+      <li>Payload schema version: <code>{{ payload_schema_version }}</code></li>
+    </ul>
+    <p class="muted" style="max-width:64ch;">
+      Operator note: {{ integration_status.operator_message }}
+    </p>
+  </section>
+
+  <section class="card" data-testid="clio-capability-matrix">
+    <p class="eyebrow">Capability matrix &middot; assumed from roadmap</p>
+    <h2>Endpoint families</h2>
+    <p class="muted">
+      Docs published: <code>{{ registry.docs_published }}</code> &middot;
+      Phase-1 go-live target: <code>{{ registry.phase_1_go_live_target }}</code> &middot;
+      Pagination max: <code>{{ registry.max_page_size }}</code>
+    </p>
+    {% for fam in registry.families %}
+    <div class="table-wrap" style="margin-top:1rem;">
+      <h3 style="margin:0 0 .25rem;">{{ fam.label }}</h3>
+      <table>
+        <thead><tr><th>Operation</th><th>Assumed status</th><th>Write</th><th>Note</th></tr></thead>
+        <tbody>
+          {% for cap in fam.capabilities %}
+          <tr>
+            <td><code>{{ cap.operation }}</code></td>
+            <td><code>{{ cap.status }}</code></td>
+            <td>{{ 'yes' if cap.write else 'no' }}</td>
+            <td class="muted">{{ cap.note }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endfor %}
+  </section>
+
+  <section class="card" data-testid="clio-platform-notes">
+    <p class="eyebrow">Platform hardening</p>
+    <h2>Foundational enhancements</h2>
+    <ul class="stack-sm">
+      {% for note in registry.platform_notes %}
+      <li><strong>{{ note.label }}</strong> — <code>{{ note.status }}</code>: {{ note.note }}</li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  {% for plan in lane_plans %}
+  <section class="card" data-testid="clio-lane-plan">
+    <p class="eyebrow">Data-flow plan</p>
+    <h2>{{ plan.lane_label }}</h2>
+    <p class="muted">
+      Posts to QuickBooks: <code>{{ plan.uses_qbo_posting }}</code> &middot;
+      Steps: {{ plan.step_count }} &middot;
+      Ready: {{ plan.ready_count }} &middot;
+      Blocked on Clio: {{ plan.blocked_count }}
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Step</th><th>Source</th><th>Clio capability</th><th>Status</th></tr></thead>
+        <tbody>
+          {% for step in plan.steps %}
+          <tr>
+            <td>{{ step.label }}</td>
+            <td class="muted">{{ step.source_artifact }}</td>
+            <td><code>{{ step.capability }}</code></td>
+            <td>
+              {% if step.blocked_on_clio %}
+                <code>blocked</code> <span class="muted">— {{ step.blocked_reason }}</span>
+              {% else %}
+                <code>{{ step.capability_status }}</code>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endfor %}
+</section>
+{% endblock %}
