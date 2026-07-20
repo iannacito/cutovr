@@ -751,6 +751,7 @@ def parse_vendor_list(path) -> tuple[list[dict], list[str], list[str]]:
     for the people a firm pays. A vendor row needs at minimum a name; an id,
     contact details, and a default expense account are kept when present so
     GL posting can match cheque payees to the right QuickBooks vendor.
+    Captures ven_no, fax, default GL category, and terms for vendor details push.
     """
     rows, fieldnames = _open_csv(path)
     idx = _index_headers(fieldnames)
@@ -776,33 +777,53 @@ def parse_vendor_list(path) -> tuple[list[dict], list[str], list[str]]:
             continue
 
         if is_pclaw_vendor:
-            # PCLaw positional columns: C=phone, D=street, F=city, G=state, H=zip, I=email
+            # PCLaw positional columns:
+            # A=ven_no, C=phone, D=street, E=fax, F=city, G=state, H=zip, I=email,
+            # P=default_gl_number, Q=default_gl_name, S=default_explanation, T=terms
             vals = list(row.values())
+            ven_no  = vals[0].strip() if len(vals) > 0 else ""
             phone   = vals[2].strip() if len(vals) > 2 else ""
+            fax     = vals[4].strip() if len(vals) > 4 else ""
             street  = vals[3].strip() if len(vals) > 3 else ""
             city    = vals[5].strip() if len(vals) > 5 else ""
             state   = vals[6].strip() if len(vals) > 6 else ""
             zip_    = vals[7].strip() if len(vals) > 7 else ""
             email   = vals[8].strip() if len(vals) > 8 else ""
             tax_id  = _pick(row, idx, "tax_id", "ACCOUNT") or ""
+            default_gl_number = vals[15].strip() if len(vals) > 15 else ""
+            default_gl_name = vals[16].strip() if len(vals) > 16 else ""
+            default_explanation = vals[18].strip() if len(vals) > 18 else ""
+            terms = vals[19].strip() if len(vals) > 19 else ""
         else:
+            ven_no  = _pick(row, idx, "ven_no", "vendor_id", "vendor_account") or ""
             phone   = _pick(row, idx, "phone", "phone_number", "telephone") or ""
+            fax     = _pick(row, idx, "fax", "fax_number") or ""
             street  = _pick(row, idx, "street", "address", "billing_street") or ""
             city    = _pick(row, idx, "city", "billing_city") or ""
             state   = _pick(row, idx, "state", "province", "billing_state") or ""
             zip_    = _pick(row, idx, "zip", "postal_code", "zip_code") or ""
             email   = _pick(row, idx, "email", "email_address") or ""
             tax_id  = _pick(row, idx, "tax_id", "gst_number", "business_number") or ""
+            default_gl_number = _pick(row, idx, "default_gl_number", "default_account") or ""
+            default_gl_name = _pick(row, idx, "default_gl_name", "default_account_name") or ""
+            default_explanation = _pick(row, idx, "default_explanation") or ""
+            terms = _pick(row, idx, "terms", "payment_terms") or ""
 
         normalized.append({
             "vendor_name": vendor_name,
+            "ven_no": ven_no,
             "phone": phone,
+            "fax": fax,
             "street": street,
             "city": city,
             "state": state,
             "zip": zip_,
             "email": email,
             "tax_id": tax_id,
+            "default_gl_number": default_gl_number,
+            "default_gl_name": default_gl_name,
+            "default_explanation": default_explanation,
+            "terms": terms,
         })
     return normalized, fieldnames, missing
 

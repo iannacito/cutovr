@@ -710,6 +710,62 @@ class QBOClient:
             return response.json().get("Vendor")
         return None
 
+    def update_vendor(self, payload):
+        """Sparse-update a QBO Vendor. Returns the parsed JSON response.
+
+        ``payload`` must include ``Id``, ``SyncToken``, ``sparse: True``,
+        and the fields to update (e.g., AcctNum, BillAddr, PrimaryPhone, etc).
+        """
+        url = f"{self.base_url}/v3/company/{self.realm_id}/vendor?minorversion=75"
+        response = requests.post(
+            url, headers=self._headers(), json=payload, timeout=30
+        )
+        tid = self._record_tid(response)
+        if response.status_code >= 400:
+            raise QBOError(
+                f"QBO returned {response.status_code} updating Vendor: {response.text}",
+                status_code=response.status_code,
+                body=response.text,
+                intuit_tid=tid,
+            )
+        return response.json()
+
+    def create_vendor_with_details(self, payload):
+        """Create a QBO Vendor with full details (or name-only fallback on 6240).
+
+        Similar to create_vendor but accepts a full payload dict with DisplayName,
+        phone, address, etc. On 6240 (duplicate name), falls back to find_vendor_by_name
+        and returns the existing vendor.
+        """
+        url = f"{self.base_url}/v3/company/{self.realm_id}/vendor?minorversion=75"
+        response = requests.post(
+            url, headers=self._headers(), json=payload, timeout=30
+        )
+        tid = self._record_tid(response)
+        if response.status_code == 400:
+            # 6240 = Duplicate Name Exists — fall back to find.
+            try:
+                errors = (response.json().get("Fault") or {}).get("Error") or []
+                if any(str(e.get("code")) == "6240" for e in errors):
+                    _log.warning(
+                        "create_vendor_with_details 6240 for %r — entity already exists in QBO; "
+                        "falling back to find_vendor_by_name",
+                        payload.get("DisplayName"),
+                    )
+                    existing = self.find_vendor_by_name(payload.get("DisplayName"))
+                    if existing:
+                        return existing
+            except Exception:  # noqa: BLE001
+                pass  # fall through to generic raise below
+        if response.status_code >= 400:
+            raise QBOError(
+                f"QBO returned {response.status_code} creating Vendor: {response.text}",
+                status_code=response.status_code,
+                body=response.text,
+                intuit_tid=tid,
+            )
+        return response.json().get("Vendor", {})
+
     def get_customer_by_id(self, entity_id: str):
         """Read a single Customer by QBO Id — works for inactive customers too."""
         url = (

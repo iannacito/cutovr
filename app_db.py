@@ -443,6 +443,12 @@ class AppDB:
         # Surfaced in the UI so Cesar can see it without Render log access.
         add_col("jobs", "pending_entity_links_failures_json TEXT")
 
+        # Vendor details push marker: set only by the standalone push_entity_list
+        # vendor branch when details (address, phone, fax, email, etc.) are successfully
+        # pushed. Distinct from checkpoint to allow PreGL name push (which sets checkpoint)
+        # to be independent from the standalone details push.
+        add_col("jobs", "vendor_details_pushed INTEGER NOT NULL DEFAULT 0")
+
         # cutover_settings: AR/AP migration strategy (Task 4 in the
         # migration-workflow completion PR). Default empty so existing
         # firms without a strategy continue to behave as "undecided",
@@ -947,6 +953,9 @@ class AppDB:
         if "entity_linking_status" in job_dict:
             fields.append("entity_linking_status")
             values.append(job_dict["entity_linking_status"])
+        if "vendor_details_pushed" in job_dict:
+            fields.append("vendor_details_pushed")
+            values.append(1 if job_dict["vendor_details_pushed"] else 0)
         if "opening_balance_history" in job_dict:
             fields.append("opening_balance_history_json")
             values.append(
@@ -1059,6 +1068,7 @@ class AppDB:
             out["last_import_id"] = row["last_import_id"]
         if row.get("entity_linking_status"):
             out["entity_linking_status"] = row["entity_linking_status"]
+        out["vendor_details_pushed"] = bool(row.get("vendor_details_pushed")) if row.get("vendor_details_pushed") is not None else False
         return out
 
     def list_jobs_for_firm(self, firm_id: int, limit: int = 50) -> list:

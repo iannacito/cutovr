@@ -3107,7 +3107,7 @@ _REPORT_TYPE_LABELS: dict[str, str] = {
     "chart_of_accounts": "Chart of Accounts",
     "trial_balance":     "Trial Balance (Opening)",
     "trust_listing":     "Trust Listing",
-    "vendor_list":       "Vendor List",
+    "vendor_list":       "Vendor Details",
     "customer_list":     "Customer List",
 }
 
@@ -3269,6 +3269,9 @@ def migration_nexus():
 
     def _is_effectively_complete(j):
         if j.get("checkpoint") == "completed":
+            # Vendor jobs are complete only if details_pushed is set (PreGL name push alone doesn't count)
+            if j.get("report_type") == "vendor_list":
+                return j.get("vendor_details_pushed")
             return True
         if _gl_cleanly_posted(j):
             return True
@@ -3310,7 +3313,7 @@ def migration_nexus():
     vendor_done   = any(j.get("report_type") == "vendor_list" for j in all_jobs)
     vendor_pushed = any(
         j.get("report_type") == "vendor_list"
-        and j.get("checkpoint") == "completed"
+        and j.get("vendor_details_pushed")
         for j in all_jobs
     )
     client_done   = any(j.get("report_type") == "customer_list" for j in all_jobs)
@@ -3971,6 +3974,60 @@ def delete_local_migration_data():
     return redirect(url_for("migration_nexus"))
 
 
+def _vendor_notes(row):
+    """Format vendor notes from GL defaults + explanation for QBO Notes field.
+
+    The Notes field is a convenience hint for the user to manually set the
+    default expense category on the Supplier record.
+    """
+    parts = []
+    if row.get("default_gl_number") or row.get("default_gl_name"):
+        default_category = " · ".join(
+            str(v).strip() for v in [row.get("default_gl_number"), row.get("default_gl_name")] if v
+        )
+        parts.append(
+            f"Default expense category (from PCLaw): {default_category} "
+            "— set this in Accounting ▸ Default expense category."
+        )
+    if row.get("default_explanation"):
+        parts.append(row["default_explanation"])
+    return "\n".join(parts)
+
+
+def build_vendor_payload(row):
+    """Build a full QBO Vendor payload from a parsed vendor row.
+
+    Omits empty fields (does not send blank sub-objects to QBO).
+    """
+    payload = {
+        "DisplayName": row.get("vendor_name", ""),
+        "CompanyName": row.get("vendor_name", ""),
+    }
+    if row.get("ven_no"):
+        payload["AcctNum"] = row["ven_no"]
+    if row.get("phone"):
+        payload["PrimaryPhone"] = {"FreeFormNumber": row["phone"]}
+    if row.get("fax"):
+        payload["Fax"] = {"FreeFormNumber": row["fax"]}
+    if row.get("email"):
+        payload["PrimaryEmailAddr"] = {"Address": row["email"]}
+    if any([row.get(k) for k in ["street", "city", "state", "zip"]]):
+        payload["BillAddr"] = {}
+        if row.get("street"):
+            payload["BillAddr"]["Line1"] = row["street"]
+        if row.get("city"):
+            payload["BillAddr"]["City"] = row["city"]
+        if row.get("state"):
+            payload["BillAddr"]["CountrySubDivisionCode"] = row["state"]
+        if row.get("zip"):
+            payload["BillAddr"]["PostalCode"] = row["zip"]
+        payload["BillAddr"]["Country"] = "US"
+    notes = _vendor_notes(row)
+    if notes:
+        payload["Notes"] = notes
+    return payload
+
+
 @app.route("/jobs/<job_id>/push-entity-list", methods=["POST"])
 @login_required
 def push_entity_list(job_id):
@@ -4044,8 +4101,22 @@ def push_entity_list(job_id):
             continue
         try:
             if is_vendor:
-                qbo.get_or_create_vendor(name)
+                # Vendor: build full payload, update existing in place, create with details
+                payload = build_vendor_payload(row)
+                existing = qbo.find_vendor_by_name(name)
+                if existing:
+                    # Fetch fresh SyncToken and update in place
+                    fresh = qbo.get_vendor_by_id(existing["Id"])
+                    if fresh:
+                        payload["Id"] = fresh["Id"]
+                        payload["SyncToken"] = fresh["SyncToken"]
+                        payload["sparse"] = True
+                        qbo.update_vendor(payload)
+                else:
+                    # Create new with full details
+                    qbo.create_vendor_with_details(payload)
             else:
+                # Customer: unchanged (name-only for now)
                 qbo.get_or_create_customer(name)
             pushed += 1
         except Exception as exc:  # noqa: BLE001
@@ -4054,7 +4125,11 @@ def push_entity_list(job_id):
         if (i + 1) % _QBO_BATCH == 0:
             _time.sleep(0.5)
 
-    db.save_job_state(job_id, {"status": "completed", "checkpoint": "completed"})
+    # Save state and set vendor_details_pushed marker for vendors
+    save_state = {"status": "completed", "checkpoint": "completed"}
+    if is_vendor:
+        save_state["vendor_details_pushed"] = True
+    db.save_job_state(job_id, save_state)
     jobs.pop(job_id, None)  # invalidate stale in-memory cache
     _audit(
         "entity_list_pushed",

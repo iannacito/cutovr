@@ -474,8 +474,8 @@
         <div class="hub-setup-card__status">{% if coa_done %}&#10003; Complete{% else %}Not yet done{% endif %}</div>
       </div>
       <div class="hub-setup-card {% if vendor_done %}hub-setup-card--done{% endif %}">
-        <div class="hub-setup-card__title">Vendor List</div>
-        <div class="hub-setup-card__desc">Entity names for AP lines. Upload once — used by every GL batch.</div>
+        <div class="hub-setup-card__title">Vendor Details</div>
+        <div class="hub-setup-card__desc">Contact details, address, and terms for suppliers. Vendor names are synced automatically during GL import.</div>
         <div class="hub-setup-card__status">
           {% if vendor_pushed %}&#10003; Pushed to QBO
           {% elif vendor_done %}&#10003; Uploaded (push pending)
