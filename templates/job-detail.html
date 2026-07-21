@@ -239,23 +239,18 @@
     </div>
     <div class="next-card__actions">
       {% if report_type == 'vendor_list' %}
-        {% set vendor_push_progress = job.import_progress or {} %}
-        {% set vendor_push_active = vendor_push_progress and not vendor_push_progress.done %}
-        {% if not vendor_push_active %}
-          {# Push complete or not started #}
-          <form action="{{ url_for('start_vendor_push', job_id=job.id) }}" method="post" style="display:inline;">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="btn btn-primary btn-lg" type="submit">Start vendor push →</button>
-          </form>
-        {% else %}
+        {% set vpp = job.import_progress or {} %}
+        {% set vendor_push_active = vpp and not vpp.done %}
+        {% set vendor_push_finished = vpp and vpp.done %}
+        {% if vendor_push_active %}
           {# Push in progress #}
           <div style="display:flex;align-items:center;gap:var(--space-2);">
             <div style="flex:1;">
               <div style="font-size:.9rem;margin-bottom:var(--space-2);">
                 <strong id="vendor-progress-text">
-                  {{ vendor_push_progress.pushed|default(0) }} pushed,
-                  {{ vendor_push_progress.updated|default(0) }} updated,
-                  {{ vendor_push_progress.failed|default(0) }} failed
+                  {{ vpp.pushed|default(0) }} pushed,
+                  {{ vpp.updated|default(0) }} updated,
+                  {{ vpp.failed|default(0) }} failed
                 </strong>
                 <span class="muted" id="vendor-progress-percent"></span>
               </div>
@@ -270,6 +265,31 @@
                       stroke-dasharray="4 6"></circle>
             </svg>
           </div>
+        {% elif vendor_push_finished %}
+          {# Push completed — persist the outcome, allow re-push #}
+          <div style="display:flex;align-items:center;gap:var(--space-3);">
+            <span style="color:var(--success,#15803d);font-weight:600;font-size:1.5rem;">✓</span>
+            <div>
+              <div style="font-weight:600;">Vendor push complete</div>
+              <div class="muted" style="font-size:.9rem;margin-top:0.2rem;">
+                {{ vpp.pushed|default(0) }} pushed,
+                {{ vpp.updated|default(0) }} updated,
+                {{ vpp.failed|default(0) }} failed
+                (of {{ vpp.total|default(0) }})
+                {% if vpp.error %}<br><span style="color:var(--error,#b91c1c);">{{ vpp.error }}</span>{% endif %}
+              </div>
+            </div>
+          </div>
+          <form action="{{ url_for('start_vendor_push', job_id=job.id) }}" method="post" style="display:inline;margin-top:var(--space-2);">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-secondary btn-sm" type="submit">Push again →</button>
+          </form>
+        {% else %}
+          {# Never run — start push #}
+          <form action="{{ url_for('start_vendor_push', job_id=job.id) }}" method="post" style="display:inline;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-primary btn-lg" type="submit">Start vendor push →</button>
+          </form>
         {% endif %}
       {% elif report_type == 'customer_list' %}
         <form action="{{ url_for('push_entity_list', job_id=job.id) }}" method="post" style="display:inline;"
