@@ -3579,16 +3579,35 @@ def coa_create_missing_qbo():
         return redirect(url_for("coa_consolidation"))
 
     from qbo_client import QBOClient, QBOError
+    from coa_apply import QBO_TYPE_SUBTYPES
     qbo = QBOClient(conn, qbo_job_id)
     created, failed = [], []
     for row in rows_to_create:
         try:
+            # Validate account_type is in the QBO type list
+            if row["account_type"] not in QBO_TYPE_SUBTYPES:
+                failed.append({
+                    "name": row["account_name"],
+                    "error": f"Invalid account type: {row['account_type']!r}"
+                })
+                continue
+
             payload: dict = {
                 "Name":        row["account_name"],
                 "AccountType": row["account_type"],
             }
+            # Validate detail_type if provided
             if row["detail_type"]:
-                payload["AccountSubType"] = row["detail_type"]
+                valid_subtypes = QBO_TYPE_SUBTYPES.get(row["account_type"], [])
+                if row["detail_type"] not in valid_subtypes:
+                    # Drop invalid sub-type; AccountType alone is valid for create
+                    _log.warning(
+                        "coa_create_missing_qbo: dropping invalid detail_type %r "
+                        "for type %r (not in %r)",
+                        row["detail_type"], row["account_type"], valid_subtypes
+                    )
+                else:
+                    payload["AccountSubType"] = row["detail_type"]
             resp = qbo.create_account(payload)
             acct = (resp or {}).get("Account") or {}
             created.append({
@@ -3679,11 +3698,14 @@ def coa_consolidation():
             "status": "ready", "pclaw_accounts": [],
             "consolidated_count": 0, "unmapped_count": 0,
         }
+    import json as _json
+    from coa_apply import QBO_TYPE_SUBTYPES
     return render_template(
         "coa-consolidation.html",
         firm=firm,
         coa_status=coa_status,
         coa_override_account_types=COA_OVERRIDE_ACCOUNT_TYPES,
+        qbo_type_subtypes_json=_json.dumps(QBO_TYPE_SUBTYPES),
     )
 
 
@@ -12393,6 +12415,8 @@ def account_mapping(job_id):
         rows=rows,
     )
 
+    import json as _json
+    from coa_apply import QBO_TYPE_SUBTYPES
     return render_template(
         "account-mapping.html",
         job=job,
@@ -12407,6 +12431,7 @@ def account_mapping(job_id):
         create_missing_offer=create_missing_offer,
         account_mapping_categories=ACCOUNT_MAPPING_CATEGORIES,
         coa_override_account_types=COA_OVERRIDE_ACCOUNT_TYPES,
+        qbo_type_subtypes_json=_json.dumps(QBO_TYPE_SUBTYPES),
         **_workflow_stepper_context(
             job["firm_id"], force_current_stage=customer_workflow.STAGE_MATCH,
             on_match_page=True,

@@ -39,6 +39,25 @@ import reserved_accounts
 
 QBO_ACCT_NUM_MAX = 100  # QBO AcctNum field character limit
 
+# QBO Account Type → valid Sub-Types mapping (single source of truth for UI + validation)
+QBO_TYPE_SUBTYPES = {
+    "Bank": ["Checking","Savings","MoneyMarket","CashOnHand","TrustAccounts"],
+    "Accounts Receivable": ["AccountsReceivable"],
+    "Other Current Asset": ["AllowanceForBadDebts","DevelopmentCosts","EmployeeCashAdvances","OtherCurrentAssets","PrepaidExpenses","Retainage","UndepositedFunds"],
+    "Fixed Asset": ["AccumulatedDepreciation","Buildings","DepletableAssets","FurnitureAndFixtures","Land","LeaseholdImprovements","MachineryAndEquipment","OtherFixedAssets","Vehicles"],
+    "Other Asset": ["LeaseBuyout","OtherLongTermAssets","SecurityDeposits"],
+    "Accounts Payable": ["AccountsPayable"],
+    "Credit Card": ["CreditCard"],
+    "Other Current Liability": ["DirectDepositPayable","InsurancePayable","LineOfCredit","LoanPayable","OtherCurrentLiabilities","PayrollClearing","SalesTaxPayable","TrustAccountsLiabilities"],
+    "Long Term Liability": ["NotesPayable","OtherLongTermLiabilities"],
+    "Equity": ["AccumulatedAdjustment","CommonStock","EstimatedTaxes","HealthInsurancePremium","HealthSavingsAccountContribution","OpeningBalanceEquity","OwnersEquity","PaidInCapitalOrSurplus","PartnerContributions","PartnerDistributions","PartnerEquity","PersonalExpense","PersonalIncome","PreferredStock","RetainedEarnings"],
+    "Income": ["NonProfitIncome","OtherPrimaryIncome","SalesOfProductIncome","ServiceFeeIncome","UnappliedCashPaymentIncome"],
+    "Other Income": ["DividendIncome","InterestEarned","OtherInvestmentIncome","OtherMiscellaneousIncome","TaxExemptInterest"],
+    "Cost of Goods Sold": ["CostOfLabor","EquipmentRentalCOGS","GoodsCostOfGoodsSold","OtherCostsOfServicesCOGS","ShippingFreightAndDeliveryCogs"],
+    "Expense": ["AdvertisingPromotional","BadDebts","BankCharges","CommissionsAndFees","Entertainment","EntertainmentMeals","EquipmentRental","FilingFees","Insurance","InterestPaid","LegalProfessionalFees","Meals","OfficeExpenses","OtherBusinessExpenses","PenaltiesAndSettlements","Rent","RepairMaintenance","ShippingFreightAndDelivery","Supplies","Taxes","Travel","TravelMeals","Utilities"],
+    "Other Expense": ["Depreciation","ExchangeGainOrLoss","OtherMiscellaneousExpense","PenaltyForEarlyWithdrawal"]
+}
+
 # ----------------------------------------------------------------------------
 # PCLaw -> QBO type-mapping table.
 #

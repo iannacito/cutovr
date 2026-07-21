@@ -542,6 +542,9 @@ class QBOClient:
         ``Description``. Intuit's API enforces AccountType / AccountSubType
         compatibility — callers must pass safe combinations (see
         coa_apply.map_pclaw_account_to_qbo_type).
+
+        On 6240 (Duplicate Name), falls back to finding and returning the
+        existing account instead of raising.
         """
         url = f"{self.base_url}/v3/company/{self.realm_id}/account?minorversion=75"
         response = requests.post(
@@ -549,6 +552,17 @@ class QBOClient:
         )
         tid = self._record_tid(response)
         if response.status_code >= 400:
+            # Handle 6240 Duplicate Name: find and reuse the existing account
+            try:
+                import json as _json
+                body = _json.loads(response.text) if isinstance(response.text, str) else response.text
+                faults = body.get("Fault", {}).get("Error", [])
+                if faults and faults[0].get("code") == "6240":
+                    existing = self.find_account_by_name(payload.get("Name"))
+                    if existing:
+                        return {"Account": existing}
+            except Exception:
+                pass
             raise QBOError(
                 f"QBO returned {response.status_code} creating Account: {response.text}",
                 status_code=response.status_code,
