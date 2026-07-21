@@ -4218,6 +4218,151 @@ def push_entity_list(job_id):
     return redirect(url_for("migration_nexus"))
 
 
+def _async_vendor_push(job_id, user):
+    """Background thread function for async vendor push (Phase 2).
+
+    Uses import_progress_json for worker-safe state tracking. Sets
+    vendor_details_pushed on completion.
+    """
+    import time as _time
+    import json
+    job = jobs.get(job_id)
+    if not job:
+        _log.warning("_async_vendor_push: job %s not in memory; skipping", job_id)
+        return
+
+    report_type = job.get("report_type") or ""
+    if report_type != REPORT_VENDOR_LIST:
+        return
+
+    parsed_key = "parsed_vendor_list"
+    rows = job.get(parsed_key) or _reparse_report_rows(job, report_type)
+    if not rows:
+        db.update_job_status(job_id, "completed")
+        db.save_job_state(job_id, {"vendor_details_pushed": True})
+        jobs.pop(job_id, None)
+        return
+
+    try:
+        qbo, qbo_conn = _get_qbo_client(job_id, user)
+    except Exception as e:  # noqa: BLE001
+        _log.exception("_async_vendor_push: QBO client error: %s", e)
+        progress = {
+            "pushed": 0, "updated": 0, "failed": len(rows),
+            "total": len(rows), "done": True, "error": str(e)
+        }
+        db.save_job_state(job_id, {"import_progress": progress})
+        return
+
+    pushed, updated, failed = 0, 0, 0
+    vendor_push_failures = []
+    _QBO_BATCH = 25
+
+    for i, row in enumerate(rows):
+        name = (row.get("vendor_name") or "").strip()
+        if not name:
+            continue
+
+        try:
+            payload = build_vendor_payload(row)
+            existing = qbo.find_vendor_by_name(name)
+            if existing:
+                payload["Id"] = existing["Id"]
+                payload["SyncToken"] = existing.get("SyncToken", "")
+                payload["sparse"] = True
+                qbo.update_vendor(payload)
+                updated += 1
+            else:
+                qbo.create_vendor_with_details(payload)
+                pushed += 1
+        except Exception as exc:  # noqa: BLE001
+            fault_detail = _parse_qbo_fault_detail(exc)
+            vendor_push_failures.append({
+                "vendor_name": name,
+                "qbo_code": fault_detail["qbo_code"],
+                "message": fault_detail["message"],
+            })
+            failed += 1
+            _log.warning(
+                "_async_vendor_push: %r failed (code=%s): %s",
+                name, fault_detail["qbo_code"], exc
+            )
+
+        if (i + 1) % _QBO_BATCH == 0:
+            _time.sleep(0.5)
+            # Update progress mid-push
+            progress = {
+                "pushed": pushed, "updated": updated, "failed": failed,
+                "total": len(rows), "done": False
+            }
+            db.save_job_state(job_id, {"import_progress": progress})
+
+    # Final progress update
+    progress = {
+        "pushed": pushed, "updated": updated, "failed": failed,
+        "total": len(rows), "done": True
+    }
+    save_state = {"import_progress": progress, "vendor_details_pushed": True}
+    if vendor_push_failures:
+        save_state["vendor_push_failures"] = vendor_push_failures
+    db.save_job_state(job_id, save_state)
+    jobs.pop(job_id, None)
+    db.update_job_status(job_id, "completed")
+    _audit(
+        "vendor_push_async",
+        target_type="job", target_id=job_id,
+        details=f"pushed={pushed} updated={updated} failed={failed}",
+    )
+
+
+@app.route("/jobs/<job_id>/start-vendor-push", methods=["POST"])
+@login_required
+def start_vendor_push(job_id):
+    """Start async vendor details push (Phase 2).
+
+    Spawns background thread and returns immediately. Client polls
+    /vendor-push-progress for updates.
+    """
+    job, user = _job_or_403(job_id)
+    report_type = job.get("report_type") or ""
+    if report_type != REPORT_VENDOR_LIST:
+        flash("Vendor push is only available for Vendor Details jobs.", "error")
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    # Start background thread (idempotent: won't re-start if already running)
+    import threading
+    if not job.get("import_progress", {}).get("done"):
+        # Already in progress
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    # Initialize progress
+    rows = job.get("parsed_vendor_list") or _reparse_report_rows(job, report_type)
+    initial_progress = {
+        "pushed": 0, "updated": 0, "failed": 0,
+        "total": len(rows) if rows else 0, "done": False
+    }
+    db.save_job_state(job_id, {"import_progress": initial_progress})
+    jobs.pop(job_id, None)
+
+    thread = threading.Thread(target=_async_vendor_push, args=(job_id, user))
+    thread.daemon = True
+    thread.start()
+
+    flash("Vendor push started. Check progress below.", "info")
+    return redirect(url_for("job_detail", job_id=job_id))
+
+
+@app.route("/jobs/<job_id>/vendor-push-progress", methods=["GET"])
+@login_required
+def vendor_push_progress(job_id):
+    """Poll endpoint for async vendor push progress (Phase 2)."""
+    job, user = _job_or_403(job_id)
+    progress = job.get("import_progress") or {
+        "pushed": 0, "updated": 0, "failed": 0, "total": 0, "done": True
+    }
+    return jsonify(progress)
+
+
 @app.route("/jobs/<job_id>/push-vc-mapping", methods=["POST"])
 @login_required
 def push_vc_mapping(job_id):
