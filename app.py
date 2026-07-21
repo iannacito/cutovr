@@ -4255,6 +4255,15 @@ def _async_vendor_push(job_id, user):
         db.save_job_state(job_id, {"import_progress": progress})
         return
 
+    if not qbo:
+        _log.error("_async_vendor_push: QBO client is None; QuickBooks not connected")
+        progress = {
+            "pushed": 0, "updated": 0, "failed": len(rows),
+            "total": len(rows), "done": True, "error": "QuickBooks not connected"
+        }
+        db.save_job_state(job_id, {"import_progress": progress})
+        return
+
     pushed, updated, failed = 0, 0, 0
     vendor_push_failures = []
     _QBO_BATCH = 25
@@ -4330,6 +4339,29 @@ def start_vendor_push(job_id):
         flash("Vendor push is only available for Vendor Details jobs.", "error")
         return redirect(url_for("job_detail", job_id=job_id))
 
+    # Ensure the vendor job has a QBO connection (mirror push_entity_list:4070-4089).
+    # Vendor-list jobs are never connected directly; copy the firm's connection.
+    if not _get_qbo_connection(job_id):
+        _firm_conns = db.list_qbo_connections_for_firm(user["firm_id"])
+        if _firm_conns:
+            _source = db.get_qbo_connection(_firm_conns[0]["job_id"])
+            if _source and _source.get("access_token_enc") and _source.get("refresh_token_enc"):
+                db.upsert_qbo_connection(
+                    job_id=job_id, firm_id=user["firm_id"],
+                    realm_id=_source["realm_id"],
+                    access_token_enc=_source["access_token_enc"],
+                    refresh_token_enc=_source["refresh_token_enc"],
+                    company_name=_source.get("company_name"),
+                    legal_name=_source.get("legal_name"),
+                    country=_source.get("country"),
+                    expires_at=_source.get("expires_at"),
+                    company_info_error=_source.get("company_info_error"),
+                )
+                jobs.pop(job_id, None)
+    if not _get_qbo_connection(job_id):
+        flash("Connect QuickBooks before pushing vendor details.", "error")
+        return redirect(url_for("job_detail", job_id=job_id))
+
     # Start background thread (idempotent: won't re-start if already running)
     import threading
     _ip = job.get("import_progress") or {}
@@ -4358,8 +4390,9 @@ def start_vendor_push(job_id):
 @login_required
 def vendor_push_progress(job_id):
     """Poll endpoint for async vendor push progress (Phase 2)."""
-    job, user = _job_or_403(job_id)
-    progress = job.get("import_progress") or {
+    _job, _user = _job_or_403(job_id)          # auth only
+    fresh = db.hydrate_job(job_id) or {}        # bypass stale in-memory cache
+    progress = fresh.get("import_progress") or {
         "pushed": 0, "updated": 0, "failed": 0, "total": 0, "done": True
     }
     return jsonify(progress)
