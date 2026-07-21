@@ -3330,7 +3330,9 @@ def migration_nexus():
     }
 
     # TB routing: point to the post-ob entry for all Trial Balance jobs.
-    # Non-TB jobs get None (template skips the TB branch entirely).
+    # Vendor routing: point to the vendor job detail page.
+    # Non-TB/vendor jobs get None (template skips those branches entirely).
+    latest_vendor_job = None
     for job in all_jobs:
         if (job.get("report_type") or "") == "trial_balance":
             _ob_posted    = bool(job.get("opening_balance_history"))
@@ -3353,6 +3355,8 @@ def migration_nexus():
             job["tb_next_url"] = None
             job["tb_ob_posted"]    = False
             job["tb_has_mappings"] = False
+        if (job.get("report_type") or "") == "vendor_list" and not latest_vendor_job:
+            latest_vendor_job = job
 
     return render_template(
         'migration-nexus.html',
@@ -3365,6 +3369,7 @@ def migration_nexus():
         ob_done=ob_done,
         vendor_done=vendor_done,
         vendor_pushed=vendor_pushed,
+        latest_vendor_job=latest_vendor_job,
         client_done=client_done,
         client_pushed=client_pushed,
         checkpoint_steps=checkpoint_steps,
@@ -7682,7 +7687,7 @@ def job_detail(job_id):
 
     report_type = job.get("report_type") or REPORT_GENERAL_LEDGER
 
-    # TB jobs get 6-step TB stepper; GL gets multi-job checklist stepper
+    # TB jobs get 2-step TB stepper; vendor jobs get 2-step vendor stepper; GL gets multi-job checklist stepper
     extra_ctx = {}
     if report_type == REPORT_TRIAL_BALANCE:
         import tb_workflow
@@ -7696,6 +7701,12 @@ def job_detail(job_id):
             cutover_done=True,
         )
         extra_ctx = tb_workflow.tb_stages_context(_tb_stages)
+    elif report_type == REPORT_VENDOR_LIST:
+        import vendor_workflow
+        _connected = bool(db.list_qbo_connections_for_firm(_user["firm_id"]))
+        _vstages = vendor_workflow.build_vendor_stages(job, url_for=url_for, connected=_connected)
+        extra_ctx = vendor_workflow.vendor_stages_context(_vstages)
+        extra_ctx["vendor_connected"] = _connected
 
     # Per-job current stage for GL jobs — mirror the body's _detail_step logic
     # (templates/job-detail.html) so the rail reflects THIS job, not the firm rollup.

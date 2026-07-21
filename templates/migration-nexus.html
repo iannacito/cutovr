@@ -478,6 +478,17 @@
         <div class="hub-setup-card__desc">Map PC Law accounts to QBO. Used by every GL batch automatically.</div>
         <div class="hub-setup-card__status">{% if coa_done %}&#10003; Complete{% else %}Not yet done{% endif %}</div>
       </div>
+      {% if latest_vendor_job %}
+      <a href="{{ url_for('job_detail', job_id=latest_vendor_job.id) }}" class="hub-setup-card {% if vendor_done %}hub-setup-card--done{% endif %}" style="text-decoration:none;color:inherit;">
+        <div class="hub-setup-card__title">Vendor Details</div>
+        <div class="hub-setup-card__desc">Contact details, address, and terms for suppliers. Vendor names are synced automatically during GL import.</div>
+        <div class="hub-setup-card__status">
+          {% if vendor_pushed %}&#10003; Pushed to QBO
+          {% elif vendor_done %}&#10003; Uploaded (push pending)
+          {% else %}Not yet uploaded{% endif %}
+        </div>
+      </a>
+      {% else %}
       <div class="hub-setup-card {% if vendor_done %}hub-setup-card--done{% endif %}">
         <div class="hub-setup-card__title">Vendor Details</div>
         <div class="hub-setup-card__desc">Contact details, address, and terms for suppliers. Vendor names are synced automatically during GL import.</div>
@@ -487,6 +498,7 @@
           {% else %}Not yet uploaded{% endif %}
         </div>
       </div>
+      {% endif %}
       <div class="hub-setup-card {% if client_done %}hub-setup-card--done{% endif %}">
         <div class="hub-setup-card__title">Client List</div>
         <div class="hub-setup-card__desc">Entity names for AR lines. Upload once — used by every GL batch.</div>

@@ -239,10 +239,15 @@
     </div>
     <div class="next-card__actions">
       {% if report_type == 'vendor_list' %}
-        {% set vpp = job.import_progress or {} %}
-        {% set vendor_push_active = vpp and not vpp.done %}
-        {% set vendor_push_finished = vpp and vpp.done %}
-        {% if vendor_push_active %}
+        {% if not vendor_connected %}
+          {# No QBO connection — show Connect button #}
+          <a class="btn btn-primary btn-lg" href="{{ url_for('connect_qbo', job_id=job.id) }}">Connect to QuickBooks</a>
+        {% else %}
+          {# Connected — show push UI (in-progress, finished, or start) #}
+          {% set vpp = job.import_progress or {} %}
+          {% set vendor_push_active = vpp and not vpp.done %}
+          {% set vendor_push_finished = vpp and vpp.done %}
+          {% if vendor_push_active %}
           {# Push in progress #}
           <div style="display:flex;align-items:center;gap:var(--space-2);">
             <div style="flex:1;">
@@ -284,12 +289,13 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="btn btn-secondary btn-sm" type="submit">Push again →</button>
           </form>
-        {% else %}
-          {# Never run — start push #}
-          <form action="{{ url_for('start_vendor_push', job_id=job.id) }}" method="post" style="display:inline;">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="btn btn-primary btn-lg" type="submit">Start vendor push →</button>
-          </form>
+          {% else %}
+            {# Never run — start push #}
+            <form action="{{ url_for('start_vendor_push', job_id=job.id) }}" method="post" style="display:inline;">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="btn btn-primary btn-lg" type="submit">Start vendor push →</button>
+            </form>
+          {% endif %}
         {% endif %}
       {% elif report_type == 'customer_list' %}
         <form action="{{ url_for('push_entity_list', job_id=job.id) }}" method="post" style="display:inline;"
