@@ -320,7 +320,12 @@
           <td>{{ status_badge(_eff_status) }}</td>
           <td class="muted" style="font-size:.8rem;">{{ job.get('updated_at', '—') }}</td>
           <td style="text-align:right;display:flex;gap:var(--space-2);justify-content:flex-end;align-items:center;">
-            {% if job.get('report_type') in ('vendor_list', 'customer_list') %}
+            {% if job.get('report_type') == 'vendor_list' %}
+              {# Phase 2: Vendor push moved to async on vendor job page #}
+              <a href="{{ url_for('job_detail', job_id=job['id']) }}"
+                 class="btn btn-primary btn-sm">Push details &rarr;</a>
+            {% elif job.get('report_type') == 'customer_list' %}
+              {# Customer list still uses synchronous push for now #}
               <form action="{{ url_for('push_entity_list', job_id=job['id']) }}" method="post"
                     style="margin:0"
                     onsubmit="return confirm('Push all names from this list to QuickBooks? Safe to re-run.');">

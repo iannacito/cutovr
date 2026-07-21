@@ -4143,13 +4143,11 @@ def push_entity_list(job_id):
                     payload = build_vendor_payload(row)
                     existing = qbo.find_vendor_by_name(name)
                     if existing:
-                        # Fetch fresh SyncToken and update in place
-                        fresh = qbo.get_vendor_by_id(existing["Id"])
-                        if fresh:
-                            payload["Id"] = fresh["Id"]
-                            payload["SyncToken"] = fresh["SyncToken"]
-                            payload["sparse"] = True
-                            qbo.update_vendor(payload)
+                        # Use SyncToken from find_vendor_by_name (Phase 1: dropped get_vendor_by_id call)
+                        payload["Id"] = existing["Id"]
+                        payload["SyncToken"] = existing.get("SyncToken", "")
+                        payload["sparse"] = True
+                        qbo.update_vendor(payload)
                     else:
                         # Create new with full details
                         qbo.create_vendor_with_details(payload)

@@ -605,7 +605,7 @@ class QBOClient:
 
     def find_vendor_by_name(self, display_name):
         safe = self._escape_qbo_string(display_name)
-        result = self.query(f"SELECT Id, DisplayName FROM Vendor WHERE DisplayName = '{safe}'")
+        result = self.query(f"SELECT Id, DisplayName, SyncToken FROM Vendor WHERE DisplayName = '{safe}'")
         items = result.get("QueryResponse", {}).get("Vendor", [])
         return items[0] if items else None
 
