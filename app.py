@@ -4312,11 +4312,23 @@ def _async_vendor_push(job_id, user):
         return
 
     parsed_key = "parsed_vendor_list"
-    # Re-parse FRESH; never fall back to stale for a WRITE. Stale misaligned
-    # data overwrites good QBO addresses with garbage. If the file is gone
-    # (Render ephemeral disk), abort cleanly — don't push corrupted data.
-    rows = _reparse_report_rows(job, report_type)
+    version_key = "parsed_vendor_list_parser_version"
+    # Trust a CURRENT-version persisted parse (survives ephemeral disk wipe).
+    # Reject only STALE parses (no/old version) or absent ones.
+    from report_types import VENDOR_PARSER_VERSION
+    persisted = job.get(parsed_key)
+    pv = job.get(version_key)
+    if persisted and pv == VENDOR_PARSER_VERSION:
+        rows = persisted  # trusted current parse — no disk needed
+    else:
+        rows = _reparse_report_rows(job, report_type)  # stale/absent → re-parse
+        if rows:
+            db.save_job_state(job_id, {
+                parsed_key: rows,
+                version_key: VENDOR_PARSER_VERSION,
+            })
     if not rows:
+        # only fail closed when no trusted parse AND file unavailable
         _finish_vendor_push(
             job_id, total=0, error="Could not re-read the uploaded vendor file — re-upload it, then push again."
         )
@@ -4452,10 +4464,22 @@ def start_vendor_push(job_id):
         return redirect(url_for("job_detail", job_id=job_id))
 
     # Initialize progress
-    # Re-parse fresh so the current parser (post-d6fee39 alignment fix) is used,
-    # not a stale parse persisted at upload time. Fall back to persisted only if
-    # the encrypted upload is no longer on disk.
-    rows = _reparse_report_rows(job, report_type) or job.get("parsed_vendor_list")
+    # Trust a CURRENT-version persisted parse (survives ephemeral disk wipe).
+    # Reject only STALE parses (no/old version) or absent ones.
+    from report_types import VENDOR_PARSER_VERSION
+    parsed_key = "parsed_vendor_list"
+    version_key = "parsed_vendor_list_parser_version"
+    persisted = job.get(parsed_key)
+    pv = job.get(version_key)
+    if persisted and pv == VENDOR_PARSER_VERSION:
+        rows = persisted  # trusted current parse — no disk needed
+    else:
+        rows = _reparse_report_rows(job, report_type)  # stale/absent → re-parse
+        if rows:
+            db.save_job_state(job_id, {
+                parsed_key: rows,
+                version_key: VENDOR_PARSER_VERSION,
+            })
     initial_progress = {
         "pushed": 0, "updated": 0, "failed": 0,
         "total": len(rows) if rows else 0, "done": False

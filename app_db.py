@@ -454,6 +454,11 @@ class AppDB:
         # to create/update so the user can see the exact QBO rejection without Render logs.
         add_col("jobs", "vendor_push_failures_json TEXT")
 
+        # Vendor parse version: tracks which parser version produced parsed_vendor_list.
+        # Allows re-push to trust the persisted parse after ephemeral disk wipes
+        # (no re-read needed if version matches current VENDOR_PARSER_VERSION).
+        add_col("jobs", "parsed_vendor_list_parser_version INTEGER")
+
         # cutover_settings: AR/AP migration strategy (Task 4 in the
         # migration-workflow completion PR). Default empty so existing
         # firms without a strategy continue to behave as "undecided",
@@ -968,6 +973,9 @@ class AppDB:
                 if job_dict["vendor_push_failures"]
                 else None
             )
+        if "parsed_vendor_list_parser_version" in job_dict:
+            fields.append("parsed_vendor_list_parser_version")
+            values.append(job_dict["parsed_vendor_list_parser_version"])
         if "opening_balance_history" in job_dict:
             fields.append("opening_balance_history_json")
             values.append(
@@ -1082,6 +1090,8 @@ class AppDB:
         if row.get("entity_linking_status"):
             out["entity_linking_status"] = row["entity_linking_status"]
         out["vendor_details_pushed"] = bool(row.get("vendor_details_pushed")) if row.get("vendor_details_pushed") is not None else False
+        if row.get("parsed_vendor_list_parser_version"):
+            out["parsed_vendor_list_parser_version"] = row["parsed_vendor_list_parser_version"]
         return out
 
     def list_jobs_for_firm(self, firm_id: int, limit: int = 50) -> list:
