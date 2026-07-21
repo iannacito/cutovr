@@ -4032,18 +4032,28 @@ def build_vendor_payload(row):
         payload["PrimaryPhone"] = {"FreeFormNumber": row["phone"]}
     if row.get("fax"):
         payload["Fax"] = {"FreeFormNumber": row["fax"]}
-    if row.get("email"):
-        payload["PrimaryEmailAddr"] = {"Address": row["email"]}
-    if any([row.get(k) for k in ["street", "city", "state", "zip"]]):
+    def _clean(v):
+        v = (v or "").strip()
+        return "" if v in ("", "0") else v
+
+    _email = _clean(row.get("email"))
+    if _email and "@" in _email and "." in _email.rsplit("@", 1)[-1] and " " not in _email:
+        payload["PrimaryEmailAddr"] = {"Address": _email}
+
+    _street = _clean(row.get("street"))
+    _city = _clean(row.get("city"))
+    _state = _clean(row.get("state"))
+    _zip = _clean(row.get("zip"))
+    if any([_street, _city, _state, _zip]):
         payload["BillAddr"] = {}
-        if row.get("street"):
-            payload["BillAddr"]["Line1"] = row["street"]
-        if row.get("city"):
-            payload["BillAddr"]["City"] = row["city"]
-        if row.get("state"):
-            payload["BillAddr"]["CountrySubDivisionCode"] = row["state"]
-        if row.get("zip"):
-            payload["BillAddr"]["PostalCode"] = row["zip"]
+        if _street:
+            payload["BillAddr"]["Line1"] = _street
+        if _city:
+            payload["BillAddr"]["City"] = _city
+        if _state:
+            payload["BillAddr"]["CountrySubDivisionCode"] = _state
+        if _zip:
+            payload["BillAddr"]["PostalCode"] = _zip
         payload["BillAddr"]["Country"] = "US"
     notes = _vendor_notes(row)
     if notes:
@@ -4096,18 +4106,18 @@ def push_entity_list(job_id):
     entity_label = "Vendor" if is_vendor else "Customer"
 
     parsed_key = "parsed_vendor_list" if is_vendor else "parsed_customer_list"
-    rows = job.get(parsed_key)
-    if not rows:
-        try:
-            rows = _reparse_report_rows(job, report_type)
-        except Exception as e:  # noqa: BLE001
-            _log.exception("push_entity_list: parse error for %s: %s", entity_label, e)
-            flash(
-                f"Could not parse the {entity_label.lower()} file: {str(e)} "
-                "Please check the file format and re-upload.",
-                "error",
-            )
-            return redirect(url_for("migration_nexus"))
+    # Re-parse fresh so the current parser is used, not a stale parse persisted at
+    # upload time. Fall back to persisted only if the encrypted upload is gone.
+    try:
+        rows = _reparse_report_rows(job, report_type) or job.get(parsed_key)
+    except Exception as e:  # noqa: BLE001
+        _log.exception("push_entity_list: parse error for %s: %s", entity_label, e)
+        flash(
+            f"Could not parse the {entity_label.lower()} file: {str(e)} "
+            "Please check the file format and re-upload.",
+            "error",
+        )
+        return redirect(url_for("migration_nexus"))
     if not rows:
         flash("Could not read the uploaded file. Please re-upload and try again.", "error")
         return redirect(url_for("migration_nexus"))
@@ -4237,12 +4247,19 @@ def _async_vendor_push(job_id, user):
         return
 
     parsed_key = "parsed_vendor_list"
-    rows = job.get(parsed_key) or _reparse_report_rows(job, report_type)
+    # Re-parse fresh so the current parser (post-d6fee39 alignment fix) is used,
+    # not a stale parse persisted at upload time. Fall back to persisted only if
+    # the encrypted upload is no longer on disk.
+    rows = _reparse_report_rows(job, report_type) or job.get(parsed_key)
     if not rows:
         db.update_job_status(job_id, "completed")
         db.save_job_state(job_id, {"vendor_details_pushed": True})
         jobs.pop(job_id, None)
         return
+
+    # Re-persist if fresh parse differs from stale persisted copy
+    if rows and rows is not job.get(parsed_key):
+        db.save_job_state(job_id, {parsed_key: rows})
 
     try:
         qbo, qbo_conn = _get_qbo_client(job_id, user)
@@ -4374,7 +4391,10 @@ def start_vendor_push(job_id):
         return redirect(url_for("job_detail", job_id=job_id))
 
     # Initialize progress
-    rows = job.get("parsed_vendor_list") or _reparse_report_rows(job, report_type)
+    # Re-parse fresh so the current parser (post-d6fee39 alignment fix) is used,
+    # not a stale parse persisted at upload time. Fall back to persisted only if
+    # the encrypted upload is no longer on disk.
+    rows = _reparse_report_rows(job, report_type) or job.get("parsed_vendor_list")
     initial_progress = {
         "pushed": 0, "updated": 0, "failed": 0,
         "total": len(rows) if rows else 0, "done": False
