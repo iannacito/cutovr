@@ -4222,13 +4222,14 @@ def _async_vendor_push(job_id, user):
     """Background thread function for async vendor push (Phase 2).
 
     Uses import_progress_json for worker-safe state tracking. Sets
-    vendor_details_pushed on completion.
+    vendor_details_pushed on completion. Hydrates from DB (not in-memory cache)
+    to survive worker split and handle post-eviction thread spawn.
     """
     import time as _time
     import json
-    job = jobs.get(job_id)
+    job = db.hydrate_job(job_id) or jobs.get(job_id)
     if not job:
-        _log.warning("_async_vendor_push: job %s not in memory; skipping", job_id)
+        _log.warning("_async_vendor_push: job %s not found in DB or memory; skipping", job_id)
         return
 
     report_type = job.get("report_type") or ""
@@ -4331,8 +4332,9 @@ def start_vendor_push(job_id):
 
     # Start background thread (idempotent: won't re-start if already running)
     import threading
-    if not job.get("import_progress", {}).get("done"):
-        # Already in progress
+    _ip = job.get("import_progress") or {}
+    if _ip and not _ip.get("done"):
+        # A push is genuinely in progress — don't start a second one
         return redirect(url_for("job_detail", job_id=job_id))
 
     # Initialize progress

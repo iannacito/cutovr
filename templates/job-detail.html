@@ -240,7 +240,8 @@
     <div class="next-card__actions">
       {% if report_type == 'vendor_list' %}
         {% set vendor_push_progress = job.import_progress or {} %}
-        {% if vendor_push_progress.done %}
+        {% set vendor_push_active = vendor_push_progress and not vendor_push_progress.done %}
+        {% if not vendor_push_active %}
           {# Push complete or not started #}
           <form action="{{ url_for('start_vendor_push', job_id=job.id) }}" method="post" style="display:inline;">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -738,7 +739,7 @@
   </details>
 
   {# ---- Vendor push polling (Phase 2 async) ---------------------- #}
-  {% if report_type == 'vendor_list' and not job.import_progress.done %}
+  {% if report_type == 'vendor_list' and job.import_progress and not job.import_progress.done %}
   <script nonce="{{ csp_nonce() }}">
   (function() {
     'use strict';
