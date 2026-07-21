@@ -4289,8 +4289,12 @@ def _async_vendor_push(job_id, user):
             fault_detail = _parse_qbo_fault_detail(exc)
             vendor_push_failures.append({
                 "vendor_name": name,
+                "status_code": getattr(exc, "status_code", None),
                 "qbo_code": fault_detail["qbo_code"],
                 "message": fault_detail["message"],
+                "detail": fault_detail["detail"],
+                "intuit_tid": getattr(exc, "intuit_tid", None),
+                "sent_payload": payload,
             })
             failed += 1
             _log.warning(

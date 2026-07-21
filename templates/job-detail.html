@@ -303,7 +303,11 @@
           {% if f.detail %}<br><span class="muted">{{ f.detail }}</span>{% endif %}
           <br><span class="muted" style="font-size:.85rem;">intuit_tid: {{ f.intuit_tid or '—' }}</span>
         </p>
+        {% if f.sent_payload %}
         <pre style="max-height:22rem;overflow:auto;font-size:.75rem;background:var(--surface-2,#f5f5f5);padding:var(--space-2);border-radius:4px;margin:var(--space-2) 0 0;">{{ f.sent_payload | tojson(indent=2) }}</pre>
+        {% else %}
+        <p class="muted" style="font-size:.8rem;margin:var(--space-2) 0 0;">(payload not captured for this entry — re-push to capture it)</p>
+        {% endif %}
       </details>
     {% endfor %}
   </section>
