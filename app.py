@@ -3434,6 +3434,24 @@ def hub_bulk_revert():
         if not job or job.get("firm_id") != user["firm_id"]:
             failed += 1
             continue
+
+        # Handle vendor/customer list revert (clear completion markers)
+        _rt = job.get("report_type") or ""
+        if _rt in (REPORT_VENDOR_LIST, REPORT_CUSTOMER_LIST):
+            db.save_job_state(jid, {
+                ("vendor_details_pushed" if _rt == REPORT_VENDOR_LIST
+                 else "customer_details_pushed"): False,
+                "checkpoint": "parsed",
+                "import_progress": None,
+                ("vendor_push_failures" if _rt == REPORT_VENDOR_LIST
+                 else "customer_push_failures"): None,
+            })
+            jobs.pop(jid, None)
+            _audit("entity_list_revert", target_type="job", target_id=jid,
+                   details=f"bulk_revert cleared {_rt} markers")
+            reverted += 1
+            continue
+
         if not job.get("import_summary"):
             continue
         try:
