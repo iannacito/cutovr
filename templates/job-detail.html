@@ -225,6 +225,57 @@
         <a class="btn" href="{{ url_for('ending_tb_reconciliation_view', job_id=job.id) }}">Final balance check</a>
       {% elif report_type == 'trust_listing' %}
         <a class="btn btn-primary btn-lg" href="{{ url_for('trust_reconciliation_view', job_id=job.id) }}">Open reconciliation &rarr;</a>
+      {% elif report_type == 'vendor_list' %}
+        <h3>Vendor Details <small class="muted">(Contact & Address)</small></h3>
+        <p>
+          Push vendor contact details, address, and payment terms to QuickBooks. Names are synced automatically during GL import; this step enriches the supplier records.
+        </p>
+      {% elif report_type == 'customer_list' %}
+        <h3>Customer List <small class="muted">(Names only)</small></h3>
+        <p>
+          Push customer names to QuickBooks. These are used during GL posting for AR line matching.
+        </p>
+      {% endif %}
+    </div>
+    <div class="next-card__actions">
+      {% if report_type == 'vendor_list' %}
+        {% set vendor_push_progress = job.import_progress or {} %}
+        {% if vendor_push_progress.done %}
+          {# Push complete or not started #}
+          <form action="{{ url_for('start_vendor_push', job_id=job.id) }}" method="post" style="display:inline;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-primary btn-lg" type="submit">Start vendor push →</button>
+          </form>
+        {% else %}
+          {# Push in progress #}
+          <div style="display:flex;align-items:center;gap:var(--space-2);">
+            <div style="flex:1;">
+              <div style="font-size:.9rem;margin-bottom:var(--space-2);">
+                <strong id="vendor-progress-text">
+                  {{ vendor_push_progress.pushed|default(0) }} pushed,
+                  {{ vendor_push_progress.updated|default(0) }} updated,
+                  {{ vendor_push_progress.failed|default(0) }} failed
+                </strong>
+                <span class="muted" id="vendor-progress-percent"></span>
+              </div>
+              <div style="height:8px;background:#e0e0e0;border-radius:4px;overflow:hidden;">
+                <div id="vendor-progress-bar"
+                     style="height:100%;background:#4caf50;width:0%;transition:width 0.3s ease;"></div>
+              </div>
+            </div>
+            <svg aria-hidden="true" style="animation:spin 1s linear infinite;width:20px;height:20px;color:#666;">
+              <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
+              <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" stroke-width="2"
+                      stroke-dasharray="4 6"></circle>
+            </svg>
+          </div>
+        {% endif %}
+      {% elif report_type == 'customer_list' %}
+        <form action="{{ url_for('push_entity_list', job_id=job.id) }}" method="post" style="display:inline;"
+              onsubmit="return confirm('Push all customer names to QuickBooks? Safe to re-run.');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="btn btn-primary btn-lg" type="submit">Push to QBO →</button>
+        </form>
       {% endif %}
     </div>
   </section>
@@ -685,5 +736,63 @@
       </form>
     </div>
   </details>
+
+  {# ---- Vendor push polling (Phase 2 async) ---------------------- #}
+  {% if report_type == 'vendor_list' and not job.import_progress.done %}
+  <script nonce="{{ csp_nonce() }}">
+  (function() {
+    'use strict';
+    const jobId = '{{ job.id }}';
+    const pollUrl = '/jobs/' + jobId + '/vendor-push-progress';
+    let pollCount = 0;
+    const maxPolls = 600; // 10 minutes at 1s poll
+
+    function pollProgress() {
+      fetch(pollUrl, { method: 'GET' })
+        .then(r => r.json())
+        .then(data => {
+          const total = data.total || 1;
+          const done = data.pushed + data.updated + data.failed;
+          const pct = Math.round((done / total) * 100) || 0;
+
+          // Update text
+          document.getElementById('vendor-progress-text').textContent =
+            data.pushed + ' pushed, ' + data.updated + ' updated, ' + data.failed + ' failed';
+
+          // Update progress bar
+          const bar = document.getElementById('vendor-progress-bar');
+          if (bar) bar.style.width = pct + '%';
+
+          // Update percent
+          const pctEl = document.getElementById('vendor-progress-percent');
+          if (pctEl) pctEl.textContent = '(' + pct + '%)';
+
+          // If done, reload page to show final state + failures card
+          if (data.done) {
+            setTimeout(() => location.reload(), 500);
+            return;
+          }
+
+          // Keep polling
+          pollCount++;
+          if (pollCount < maxPolls) {
+            setTimeout(pollProgress, 1000);
+          }
+        })
+        .catch(e => {
+          console.error('Vendor push poll error:', e);
+          // Keep polling on error
+          pollCount++;
+          if (pollCount < maxPolls) {
+            setTimeout(pollProgress, 2000);
+          }
+        });
+    }
+
+    // Start polling immediately
+    pollProgress();
+  })();
+  </script>
+  {% endif %}
 </section>
 {% endblock %}
