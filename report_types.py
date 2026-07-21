@@ -502,6 +502,36 @@ def _open_csv(path) -> tuple[list[dict], list[str]]:
     return rows, fieldnames
 
 
+def _open_csv_raw_positional(path) -> tuple[list[list[str]], list[str]]:
+    """Open a PCLaw CSV and return raw positional rows (csv.reader, not DictReader).
+
+    Used by parse_vendor_list for PCLaw vendor data where empty header cells
+    cause DictReader to collapse columns. Returns (raw_rows, header_row).
+    """
+    p = Path(path)
+    text, _enc = open_csv_text(p)
+    with StringIO(text) as f:
+        # Buffer up to ~20 lines while we search for the real header row.
+        raw_lines: list[str] = []
+        for _ in range(20):
+            line = f.readline()
+            if not line:
+                break
+            raw_lines.append(line)
+        header_index = _find_header_line_index(raw_lines)
+        rest = f.read()
+
+    csv_text = "".join(raw_lines[header_index:]) + rest
+    reader = csv.reader(csv_text.splitlines())
+    header_row = next(reader, [])
+    rows: list[list[str]] = []
+    for row in reader:
+        if not row or all(not cell.strip() for cell in row):
+            continue
+        rows.append(row)
+    return rows, header_row
+
+
 def _find_header_line_index(lines: list[str]) -> int:
     """Return the index of the line that most plausibly contains the real
     CSV header. Looks for the first non-empty line that contains at least
@@ -752,8 +782,12 @@ def parse_vendor_list(path) -> tuple[list[dict], list[str], list[str]]:
     contact details, and a default expense account are kept when present so
     GL posting can match cheque payees to the right QuickBooks vendor.
     Captures ven_no, fax, default GL category, and terms for vendor details push.
+
+    For PCLaw files with empty header cells, uses raw csv.reader (positional indexing)
+    instead of DictReader to avoid column collapse misalignment.
     """
-    rows, fieldnames = _open_csv(path)
+    # First, do a quick check for PCLaw format using DictReader
+    rows_dict, fieldnames = _open_csv(path)
     idx = _index_headers(fieldnames)
     has_name = any(
         _norm_header(h) in idx
@@ -763,38 +797,48 @@ def parse_vendor_list(path) -> tuple[list[dict], list[str], list[str]]:
         )
     )
     missing = [] if has_name else ["vendor_name (any vendor/payee name)"]
-
     is_pclaw_vendor = _norm_header("Vendor Name & Address") in idx
 
-    normalized = []
-    for row in rows:
-        vendor_name = _pick(
-            row, idx,
-            "vendor_name", "vendor", "name", "payee", "company",
-            "Vendor Name & Address", "Vendor Name",
-        )
-        if not vendor_name:
-            continue
+    # For PCLaw vendor files, re-read using raw positional rows (csv.reader)
+    # to avoid DictReader column collapse from empty headers
+    if is_pclaw_vendor:
+        raw_rows, _header = _open_csv_raw_positional(path)
+        rows_to_parse = raw_rows
+        use_positional = True
+    else:
+        rows_to_parse = rows_dict
+        use_positional = False
 
-        if is_pclaw_vendor:
-            # PCLaw positional columns:
-            # A=ven_no, C=phone, D=street, E=fax, F=city, G=state, H=zip, I=email,
-            # P=default_gl_number, Q=default_gl_name, S=default_explanation, T=terms
-            vals = list(row.values())
-            ven_no  = (vals[0] or "").strip() if len(vals) > 0 else ""
-            phone   = (vals[2] or "").strip() if len(vals) > 2 else ""
-            fax     = (vals[4] or "").strip() if len(vals) > 4 else ""
-            street  = (vals[3] or "").strip() if len(vals) > 3 else ""
-            city    = (vals[5] or "").strip() if len(vals) > 5 else ""
-            state   = (vals[6] or "").strip() if len(vals) > 6 else ""
-            zip_    = (vals[7] or "").strip() if len(vals) > 7 else ""
-            email   = (vals[8] or "").strip() if len(vals) > 8 else ""
-            tax_id  = _pick(row, idx, "tax_id", "ACCOUNT") or ""
-            default_gl_number = (vals[15] or "").strip() if len(vals) > 15 else ""
-            default_gl_name = (vals[16] or "").strip() if len(vals) > 16 else ""
-            default_explanation = (vals[18] or "").strip() if len(vals) > 18 else ""
-            terms = (vals[19] or "").strip() if len(vals) > 19 else ""
+    normalized = []
+    for row_data in rows_to_parse:
+        if use_positional:
+            # Raw positional row (list of strings)
+            cells = row_data
+            # Column mapping (corrected: GL fields are at 16/17, not 15/16)
+            # 0=ven_no, 1=vendor_name, 2=phone, 3=street, 4=fax, 5=city, 6=state, 7=zip, 8=email
+            # 16=default_gl_number (Q), 17=default_gl_name (R), 18=default_explanation, 19=terms
+            vendor_name = (cells[1] or "").strip() if len(cells) > 1 else ""
+            ven_no  = (cells[0] or "").strip() if len(cells) > 0 else ""
+            phone   = (cells[2] or "").strip() if len(cells) > 2 else ""
+            street  = (cells[3] or "").strip() if len(cells) > 3 else ""
+            fax     = (cells[4] or "").strip() if len(cells) > 4 else ""
+            city    = (cells[5] or "").strip() if len(cells) > 5 else ""
+            state   = (cells[6] or "").strip() if len(cells) > 6 else ""
+            zip_    = (cells[7] or "").strip() if len(cells) > 7 else ""
+            email   = (cells[8] or "").strip() if len(cells) > 8 else ""
+            tax_id  = (cells[15] or "").strip() if len(cells) > 15 else ""  # ACCOUNT column
+            default_gl_number = (cells[16] or "").strip() if len(cells) > 16 else ""  # Q (corrected from 15)
+            default_gl_name = (cells[17] or "").strip() if len(cells) > 17 else ""  # R (corrected from 16)
+            default_explanation = (cells[18] or "").strip() if len(cells) > 18 else ""
+            terms = (cells[19] or "").strip() if len(cells) > 19 else ""
         else:
+            # DictReader row (dict)
+            row = row_data
+            vendor_name = _pick(
+                row, idx,
+                "vendor_name", "vendor", "name", "payee", "company",
+                "Vendor Name & Address", "Vendor Name",
+            )
             ven_no  = _pick(row, idx, "ven_no", "vendor_id", "vendor_account") or ""
             phone   = _pick(row, idx, "phone", "phone_number", "telephone") or ""
             fax     = _pick(row, idx, "fax", "fax_number") or ""
@@ -808,6 +852,9 @@ def parse_vendor_list(path) -> tuple[list[dict], list[str], list[str]]:
             default_gl_name = _pick(row, idx, "default_gl_name", "default_account_name") or ""
             default_explanation = _pick(row, idx, "default_explanation") or ""
             terms = _pick(row, idx, "terms", "payment_terms") or ""
+
+        if not vendor_name:
+            continue
 
         normalized.append({
             "vendor_name": vendor_name,
