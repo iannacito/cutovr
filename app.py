@@ -14829,9 +14829,30 @@ def revert_import(job_id):
     permanently removed from QBO. This is distinct from reverse_import which
     posts offsetting entries.
 
+    For vendor_list and customer_list jobs, clears the completion markers
+    so they can be re-pushed.
+
     Requires QBO_REAL_IMPORT=1 and a valid QuickBooks connection.
     """
     job, user = _job_or_403(job_id)
+    report_type = job.get("report_type") or ""
+
+    # Handle vendor/customer list revert (clear completion markers)
+    if report_type in (REPORT_VENDOR_LIST, REPORT_CUSTOMER_LIST):
+        db.save_job_state(job_id, {
+            "vendor_details_pushed" if report_type == REPORT_VENDOR_LIST else "customer_details_pushed": False,
+            "checkpoint": "parsed",
+            "import_progress": None,
+            "vendor_push_failures" if report_type == REPORT_VENDOR_LIST else "customer_push_failures": None,
+        })
+        jobs.pop(job_id, None)
+        _audit(
+            "entity_list_revert",
+            target_type="job", target_id=job_id,
+            details=f"Cleared {report_type} completion markers"
+        )
+        flash(f"Reverted — {report_type.replace('_', ' ')} details push cleared. Ready to re-push.", "success")
+        return redirect(url_for("job_detail", job_id=job_id))
 
     if not job.get("import_summary"):
         flash("Nothing to revert: this job has no completed import.", "info")
