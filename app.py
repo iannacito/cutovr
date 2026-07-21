@@ -4042,7 +4042,9 @@ def _parse_qbo_fault_detail(exc):
 def build_vendor_payload(row):
     """Build a full QBO Vendor payload from a parsed vendor row.
 
-    Omits empty fields (does not send blank sub-objects to QBO).
+    Omits empty fields (does not send blank sub-objects to QBO). Defense-in-depth
+    against stale/garbage parses: only includes address if >= 2 components are present,
+    and only includes email if syntactically valid.
     """
     payload = {
         "DisplayName": row.get("vendor_name", ""),
@@ -4066,7 +4068,11 @@ def build_vendor_payload(row):
     _city = _clean(row.get("city"))
     _state = _clean(row.get("state"))
     _zip = _clean(row.get("zip"))
-    if any([_street, _city, _state, _zip]):
+    # Only send BillAddr if we have at least 2 components (defense vs. garbage parses).
+    # Partial address is better than no address, but we want to avoid overwriting
+    # a complete QBO address with garbage like "83617 0.00".
+    addr_components = [_street, _city, _state, _zip]
+    if sum(1 for c in addr_components if c) >= 2:
         payload["BillAddr"] = {}
         if _street:
             payload["BillAddr"]["Line1"] = _street
@@ -4250,6 +4256,23 @@ def push_entity_list(job_id):
     return redirect(url_for("migration_nexus"))
 
 
+def _finish_vendor_push(job_id, pushed=0, updated=0, failed=0, total=0, error=None, vdp=False, failures=None):
+    """Terminal progress write for vendor push (ensures spinner always resolves)."""
+    prog = {
+        "pushed": pushed, "updated": updated, "failed": failed,
+        "total": total, "done": True
+    }
+    if error:
+        prog["error"] = error
+    state = {"import_progress": prog}
+    if vdp:
+        state["vendor_details_pushed"] = True
+    if failures:
+        state["vendor_push_failures"] = failures
+    db.save_job_state(job_id, state)
+    jobs.pop(job_id, None)
+
+
 def _async_vendor_push(job_id, user):
     """Background thread function for async vendor push (Phase 2).
 
@@ -4262,21 +4285,23 @@ def _async_vendor_push(job_id, user):
     job = db.hydrate_job(job_id) or jobs.get(job_id)
     if not job:
         _log.warning("_async_vendor_push: job %s not found in DB or memory; skipping", job_id)
+        _finish_vendor_push(job_id, error="Job not found")
         return
 
     report_type = job.get("report_type") or ""
     if report_type != REPORT_VENDOR_LIST:
+        _finish_vendor_push(job_id, error="Not a vendor list job")
         return
 
     parsed_key = "parsed_vendor_list"
-    # Re-parse fresh so the current parser (post-d6fee39 alignment fix) is used,
-    # not a stale parse persisted at upload time. Fall back to persisted only if
-    # the encrypted upload is no longer on disk.
-    rows = _reparse_report_rows(job, report_type) or job.get(parsed_key)
+    # Re-parse FRESH; never fall back to stale for a WRITE. Stale misaligned
+    # data overwrites good QBO addresses with garbage. If the file is gone
+    # (Render ephemeral disk), abort cleanly — don't push corrupted data.
+    rows = _reparse_report_rows(job, report_type)
     if not rows:
-        db.update_job_status(job_id, "completed")
-        db.save_job_state(job_id, {"vendor_details_pushed": True})
-        jobs.pop(job_id, None)
+        _finish_vendor_push(
+            job_id, total=0, error="Could not re-read the uploaded vendor file — re-upload it, then push again."
+        )
         return
 
     # Re-persist if fresh parse differs from stale persisted copy
@@ -4287,20 +4312,12 @@ def _async_vendor_push(job_id, user):
         qbo, qbo_conn = _get_qbo_client(job_id, user)
     except Exception as e:  # noqa: BLE001
         _log.exception("_async_vendor_push: QBO client error: %s", e)
-        progress = {
-            "pushed": 0, "updated": 0, "failed": len(rows),
-            "total": len(rows), "done": True, "error": str(e)
-        }
-        db.save_job_state(job_id, {"import_progress": progress})
+        _finish_vendor_push(job_id, total=len(rows), failed=len(rows), error=str(e))
         return
 
     if not qbo:
         _log.error("_async_vendor_push: QBO client is None; QuickBooks not connected")
-        progress = {
-            "pushed": 0, "updated": 0, "failed": len(rows),
-            "total": len(rows), "done": True, "error": "QuickBooks not connected"
-        }
-        db.save_job_state(job_id, {"import_progress": progress})
+        _finish_vendor_push(job_id, total=len(rows), failed=len(rows), error="QuickBooks not connected")
         return
 
     pushed, updated, failed = 0, 0, 0
@@ -4343,23 +4360,22 @@ def _async_vendor_push(job_id, user):
 
         if (i + 1) % _QBO_BATCH == 0:
             _time.sleep(0.5)
-            # Update progress mid-push
+            # Update progress mid-push AND persist failures so far (Bug C fix)
             progress = {
                 "pushed": pushed, "updated": updated, "failed": failed,
                 "total": len(rows), "done": False
             }
-            db.save_job_state(job_id, {"import_progress": progress})
+            mid_state = {"import_progress": progress}
+            if vendor_push_failures:
+                mid_state["vendor_push_failures"] = vendor_push_failures
+            db.save_job_state(job_id, mid_state)
 
-    # Final progress update
-    progress = {
-        "pushed": pushed, "updated": updated, "failed": failed,
-        "total": len(rows), "done": True
-    }
-    save_state = {"import_progress": progress, "vendor_details_pushed": True}
-    if vendor_push_failures:
-        save_state["vendor_push_failures"] = vendor_push_failures
-    db.save_job_state(job_id, save_state)
-    jobs.pop(job_id, None)
+    # Final progress update (use helper to ensure done:True always)
+    _finish_vendor_push(
+        job_id,
+        pushed=pushed, updated=updated, failed=failed, total=len(rows),
+        vdp=True, failures=vendor_push_failures if vendor_push_failures else None
+    )
     db.update_job_status(job_id, "completed")
     _audit(
         "vendor_push_async",
