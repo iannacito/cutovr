@@ -3994,6 +3994,29 @@ def _vendor_notes(row):
     return "\n".join(parts)
 
 
+def _parse_qbo_fault_detail(exc):
+    """Extract QBO fault code, message, and detail from a QBOError.
+
+    Returns a dict with qbo_code, message, detail (all strings, or None if not found).
+    """
+    result = {"qbo_code": None, "message": None, "detail": None}
+    body = getattr(exc, "body", "") or ""
+    if not body:
+        return result
+    try:
+        fault_data = json.loads(body)
+        fault = fault_data.get("Fault", {})
+        errors = fault.get("Error", [])
+        if errors and len(errors) > 0:
+            first_error = errors[0]
+            result["qbo_code"] = str(first_error.get("code", ""))
+            result["message"] = str(first_error.get("Message", ""))
+            result["detail"] = str(first_error.get("Detail", ""))
+    except (json.JSONDecodeError, TypeError, AttributeError):
+        pass
+    return result
+
+
 def build_vendor_payload(row):
     """Build a full QBO Vendor payload from a parsed vendor row.
 
@@ -4104,64 +4127,96 @@ def push_entity_list(job_id):
 
     name_key = "vendor_name" if is_vendor else "customer_name"
 
-    pushed, skipped, errors = 0, 0, 0
-    _QBO_BATCH = 25
-    for i, row in enumerate(rows):
-        name = (row.get(name_key) or "").strip()
-        if not name:
-            skipped += 1
-            continue
-        try:
-            if is_vendor:
-                # Vendor: build full payload, update existing in place, create with details
-                payload = build_vendor_payload(row)
-                existing = qbo.find_vendor_by_name(name)
-                if existing:
-                    # Fetch fresh SyncToken and update in place
-                    fresh = qbo.get_vendor_by_id(existing["Id"])
-                    if fresh:
-                        payload["Id"] = fresh["Id"]
-                        payload["SyncToken"] = fresh["SyncToken"]
-                        payload["sparse"] = True
-                        qbo.update_vendor(payload)
+    # Phase 0: Route-level try/except to catch blank 500s and surface errors
+    try:
+        pushed, skipped, errors = 0, 0, 0
+        vendor_push_failures = []  # Per-vendor error capture for diagnostics
+        _QBO_BATCH = 25
+        for i, row in enumerate(rows):
+            name = (row.get(name_key) or "").strip()
+            if not name:
+                skipped += 1
+                continue
+            try:
+                if is_vendor:
+                    # Vendor: build full payload, update existing in place, create with details
+                    payload = build_vendor_payload(row)
+                    existing = qbo.find_vendor_by_name(name)
+                    if existing:
+                        # Fetch fresh SyncToken and update in place
+                        fresh = qbo.get_vendor_by_id(existing["Id"])
+                        if fresh:
+                            payload["Id"] = fresh["Id"]
+                            payload["SyncToken"] = fresh["SyncToken"]
+                            payload["sparse"] = True
+                            qbo.update_vendor(payload)
+                    else:
+                        # Create new with full details
+                        qbo.create_vendor_with_details(payload)
                 else:
-                    # Create new with full details
-                    qbo.create_vendor_with_details(payload)
-            else:
-                # Customer: unchanged (name-only for now)
-                qbo.get_or_create_customer(name)
-            pushed += 1
-        except Exception as exc:  # noqa: BLE001
-            _log.warning("push_entity_list: %s %r failed: %s", entity_label, name, exc)
-            errors += 1
-        if (i + 1) % _QBO_BATCH == 0:
-            _time.sleep(0.5)
+                    # Customer: unchanged (name-only for now)
+                    qbo.get_or_create_customer(name)
+                pushed += 1
+            except Exception as exc:  # noqa: BLE001
+                # Phase 0: Per-vendor error capture with full QBO fault details
+                fault_detail = _parse_qbo_fault_detail(exc)
+                failure_record = {
+                    "vendor_name": name,
+                    "status_code": getattr(exc, "status_code", None),
+                    "qbo_code": fault_detail["qbo_code"],
+                    "message": fault_detail["message"],
+                    "detail": fault_detail["detail"],
+                    "intuit_tid": getattr(exc, "intuit_tid", None),
+                    "sent_payload": payload if is_vendor else None,
+                }
+                vendor_push_failures.append(failure_record)
+                _log.warning(
+                    "push_entity_list: %s %r failed (code=%s, tid=%s): %s",
+                    entity_label, name, fault_detail["qbo_code"],
+                    getattr(exc, "intuit_tid", "?"), exc
+                )
+                errors += 1
+            if (i + 1) % _QBO_BATCH == 0:
+                _time.sleep(0.5)
 
-    # Save state and set vendor_details_pushed marker for vendors
-    save_state = {"status": "completed", "checkpoint": "completed"}
-    if is_vendor:
-        save_state["vendor_details_pushed"] = True
-    db.save_job_state(job_id, save_state)
-    jobs.pop(job_id, None)  # invalidate stale in-memory cache
-    _audit(
-        "entity_list_pushed",
-        target_type="job", target_id=job_id,
-        details=(
-            f"report_type={report_type} pushed={pushed} "
-            f"skipped={skipped} errors={errors}"
-        ),
-    )
-    if errors:
-        flash(
-            f"Pushed {pushed} {entity_label.lower()}s to QuickBooks "
-            f"({errors} failed — check logs). Safe to re-push.",
-            "warning",
+        # Save state and set vendor_details_pushed marker for vendors
+        save_state = {"status": "completed", "checkpoint": "completed"}
+        if is_vendor:
+            save_state["vendor_details_pushed"] = True
+            if vendor_push_failures:
+                save_state["vendor_push_failures"] = vendor_push_failures
+        db.save_job_state(job_id, save_state)
+        jobs.pop(job_id, None)  # invalidate stale in-memory cache
+        _audit(
+            "entity_list_pushed",
+            target_type="job", target_id=job_id,
+            details=(
+                f"report_type={report_type} pushed={pushed} "
+                f"skipped={skipped} errors={errors}"
+            ),
         )
-    else:
+        if errors:
+            flash(
+                f"Pushed {pushed} {entity_label.lower()}s to QuickBooks "
+                f"({errors} failed — check the details below). Safe to re-push.",
+                "warning",
+            )
+        else:
+            flash(
+                f"Pushed {pushed} {entity_label.lower()}s to QuickBooks successfully.",
+                "success",
+            )
+
+    except Exception as e:  # noqa: BLE001
+        # Route-level catch: any unexpected error (not per-vendor)
+        _log.exception("push_entity_list route failed for %s: %s", job_id, e)
         flash(
-            f"Pushed {pushed} {entity_label.lower()}s to QuickBooks successfully.",
-            "success",
+            f"Vendor push failed: {type(e).__name__}: {str(e)[:200]}. "
+            "Check logs for details.",
+            "error",
         )
+        return redirect(url_for("migration_nexus"))
+
     return redirect(url_for("migration_nexus"))
 
 

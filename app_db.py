@@ -449,6 +449,11 @@ class AppDB:
         # to be independent from the standalone details push.
         add_col("jobs", "vendor_details_pushed INTEGER NOT NULL DEFAULT 0")
 
+        # Vendor push failures: per-vendor error detail from push_entity_list including
+        # QBO fault codes, messages, and diagnostic info. Captured when a vendor fails
+        # to create/update so the user can see the exact QBO rejection without Render logs.
+        add_col("jobs", "vendor_push_failures_json TEXT")
+
         # cutover_settings: AR/AP migration strategy (Task 4 in the
         # migration-workflow completion PR). Default empty so existing
         # firms without a strategy continue to behave as "undecided",
@@ -956,6 +961,13 @@ class AppDB:
         if "vendor_details_pushed" in job_dict:
             fields.append("vendor_details_pushed")
             values.append(1 if job_dict["vendor_details_pushed"] else 0)
+        if "vendor_push_failures" in job_dict:
+            fields.append("vendor_push_failures_json")
+            values.append(
+                json.dumps(job_dict["vendor_push_failures"])
+                if job_dict["vendor_push_failures"]
+                else None
+            )
         if "opening_balance_history" in job_dict:
             fields.append("opening_balance_history_json")
             values.append(
@@ -1053,6 +1065,7 @@ class AppDB:
             ("entity_name_blockers_json", "entity_name_blockers"),
             ("pending_entity_links_json", "pending_entity_links"),
             ("pending_entity_links_failures_json", "pending_entity_links_failures"),
+            ("vendor_push_failures_json", "vendor_push_failures"),
             ("opening_balance_history_json", "opening_balance_history"),
             ("auto_balance_rows_json", "auto_balance_rows"),
             ("parsed_trial_balance_json", "parsed_trial_balance"),
