@@ -4069,8 +4069,22 @@ def push_entity_list(job_id):
         flash("Connect QuickBooks before pushing the entity list.", "error")
         return redirect(url_for("migration_nexus"))
 
-    parsed_key = "parsed_vendor_list" if report_type == REPORT_VENDOR_LIST else "parsed_customer_list"
-    rows = job.get(parsed_key) or _reparse_report_rows(job, report_type)
+    is_vendor = report_type == REPORT_VENDOR_LIST
+    entity_label = "Vendor" if is_vendor else "Customer"
+
+    parsed_key = "parsed_vendor_list" if is_vendor else "parsed_customer_list"
+    rows = job.get(parsed_key)
+    if not rows:
+        try:
+            rows = _reparse_report_rows(job, report_type)
+        except Exception as e:  # noqa: BLE001
+            _log.exception("push_entity_list: parse error for %s: %s", entity_label, e)
+            flash(
+                f"Could not parse the {entity_label.lower()} file: {str(e)} "
+                "Please check the file format and re-upload.",
+                "error",
+            )
+            return redirect(url_for("migration_nexus"))
     if not rows:
         flash("Could not read the uploaded file. Please re-upload and try again.", "error")
         return redirect(url_for("migration_nexus"))
@@ -4088,9 +4102,7 @@ def push_entity_list(job_id):
         flash("QuickBooks is not connected.", "error")
         return redirect(url_for("migration_nexus"))
 
-    is_vendor = report_type == REPORT_VENDOR_LIST
     name_key = "vendor_name" if is_vendor else "customer_name"
-    entity_label = "Vendor" if is_vendor else "Customer"
 
     pushed, skipped, errors = 0, 0, 0
     _QBO_BATCH = 25
