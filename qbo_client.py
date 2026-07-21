@@ -123,31 +123,55 @@ class QBOClient:
         self.last_intuit_tid = tid
         return tid
 
-    def query(self, sql):
+    def query(self, sql, *, max_retries: int = DEFAULT_MAX_RETRIES):
+        """Run a QBO Query API call with retry on transient failures (429/5xx)."""
         encoded_query = quote(sql)
         url = f"{self.base_url}/v3/company/{self.realm_id}/query?query={encoded_query}&minorversion=75"
-        try:
-            response = requests.get(url, headers=self._headers(), timeout=30)
-        except requests.RequestException as e:
-            # Network-level failure (DNS, TLS, connection reset, timeout).
-            # No HTTP response so no intuit_tid is available.
-            raise QBOError(
-                f"Could not reach QuickBooks while running a query: {e}",
-                status_code=None,
-                body=None,
-                intuit_tid=None,
-            ) from e
-        # Capture the Intuit transaction id even on non-2xx responses so the
-        # caller can include it in audit / user-facing diagnostics.
-        tid = self._record_tid(response)
-        if response.status_code >= 400:
+        for attempt in range(max_retries):
+            try:
+                response = requests.get(url, headers=self._headers(), timeout=30)
+            except requests.RequestException as e:
+                # Network-level transient — retry if budget remains.
+                if attempt + 1 < max_retries:
+                    delay = _retry_after_seconds(
+                        None, attempt,
+                        DEFAULT_BACKOFF_BASE_SECONDS, DEFAULT_BACKOFF_CAP_SECONDS,
+                    )
+                    _log.warning(
+                        "query network error attempt=%s/%s err=%s sleeping=%.1fs",
+                        attempt + 1, max_retries, e, delay,
+                    )
+                    _sleep(delay)
+                    continue
+                raise QBOError(
+                    f"Could not reach QuickBooks while running a query: {e}",
+                    status_code=None,
+                    body=None,
+                    intuit_tid=None,
+                ) from e
+            # Capture the Intuit transaction id even on non-2xx responses
+            tid = self._record_tid(response)
+            if response.status_code < 400:
+                return response.json()
+            # Transient failure (429/5xx) — retry if budget remains
+            if _is_transient_status(response.status_code) and attempt + 1 < max_retries:
+                delay = _retry_after_seconds(
+                    response, attempt,
+                    DEFAULT_BACKOFF_BASE_SECONDS, DEFAULT_BACKOFF_CAP_SECONDS,
+                )
+                _log.warning(
+                    "query transient status=%s attempt=%s/%s tid=%s sleeping=%.1fs",
+                    response.status_code, attempt + 1, max_retries, tid, delay,
+                )
+                _sleep(delay)
+                continue
+            # Persistent failure — raise
             raise QBOError(
                 f"QBO returned {response.status_code} on query: {response.text}",
                 status_code=response.status_code,
                 body=response.text,
                 intuit_tid=tid,
             )
-        return response.json()
 
     def get_accounts(self):
         return self.query("SELECT Id, Name, AcctNum, AccountType, AccountSubType, Active FROM Account MAXRESULTS 1000")
@@ -724,54 +748,123 @@ class QBOClient:
             return response.json().get("Vendor")
         return None
 
-    def update_vendor(self, payload):
-        """Sparse-update a QBO Vendor. Returns the parsed JSON response.
+    def update_vendor(self, payload, *, max_retries: int = DEFAULT_MAX_RETRIES):
+        """Sparse-update a QBO Vendor, with retry on transient failures (429/5xx).
 
         ``payload`` must include ``Id``, ``SyncToken``, ``sparse: True``,
         and the fields to update (e.g., AcctNum, BillAddr, PrimaryPhone, etc).
         """
         url = f"{self.base_url}/v3/company/{self.realm_id}/vendor?minorversion=75"
-        response = requests.post(
-            url, headers=self._headers(), json=payload, timeout=30
-        )
-        tid = self._record_tid(response)
-        if response.status_code >= 400:
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(
+                    url, headers=self._headers(), json=payload, timeout=30
+                )
+            except requests.RequestException as e:
+                # Network-level transient — retry if budget remains.
+                if attempt + 1 < max_retries:
+                    delay = _retry_after_seconds(
+                        None, attempt,
+                        DEFAULT_BACKOFF_BASE_SECONDS, DEFAULT_BACKOFF_CAP_SECONDS,
+                    )
+                    _log.warning(
+                        "update_vendor network error attempt=%s/%s err=%s sleeping=%.1fs",
+                        attempt + 1, max_retries, e, delay,
+                    )
+                    _sleep(delay)
+                    continue
+                raise QBOError(
+                    f"Could not reach QuickBooks while updating Vendor: {e}",
+                    status_code=None,
+                    body=None,
+                    intuit_tid=None,
+                ) from e
+            tid = self._record_tid(response)
+            if response.status_code < 400:
+                return response.json()
+            # Transient failure (429/5xx) — retry if budget remains
+            if _is_transient_status(response.status_code) and attempt + 1 < max_retries:
+                delay = _retry_after_seconds(
+                    response, attempt,
+                    DEFAULT_BACKOFF_BASE_SECONDS, DEFAULT_BACKOFF_CAP_SECONDS,
+                )
+                _log.warning(
+                    "update_vendor transient status=%s attempt=%s/%s tid=%s sleeping=%.1fs",
+                    response.status_code, attempt + 1, max_retries, tid, delay,
+                )
+                _sleep(delay)
+                continue
+            # Persistent failure — raise
             raise QBOError(
                 f"QBO returned {response.status_code} updating Vendor: {response.text}",
                 status_code=response.status_code,
                 body=response.text,
                 intuit_tid=tid,
             )
-        return response.json()
 
-    def create_vendor_with_details(self, payload):
-        """Create a QBO Vendor with full details (or name-only fallback on 6240).
+    def create_vendor_with_details(self, payload, *, max_retries: int = DEFAULT_MAX_RETRIES):
+        """Create a QBO Vendor with full details, with retry on transient failures.
 
         Similar to create_vendor but accepts a full payload dict with DisplayName,
         phone, address, etc. On 6240 (duplicate name), falls back to find_vendor_by_name
-        and returns the existing vendor.
+        and returns the existing vendor. Retries on 429/5xx.
         """
         url = f"{self.base_url}/v3/company/{self.realm_id}/vendor?minorversion=75"
-        response = requests.post(
-            url, headers=self._headers(), json=payload, timeout=30
-        )
-        tid = self._record_tid(response)
-        if response.status_code == 400:
-            # 6240 = Duplicate Name Exists — fall back to find.
+        for attempt in range(max_retries):
             try:
-                errors = (response.json().get("Fault") or {}).get("Error") or []
-                if any(str(e.get("code")) == "6240" for e in errors):
-                    _log.warning(
-                        "create_vendor_with_details 6240 for %r — entity already exists in QBO; "
-                        "falling back to find_vendor_by_name",
-                        payload.get("DisplayName"),
+                response = requests.post(
+                    url, headers=self._headers(), json=payload, timeout=30
+                )
+            except requests.RequestException as e:
+                # Network-level transient — retry if budget remains.
+                if attempt + 1 < max_retries:
+                    delay = _retry_after_seconds(
+                        None, attempt,
+                        DEFAULT_BACKOFF_BASE_SECONDS, DEFAULT_BACKOFF_CAP_SECONDS,
                     )
-                    existing = self.find_vendor_by_name(payload.get("DisplayName"))
-                    if existing:
-                        return existing
-            except Exception:  # noqa: BLE001
-                pass  # fall through to generic raise below
-        if response.status_code >= 400:
+                    _log.warning(
+                        "create_vendor_with_details network error attempt=%s/%s err=%s sleeping=%.1fs",
+                        attempt + 1, max_retries, e, delay,
+                    )
+                    _sleep(delay)
+                    continue
+                raise QBOError(
+                    f"Could not reach QuickBooks while creating Vendor: {e}",
+                    status_code=None,
+                    body=None,
+                    intuit_tid=None,
+                ) from e
+            tid = self._record_tid(response)
+            if response.status_code < 400:
+                return response.json()
+            # 6240 (Duplicate Name) — find and reuse
+            if response.status_code == 400:
+                try:
+                    errors = (response.json().get("Fault") or {}).get("Error") or []
+                    if any(str(e.get("code")) == "6240" for e in errors):
+                        _log.warning(
+                            "create_vendor_with_details 6240 for %r — entity already exists in QBO; "
+                            "falling back to find_vendor_by_name",
+                            payload.get("DisplayName"),
+                        )
+                        existing = self.find_vendor_by_name(payload.get("DisplayName"))
+                        if existing:
+                            return existing
+                except Exception:  # noqa: BLE001
+                    pass
+            # Transient failure (429/5xx) — retry if budget remains
+            if _is_transient_status(response.status_code) and attempt + 1 < max_retries:
+                delay = _retry_after_seconds(
+                    response, attempt,
+                    DEFAULT_BACKOFF_BASE_SECONDS, DEFAULT_BACKOFF_CAP_SECONDS,
+                )
+                _log.warning(
+                    "create_vendor_with_details transient status=%s attempt=%s/%s tid=%s sleeping=%.1fs",
+                    response.status_code, attempt + 1, max_retries, tid, delay,
+                )
+                _sleep(delay)
+                continue
+            # Persistent failure — raise
             raise QBOError(
                 f"QBO returned {response.status_code} creating Vendor: {response.text}",
                 status_code=response.status_code,

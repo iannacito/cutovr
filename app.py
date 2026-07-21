@@ -4340,7 +4340,8 @@ def _async_vendor_push(job_id, user):
 
     pushed, updated, failed = 0, 0, 0
     vendor_push_failures = []
-    _QBO_BATCH = 25
+    _QBO_BATCH_CALLS = 25  # Pace by API calls, not vendors (~2 calls per vendor = 12-13 vendors)
+    call_count = 0
 
     for i, row in enumerate(rows):
         name = (row.get("vendor_name") or "").strip()
@@ -4350,14 +4351,17 @@ def _async_vendor_push(job_id, user):
         try:
             payload = build_vendor_payload(row)
             existing = qbo.find_vendor_by_name(name)
+            call_count += 1  # find_vendor_by_name call
             if existing:
                 payload["Id"] = existing["Id"]
                 payload["SyncToken"] = existing.get("SyncToken", "")
                 payload["sparse"] = True
                 qbo.update_vendor(payload)
+                call_count += 1  # update_vendor call
                 updated += 1
             else:
                 qbo.create_vendor_with_details(payload)
+                call_count += 1  # create_vendor_with_details call
                 pushed += 1
         except Exception as exc:  # noqa: BLE001
             fault_detail = _parse_qbo_fault_detail(exc)
@@ -4376,8 +4380,9 @@ def _async_vendor_push(job_id, user):
                 name, fault_detail["qbo_code"], exc
             )
 
-        if (i + 1) % _QBO_BATCH == 0:
+        if call_count >= _QBO_BATCH_CALLS:
             _time.sleep(0.5)
+            call_count = 0
             # Update progress mid-push AND persist failures so far (Bug C fix)
             progress = {
                 "pushed": pushed, "updated": updated, "failed": failed,
