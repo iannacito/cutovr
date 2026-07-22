@@ -931,6 +931,18 @@ def plan_recovery_reclass_groups(
                 continue
 
             # Check for mirror pattern: same account with opposite sign elsewhere
+            # BUT ONLY for rows in unbalanced transactions (design spec: "unbalanced-alone").
+            # If a row's own transaction_id group already balances, it's not a recovery/reclass candidate.
+            r_txn_id = (r.get("transaction_id") or r.get("reference_number") or "").strip()
+            if r_txn_id:
+                # Get all rows in this row's transaction
+                r_txn_rows = [row for row in month_rows
+                             if (row.get("transaction_id") or row.get("reference_number") or "").strip() == r_txn_id]
+                r_txn_debits, r_txn_credits = _txn_totals(r_txn_rows)
+                # Skip if this transaction is already balanced on its own
+                if round(r_txn_debits, 2) == round(r_txn_credits, 2):
+                    continue
+
             account_number = r.get("account_number", "")
             account_name = r.get("account_name", "")
             if account_number or account_name:
