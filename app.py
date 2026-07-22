@@ -10352,15 +10352,63 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
                     row["_original_txn_id"] = row.get("transaction_id", "")
                 row["transaction_id"] = token
 
+        # Merge fix: check if reclass groups share an anchor with TotRec.
+        # If so, fold them into the TotRec token instead of creating a separate RCLS token.
+        # This ensures the anchor (id-less "Total of Recoveries") doesn't get double-claimed.
+        tot_rec_row_ids = {id(r) for grp in tot_rec_groups for r in grp.get("rows", [])}
+        tot_rec_anchor_ids = set()
+        for grp in tot_rec_groups:
+            anchor_row = grp.get("rows", [])
+            if anchor_row:
+                # Find the id-less row (no transaction_id, no reference_number)
+                for r in anchor_row:
+                    if not (r.get("transaction_id") or r.get("reference_number")):
+                        tot_rec_anchor_ids.add(id(r))
+
         # Stamp recovery/reclass tokens onto rows not already claimed by TotRec.
         # Use same object-identity matching as TotRec to handle id-less rows.
         recovery_reclass_tokens: set[str] = set()
-        tot_rec_row_ids = {id(r) for grp in tot_rec_groups for r in grp.get("rows", [])}
         recovery_reclass_row_ids_by_token: dict[str, set] = {}  # token -> {row ids in this token}
         for grp in recovery_reclass_groups:
             token = grp.get("token", "")
             if not token:
                 continue
+
+            # MERGE FIX: if this reclass group's anchor is in TotRec, use TotRec's token instead
+            grp_anchor_ids = set()
+            for r in grp.get("rows", []):
+                if not (r.get("transaction_id") or r.get("reference_number")):
+                    grp_anchor_ids.add(id(r))
+
+            if grp_anchor_ids & tot_rec_anchor_ids:
+                # Shared anchor — use TotRec's token for these rows too
+                # Find the TotRec token that owns this anchor
+                totrec_token = None
+                for grp2 in tot_rec_groups:
+                    for r in grp2.get("rows", []):
+                        if id(r) in grp_anchor_ids:
+                            totrec_token = grp2.get("token", "")
+                            break
+                    if totrec_token:
+                        break
+
+                if totrec_token:
+                    # Stamp reclass rows with the TotRec token (skip already-stamped anchor)
+                    row_ids = set()
+                    for row in grp.get("rows", []):
+                        if id(row) in tot_rec_row_ids:
+                            continue  # Already stamped by TotRec
+                        row_ids.add(id(row))
+                        if "_original_txn_id" not in row:
+                            row["_original_txn_id"] = row.get("transaction_id", "")
+                        row["transaction_id"] = totrec_token  # Use TotRec token, not RCLS
+                    if row_ids:
+                        recovery_reclass_row_ids_by_token[totrec_token] = row_ids.union(
+                            recovery_reclass_row_ids_by_token.get(totrec_token, set())
+                        )
+                    continue
+
+            # No shared anchor — stamp with separate RCLS token (original behavior)
             recovery_reclass_tokens.add(token)
             row_ids = set()
             for row in grp.get("rows", []):
