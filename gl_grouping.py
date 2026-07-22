@@ -544,14 +544,15 @@ def plan_total_recoveries_group(
 ) -> list[dict]:
     """Detect and group Total Expense Recoveries entries per month.
 
-    For each month found in the data, searches for:
-    1. CER row with description == "Total of Recoveries"
-    2. All CER rows with vendor_name == "Expense Recovery" (detail lines)
-    3. All GB (or any journal) rows where text contains "refund" (case-insensitive,
-       anywhere in vendor_name, description, memo, or reference_number)
+    For each month found in the data, searches for (in order):
+    Layer 1: CER row with description == "Total of Recoveries" (anchor)
+    Layer 2: All CER rows with vendor_name == "Expense Recovery" (detail lines)
+    Layer 3: All CER rows regardless of vendor_name (widens Layer 2, deduped)
+    Layer 4: All GB (or any journal) rows where text contains "refund" (case-insensitive,
+             anywhere in vendor_name, description, memo, or reference_number)
 
-    Verifies the group balances exactly using the formula:
-        sum(CER "Expense Recovery" credits) == total_of_recoveries_debit + sum(GB "Refund" debits)
+    Verifies the group balances exactly using the formula (Layers 1-4, surplus case):
+        sum(CER candidate credits from Layers 2-3) == total_of_recoveries_debit + sum(GB "Refund" debits from Layer 4)
 
     Returns a list of validated groups ready to merge. Each group has:
         {
@@ -639,18 +640,32 @@ def plan_total_recoveries_group(
                 })
             continue
 
-        # Find all CER "Expense Recovery" detail lines in the same month.
-        exp_rec_rows = []
+        # Layer 1: Find all CER "Expense Recovery" detail lines in the same month.
+        layer1_rows = []
         for r in month_rows:
             journal = source_journal_token(r) or ""
             if (
                 journal == "CER"
                 and (r.get("vendor_name") or "").strip() == "Expense Recovery"
             ):
-                exp_rec_rows.append(r)
+                layer1_rows.append(r)
 
-        # Find all "refund"-tagged rows (case-insensitive) in the same month.
-        # Search vendor_name, description, memo, reference_number.
+        # Layer 2: Widen to ALL CER rows, minus already-claimed ones.
+        # This catches CER credits with vendor_name values other than "Expense Recovery"
+        # but are still genuine recovery entries (confirmed across 18 months).
+        layer1_claimed = {id(r) for r in layer1_rows}
+        layer2_rows = []
+        for r in month_rows:
+            journal = source_journal_token(r) or ""
+            if journal == "CER" and id(r) not in layer1_claimed and id(r) != id(tot_rec_row):
+                layer2_rows.append(r)
+
+        # Union of Layer 1 + Layer 2 for the CER candidate pool.
+        cer_candidate_rows = layer1_rows + layer2_rows
+
+        # Layer 3: Find all "refund"-tagged rows (case-insensitive) in the same month.
+        # Search vendor_name, description, memo, reference_number. This handles surplus
+        # cases (CER credits > anchor, explained by extra debits elsewhere).
         refund_rows = []
         for r in month_rows:
             for key in ("vendor_name", "description", "memo", "reference_number"):
@@ -659,22 +674,22 @@ def plan_total_recoveries_group(
                     refund_rows.append(r)
                     break
 
-        # Dedupe: exclude rows already claimed by tot_rec_row or exp_rec_rows from refund_rows.
-        claimed = {id(tot_rec_row)} | {id(r) for r in exp_rec_rows}
+        # Dedupe: exclude rows already claimed by tot_rec_row or cer_candidate_rows from refund_rows.
+        claimed = {id(tot_rec_row)} | {id(r) for r in cer_candidate_rows}
         refund_rows = [r for r in refund_rows if id(r) not in claimed]
 
-        # Build the group: Total of Recoveries + CER Expense Recovery lines + refund lines.
-        group_rows = [tot_rec_row] + exp_rec_rows + refund_rows
+        # Build the group: Total of Recoveries + CER candidates (Layer 1+2) + refund lines (Layer 3).
+        group_rows = [tot_rec_row] + cer_candidate_rows + refund_rows
         if not group_rows:
             result = "no_group_rows"
             if diag_sink is not None:
                 diag_sink.append({
                     "month_key": month_key,
                     "found_total_of_recoveries_row": True,
-                    "expense_recovery_line_count": len(exp_rec_rows),
+                    "cer_candidate_count": len(cer_candidate_rows),
                     "refund_row_count": len(refund_rows),
                     "total_of_recoveries_debit": f"{tot_rec_debit:.2f}",
-                    "expense_recovery_credits": None,
+                    "cer_candidate_credits": None,
                     "expected_credits": None,
                     "balance_delta": None,
                     "result": result,
@@ -685,25 +700,26 @@ def plan_total_recoveries_group(
         # Compute totals for the group.
         debits, credits = _txn_totals(group_rows)
 
-        # Verify the group balances using the formula:
-        # sum(CER "Expense Recovery" credits) == total_of_recoveries_debit + sum(GB "Refund" debits)
-        exp_rec_credits = sum(_row_money(r, "credit") for r in exp_rec_rows)
+        # Verify the group balances using the formula (Layer 3 surplus case):
+        # sum(CER candidate credits, Layer 1+2) == total_of_recoveries_debit + sum(GB "Refund" debits, Layer 3)
+        cer_candidate_credits = sum(_row_money(r, "credit") for r in cer_candidate_rows)
         refund_debits = sum(_row_money(r, "debit") for r in refund_rows)
         expected_credits = tot_rec_debit + refund_debits
 
-        # Strict balance check — must match to the cent.
-        balance_delta = exp_rec_credits - expected_credits
-        if round(exp_rec_credits, 2) != round(expected_credits, 2):
-            # Does not balance exactly; skip and flag for manual review.
+        # Strict balance check — must match to the cent (Layer 3 only for now).
+        balance_delta = cer_candidate_credits - expected_credits
+        if round(cer_candidate_credits, 2) != round(expected_credits, 2):
+            # Does not balance via Layers 1-3; skip and flag for manual review.
+            # (Layer 4 deficit closer will be added in a future phase)
             result = "unbalanced"
             if diag_sink is not None:
                 diag_sink.append({
                     "month_key": month_key,
                     "found_total_of_recoveries_row": True,
-                    "expense_recovery_line_count": len(exp_rec_rows),
+                    "cer_candidate_count": len(cer_candidate_rows),
                     "refund_row_count": len(refund_rows),
                     "total_of_recoveries_debit": f"{tot_rec_debit:.2f}",
-                    "expense_recovery_credits": f"{exp_rec_credits:.2f}",
+                    "cer_candidate_credits": f"{cer_candidate_credits:.2f}",
                     "expected_credits": f"{expected_credits:.2f}",
                     "balance_delta": f"{balance_delta:.2f}",
                     "result": result,
@@ -721,10 +737,10 @@ def plan_total_recoveries_group(
                 diag_sink.append({
                     "month_key": month_key,
                     "found_total_of_recoveries_row": True,
-                    "expense_recovery_line_count": len(exp_rec_rows),
+                    "cer_candidate_count": len(cer_candidate_rows),
                     "refund_row_count": len(refund_rows),
                     "total_of_recoveries_debit": f"{tot_rec_debit:.2f}",
-                    "expense_recovery_credits": f"{exp_rec_credits:.2f}",
+                    "cer_candidate_credits": f"{cer_candidate_credits:.2f}",
                     "expected_credits": f"{expected_credits:.2f}",
                     "balance_delta": f"{(debits - credits):.2f}",
                     "result": result,
@@ -746,10 +762,10 @@ def plan_total_recoveries_group(
             diag_sink.append({
                 "month_key": month_key,
                 "found_total_of_recoveries_row": True,
-                "expense_recovery_line_count": len(exp_rec_rows),
+                "cer_candidate_count": len(cer_candidate_rows),
                 "refund_row_count": len(refund_rows),
                 "total_of_recoveries_debit": f"{tot_rec_debit:.2f}",
-                "expense_recovery_credits": f"{exp_rec_credits:.2f}",
+                "cer_candidate_credits": f"{cer_candidate_credits:.2f}",
                 "expected_credits": f"{expected_credits:.2f}",
                 "balance_delta": f"{balance_delta:.2f}",
                 "result": result,
