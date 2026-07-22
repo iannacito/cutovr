@@ -10323,16 +10323,12 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
         type_index = build_account_type_index(qbo_accounts)
         name_index = build_account_name_index(qbo_accounts)
         from pclaw_pipeline import plan_balanced_payloads
-        from gl_grouping import plan_posting_groups, plan_total_recoveries_group, plan_recovery_reclass_groups
+        from gl_grouping import plan_posting_groups, plan_total_recoveries_group
 
         # Detect and group Total Expense Recoveries entries before payload creation.
         # Modifies rows in-place to use shared tokens for validated groups.
         grouped_for_tot_rec = group_rows_by_transaction(rows)
         tot_rec_groups = plan_total_recoveries_group(grouped_for_tot_rec)
-
-        # Recovery/Reclass detector: detect reversal/reclass legs that TotRec misses.
-        # Runs on remaining unbalanced rows not already claimed by TotRec.
-        recovery_reclass_groups = plan_recovery_reclass_groups(grouped_for_tot_rec)
 
         # Stamp the shared token onto EVERY row the detector grouped, matched by
         # object identity — NOT by transaction_id. The "Total of Recoveries"
@@ -10351,95 +10347,6 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
                 if "_original_txn_id" not in row:
                     row["_original_txn_id"] = row.get("transaction_id", "")
                 row["transaction_id"] = token
-
-        # Merge fix: check if reclass groups share an anchor with TotRec.
-        # If so, fold them into the TotRec token instead of creating a separate RCLS token.
-        # This ensures the anchor (id-less "Total of Recoveries") doesn't get double-claimed.
-        tot_rec_row_ids = {id(r) for grp in tot_rec_groups for r in grp.get("rows", [])}
-        tot_rec_anchor_ids = set()
-        for grp in tot_rec_groups:
-            anchor_row = grp.get("rows", [])
-            if anchor_row:
-                # Find the id-less row (no transaction_id, no reference_number)
-                for r in anchor_row:
-                    if not (r.get("transaction_id") or r.get("reference_number")):
-                        tot_rec_anchor_ids.add(id(r))
-
-        # Stamp recovery/reclass tokens onto rows not already claimed by TotRec.
-        # Use same object-identity matching as TotRec to handle id-less rows.
-        recovery_reclass_tokens: set[str] = set()
-        recovery_reclass_row_ids_by_token: dict[str, set] = {}  # token -> {row ids in this token}
-        for grp in recovery_reclass_groups:
-            token = grp.get("token", "")
-            if not token:
-                continue
-
-            # MERGE FIX: if this reclass group's anchor is in TotRec, use TotRec's token instead
-            grp_anchor_ids = set()
-            for r in grp.get("rows", []):
-                if not (r.get("transaction_id") or r.get("reference_number")):
-                    grp_anchor_ids.add(id(r))
-
-            if grp_anchor_ids & tot_rec_anchor_ids:
-                # Shared anchor — use TotRec's token for these rows too
-                # Find the TotRec token that owns this anchor
-                totrec_token = None
-                for grp2 in tot_rec_groups:
-                    for r in grp2.get("rows", []):
-                        if id(r) in grp_anchor_ids:
-                            totrec_token = grp2.get("token", "")
-                            break
-                    if totrec_token:
-                        break
-
-                if totrec_token:
-                    # Stamp reclass rows with the TotRec token (skip already-stamped anchor)
-                    row_ids = set()
-                    for row in grp.get("rows", []):
-                        if id(row) in tot_rec_row_ids:
-                            continue  # Already stamped by TotRec
-                        row_ids.add(id(row))
-                        if "_original_txn_id" not in row:
-                            row["_original_txn_id"] = row.get("transaction_id", "")
-                        row["transaction_id"] = totrec_token  # Use TotRec token, not RCLS
-                    if row_ids:
-                        recovery_reclass_row_ids_by_token[totrec_token] = row_ids.union(
-                            recovery_reclass_row_ids_by_token.get(totrec_token, set())
-                        )
-                    continue
-
-            # No shared anchor — stamp with separate RCLS token (original behavior)
-            recovery_reclass_tokens.add(token)
-            row_ids = set()
-            for row in grp.get("rows", []):
-                # Skip rows already claimed by TotRec
-                if id(row) in tot_rec_row_ids:
-                    continue
-                row_ids.add(id(row))
-                if "_original_txn_id" not in row:
-                    row["_original_txn_id"] = row.get("transaction_id", "")
-                row["transaction_id"] = token
-            if row_ids:
-                recovery_reclass_row_ids_by_token[token] = row_ids
-
-        # Defensive re-balance check: verify each recovery-reclass token group balances
-        # after stamping. This catches the blocking bug where anchor rows get skipped
-        # during stamping and leave the reclass group unbalanced.
-        from decimal import Decimal
-        from gl_grouping import _row_money
-        for token, row_ids in recovery_reclass_row_ids_by_token.items():
-            token_rows = [r for r in rows if id(r) in row_ids]
-            if token_rows:
-                debits = sum(_row_money(r, "debit") for r in token_rows)
-                credits = sum(_row_money(r, "credit") for r in token_rows)
-                if round(debits, 2) != round(credits, 2):
-                    # Unbalanced reclass token group — flag for manual review
-                    raise ValueError(
-                        f"CRITICAL: Recovery-reclass token '{token}' is unbalanced after stamping. "
-                        f"Debits: {debits:.2f}, Credits: {credits:.2f}, Difference: {abs(debits - credits):.2f}. "
-                        f"This indicates a defect in the recovery-reclass grouping or stamping logic. "
-                        f"Please contact support with this error message."
-                    )
 
         payloads, posted_ids = plan_balanced_payloads(
             rows, mapping, mapping_mode=mapping_mode, account_type_index=type_index, account_name_index=name_index
@@ -10463,13 +10370,6 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
             if token:
                 # Create one sub-ref entry per folded row (including id-less rows)
                 # so _row_span(token) matches the physical row count, not just txn_ids
-                rows_in_group = grp.get("rows", [])
-                sub_refs_by_posted_id[token] = [token] * len(rows_in_group) if rows_in_group else [token]
-
-        # Add Recovery/Reclass groups to sub_refs mapping (same pattern as TotRec).
-        for grp in recovery_reclass_groups:
-            token = grp.get("token", "")
-            if token:
                 rows_in_group = grp.get("rows", [])
                 sub_refs_by_posted_id[token] = [token] * len(rows_in_group) if rows_in_group else [token]
 
@@ -11805,7 +11705,7 @@ def preview_import(job_id):
             # Total Recoveries grouping runs first; old auto-balance is fallback.
             try:
                 if preview.get("blocked_transactions") and not job.get("auto_balance_rows"):
-                    from gl_grouping import plan_posting_groups, plan_total_recoveries_group, plan_recovery_reclass_groups, auto_balance_by_token_group
+                    from gl_grouping import plan_posting_groups, plan_total_recoveries_group, auto_balance_by_token_group
                     grouped = group_rows_by_transaction(rows)
                     posting_plan = plan_posting_groups(grouped)
                     still_blocked = posting_plan.get("still_blocked") or []
@@ -11819,55 +11719,28 @@ def preview_import(job_id):
                     for grp in tot_rec_groups:
                         tot_rec_txn_ids.update(grp.get("transaction_ids", []))
 
-                    # Recovery/Reclass grouping: detect reversal/reclass legs that TotRec misses.
-                    # Only runs on remaining unbalanced rows not already claimed by TotRec.
-                    recovery_reclass_groups = plan_recovery_reclass_groups(grouped)
-                    recovery_reclass_txn_ids = set()
-
-                    # Defensive check: verify recovery-reclass groups are actually balanced.
-                    # This catches cases where the anchor row is missing (e.g., id-less "Total of Recoveries")
-                    # and the group would post unbalanced.
-                    from decimal import Decimal
-                    from gl_grouping import _row_money
-                    for grp in recovery_reclass_groups:
-                        grp_rows = grp.get("rows", [])
-                        if grp_rows:
-                            debits = sum(_row_money(r, "debit") for r in grp_rows)
-                            credits = sum(_row_money(r, "credit") for r in grp_rows)
-                            if round(debits, 2) != round(credits, 2):
-                                # Unbalanced reclass group — skip it and flag for review
-                                # (it will fall through to diagnostics)
-                                logging.getLogger("app").warning(
-                                    "preview_import: recovery-reclass group %s would be unbalanced "
-                                    "(debits %.2f, credits %.2f). Skipping to prevent posting invalid JE.",
-                                    grp.get("token", ""), debits, credits
-                                )
-                                continue  # Don't add this group's txn_ids to handled set
-                        recovery_reclass_txn_ids.update(grp.get("transaction_ids", []))
-
-                    # Remove TotalRec- and RecoveryReclass-handled transactions from still_blocked
-                    # so they don't get re-balanced by the old mechanism.
-                    handled_txn_ids = tot_rec_txn_ids | recovery_reclass_txn_ids
+                    # Remove TotalRec-handled transactions from still_blocked so they don't
+                    # get re-balanced by the old mechanism.
                     still_blocked_after_totrec = [
                         b for b in still_blocked
-                        if str(b.get("transaction_id") or "") not in handled_txn_ids
+                        if str(b.get("transaction_id") or "") not in tot_rec_txn_ids
                     ]
 
-                    # If TotalRec or RecoveryReclass groups were found, filter blocked_transactions.
-                    if tot_rec_groups or recovery_reclass_groups:
+                    # If TotalRec groups were found, mark preview as balanced.
+                    if tot_rec_groups:
                         preview["blocked_transactions"] = [
                             b for b in preview.get("blocked_transactions", [])
-                            if str(b.get("transaction_id") or "") not in handled_txn_ids
+                            if str(b.get("transaction_id") or "") not in tot_rec_txn_ids
                         ]
                         if not preview["blocked_transactions"]:
                             preview["would_post"] = True
                             preview["balanced"] = True
 
-                    # Old auto-balance mechanism: kept as TotalRec/RecoveryReclass-safe fallback for
-                    # other single-sided rows not covered by Total Recoveries/RecoveryReclass grouping.
-                    # Since still_blocked_after_totrec already has TotalRec/RecoveryReclass txn_ids
+                    # Old auto-balance mechanism: kept as TotalRec-safe fallback for
+                    # other single-sided rows not covered by Total Recoveries grouping.
+                    # Since still_blocked_after_totrec already has TotalRec txn_ids
                     # filtered out, auto_balance only sees rows genuinely unhandled by
-                    # TotalRec/RecoveryReclass, avoiding the overpowering that plagued earlier versions.
+                    # TotalRec, avoiding the overpowering that plagued earlier versions.
                     if still_blocked_after_totrec:
                         _bank, _expense = _detect_accounts_for_auto_balance(
                             still_blocked_after_totrec, rows, saved_mappings
@@ -11892,7 +11765,7 @@ def preview_import(job_id):
                                 )
                                 preview["blocked_transactions"] = [
                                     b for b in preview.get("blocked_transactions", [])
-                                    if str(b.get("transaction_id") or "") not in handled_txn_ids
+                                    if str(b.get("transaction_id") or "") not in tot_rec_txn_ids
                                 ]
                                 if not preview["blocked_transactions"]:
                                     preview["would_post"] = True
