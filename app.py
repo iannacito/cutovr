@@ -10356,18 +10356,42 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
         # Use same object-identity matching as TotRec to handle id-less rows.
         recovery_reclass_tokens: set[str] = set()
         tot_rec_row_ids = {id(r) for grp in tot_rec_groups for r in grp.get("rows", [])}
+        recovery_reclass_row_ids_by_token: dict[str, set] = {}  # token -> {row ids in this token}
         for grp in recovery_reclass_groups:
             token = grp.get("token", "")
             if not token:
                 continue
             recovery_reclass_tokens.add(token)
+            row_ids = set()
             for row in grp.get("rows", []):
                 # Skip rows already claimed by TotRec
                 if id(row) in tot_rec_row_ids:
                     continue
+                row_ids.add(id(row))
                 if "_original_txn_id" not in row:
                     row["_original_txn_id"] = row.get("transaction_id", "")
                 row["transaction_id"] = token
+            if row_ids:
+                recovery_reclass_row_ids_by_token[token] = row_ids
+
+        # Defensive re-balance check: verify each recovery-reclass token group balances
+        # after stamping. This catches the blocking bug where anchor rows get skipped
+        # during stamping and leave the reclass group unbalanced.
+        from decimal import Decimal
+        from gl_grouping import _row_money
+        for token, row_ids in recovery_reclass_row_ids_by_token.items():
+            token_rows = [r for r in rows if id(r) in row_ids]
+            if token_rows:
+                debits = sum(_row_money(r, "debit") for r in token_rows)
+                credits = sum(_row_money(r, "credit") for r in token_rows)
+                if round(debits, 2) != round(credits, 2):
+                    # Unbalanced reclass token group — flag for manual review
+                    raise ValueError(
+                        f"CRITICAL: Recovery-reclass token '{token}' is unbalanced after stamping. "
+                        f"Debits: {debits:.2f}, Credits: {credits:.2f}, Difference: {abs(debits - credits):.2f}. "
+                        f"This indicates a defect in the recovery-reclass grouping or stamping logic. "
+                        f"Please contact support with this error message."
+                    )
 
         payloads, posted_ids = plan_balanced_payloads(
             rows, mapping, mapping_mode=mapping_mode, account_type_index=type_index, account_name_index=name_index
@@ -11751,7 +11775,26 @@ def preview_import(job_id):
                     # Only runs on remaining unbalanced rows not already claimed by TotRec.
                     recovery_reclass_groups = plan_recovery_reclass_groups(grouped)
                     recovery_reclass_txn_ids = set()
+
+                    # Defensive check: verify recovery-reclass groups are actually balanced.
+                    # This catches cases where the anchor row is missing (e.g., id-less "Total of Recoveries")
+                    # and the group would post unbalanced.
+                    from decimal import Decimal
+                    from gl_grouping import _row_money
                     for grp in recovery_reclass_groups:
+                        grp_rows = grp.get("rows", [])
+                        if grp_rows:
+                            debits = sum(_row_money(r, "debit") for r in grp_rows)
+                            credits = sum(_row_money(r, "credit") for r in grp_rows)
+                            if round(debits, 2) != round(credits, 2):
+                                # Unbalanced reclass group — skip it and flag for review
+                                # (it will fall through to diagnostics)
+                                logging.getLogger("app").warning(
+                                    "preview_import: recovery-reclass group %s would be unbalanced "
+                                    "(debits %.2f, credits %.2f). Skipping to prevent posting invalid JE.",
+                                    grp.get("token", ""), debits, credits
+                                )
+                                continue  # Don't add this group's txn_ids to handled set
                         recovery_reclass_txn_ids.update(grp.get("transaction_ids", []))
 
                     # Remove TotalRec- and RecoveryReclass-handled transactions from still_blocked
