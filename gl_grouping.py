@@ -946,15 +946,6 @@ def plan_recovery_reclass_groups(
                             reclass_legs.append(r)
                             break
 
-            # Check for shared source-journal token with anchor
-            if not has_keyword:
-                anchor_token = source_journal_token(reclass_anchor_row) or ""
-                row_token = source_journal_token(r) or ""
-                if anchor_token == "CER" and row_token == "CER":
-                    # Both CER rows; could be related recovery lines
-                    if r not in reclass_legs:
-                        reclass_legs.append(r)
-
         # Dedupe reclass_legs by object identity
         reclass_legs = list(dict.fromkeys(id(r) for r in reclass_legs if r in month_rows))
         reclass_legs = [r for r in month_rows if id(r) in reclass_legs]
