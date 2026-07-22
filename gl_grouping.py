@@ -727,7 +727,7 @@ def plan_total_recoveries_group(
         if not group_rows:
             result = "no_group_rows"
             if diag_sink is not None:
-                diag_sink.append({
+                diag_data = {
                     "month_key": month_key,
                     "found_total_of_recoveries_row": True,
                     "cer_candidate_count": len(cer_candidate_rows),
@@ -738,7 +738,14 @@ def plan_total_recoveries_group(
                     "balance_delta": None,
                     "result": result,
                     "token": None,
-                })
+                }
+                # Include Layer 4 info if attempted
+                if round(cer_candidate_credits, 2) < round(tot_rec_debit, 2):
+                    deficit = tot_rec_debit - cer_candidate_credits
+                    diag_data["layer4_attempted"] = True
+                    diag_data["deficit"] = f"{deficit:.2f}"
+                    diag_data["layer4_row_count"] = len(layer4_rows)
+                diag_sink.append(diag_data)
             continue
 
         # Compute totals for the group.
@@ -818,7 +825,7 @@ def plan_total_recoveries_group(
             # Does not balance via Layers 1-4; skip and flag for manual review.
             result = "unbalanced"
             if diag_sink is not None:
-                diag_sink.append({
+                diag_data = {
                     "month_key": month_key,
                     "found_total_of_recoveries_row": True,
                     "cer_candidate_count": len(cer_candidate_rows),
@@ -829,7 +836,14 @@ def plan_total_recoveries_group(
                     "balance_delta": f"{balance_delta:.2f}",
                     "result": result,
                     "token": None,
-                })
+                }
+                # Include Layer 4 diagnostics if attempted
+                if round(cer_candidate_credits, 2) < round(tot_rec_debit, 2):
+                    deficit = tot_rec_debit - cer_candidate_credits
+                    diag_data["layer4_attempted"] = True
+                    diag_data["deficit"] = f"{deficit:.2f}"
+                    diag_data["layer4_row_count"] = len(layer4_rows)
+                diag_sink.append(diag_data)
             continue
 
         # Belt-and-suspenders: the rows we actually post as one JE must balance
@@ -839,7 +853,7 @@ def plan_total_recoveries_group(
         if round(debits, 2) != round(credits, 2):
             result = "je_unbalanced"
             if diag_sink is not None:
-                diag_sink.append({
+                diag_data = {
                     "month_key": month_key,
                     "found_total_of_recoveries_row": True,
                     "cer_candidate_count": len(cer_candidate_rows),
@@ -850,7 +864,13 @@ def plan_total_recoveries_group(
                     "balance_delta": f"{(debits - credits):.2f}",
                     "result": result,
                     "token": None,
-                })
+                }
+                # Include Layer 4 info if attempted
+                if layer4_rows:
+                    diag_data["layer4_row_count"] = len(layer4_rows)
+                    deficit = tot_rec_debit - cer_candidate_credits
+                    diag_data["deficit"] = f"{deficit:.2f}"
+                diag_sink.append(diag_data)
             continue
 
         # The group balances exactly. Collect unique transaction IDs from all rows.
@@ -863,19 +883,58 @@ def plan_total_recoveries_group(
         # Create the group with the shared token.
         token = f"{month_key}TotRec"
         result = "grouped"
+
+        # Build diagnostic: determine which layer closed the gap and extract closing rows.
+        diag_entry = {
+            "month_key": month_key,
+            "found_total_of_recoveries_row": True,
+            "cer_candidate_count": len(cer_candidate_rows),
+            "refund_row_count": len(refund_rows),
+            "total_of_recoveries_debit": f"{tot_rec_debit:.2f}",
+            "cer_candidate_credits": f"{cer_candidate_credits:.2f}",
+            "expected_credits": f"{expected_credits:.2f}",
+            "balance_delta": f"{balance_delta:.2f}",
+            "result": result,
+            "token": token,
+        }
+
+        # Track which layer closed the gap and include closing rows details.
+        if layer4_rows:
+            deficit = tot_rec_debit - cer_candidate_credits
+            diag_entry["closing_layer"] = "layer4"
+            diag_entry["deficit"] = f"{deficit:.2f}"
+            diag_entry["layer4_row_count"] = len(layer4_rows)
+            closing_rows = []
+            for r in layer4_rows:
+                entry_num = (r.get("transaction_id") or r.get("entry_number") or r.get("reference_number") or "").strip()
+                closing_rows.append({
+                    "entry_number": entry_num,
+                    "date": (r.get("date") or "").strip(),
+                    "vendor": (r.get("vendor_name") or "").strip(),
+                    "explanation": (r.get("description") or r.get("memo") or "").strip(),
+                    "credit": f"{_row_money(r, 'credit'):.2f}",
+                })
+            diag_entry["closing_rows"] = closing_rows
+        elif refund_rows:
+            diag_entry["closing_layer"] = "layer3"
+            diag_entry["refund_row_count_used"] = len(refund_rows)
+            closing_rows = []
+            for r in refund_rows:
+                entry_num = (r.get("transaction_id") or r.get("entry_number") or r.get("reference_number") or "").strip()
+                closing_rows.append({
+                    "entry_number": entry_num,
+                    "date": (r.get("date") or "").strip(),
+                    "vendor": (r.get("vendor_name") or "").strip(),
+                    "explanation": (r.get("description") or r.get("memo") or "").strip(),
+                    "debit": f"{_row_money(r, 'debit'):.2f}",
+                })
+            diag_entry["closing_rows"] = closing_rows
+        else:
+            # Layer 1+2 only (CER candidates matched the anchor exactly)
+            diag_entry["closing_layer"] = "layer1_2"
+
         if diag_sink is not None:
-            diag_sink.append({
-                "month_key": month_key,
-                "found_total_of_recoveries_row": True,
-                "cer_candidate_count": len(cer_candidate_rows),
-                "refund_row_count": len(refund_rows),
-                "total_of_recoveries_debit": f"{tot_rec_debit:.2f}",
-                "cer_candidate_credits": f"{cer_candidate_credits:.2f}",
-                "expected_credits": f"{expected_credits:.2f}",
-                "balance_delta": f"{balance_delta:.2f}",
-                "result": result,
-                "token": token,
-            })
+            diag_sink.append(diag_entry)
 
         groups.append({
             "group_id": token,
