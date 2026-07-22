@@ -282,8 +282,14 @@ def _stage_cta(
                 u("dashboard", "/dashboard") + "#intake")
     if stage_key == STAGE_UPLOAD:
         if ready_to_advance:
-            return ("Proceed to Step 3: Match accounts",
-                    u("match_accounts_entry", "/match-accounts"))
+            if gl_job_id:
+                try:
+                    _url = url_for("account_mapping", job_id=gl_job_id)
+                except Exception:
+                    _url = f"/jobs/{gl_job_id}/account-mapping"
+            else:
+                _url = u("match_accounts_entry", "/match-accounts")
+            return ("Proceed to Step 3: Match accounts", _url)
         if has_jobs:
             return ("Upload another report", u("dashboard", "/dashboard") + "#intake")
         return ("Upload your reports", u("dashboard", "/dashboard") + "#intake")

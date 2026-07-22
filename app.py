@@ -7743,19 +7743,26 @@ def job_detail(job_id):
     # Per-job current stage for GL jobs — mirror the body's _detail_step logic
     # (templates/job-detail.html) so the rail reflects THIS job, not the firm rollup.
     def _gl_job_current_stage():
+        # Check completion FIRST using persisted checkpoint (preflight/preview may be
+        # absent post-rehydrate). A completed job never defaults to Upload.
+        cp = job.get("checkpoint")
+        if cp == "completed" or job.get("import_summary") or job.get("qbo_results"):
+            return customer_workflow.STAGE_RECONCILE    # Step 6 — done/reconcile
+        if cp == "reviewed":
+            return customer_workflow.STAGE_IMPORT       # Step 5 — ready to send
+        if cp == "matched":
+            return customer_workflow.STAGE_REVIEW       # Step 4 — review & send
+        # Connected + fully mapped but not yet reviewed → Review
+        if job.get("qbo_connected") and unmapped_count == 0:
+            return customer_workflow.STAGE_REVIEW       # Step 4 — review & send
+        # Parsed/validated or already has mappings/connection but not mapped → Match
         _pf = job.get("preflight") or {}
         step_validated = bool(_pf) and not _pf.get("missing_required_columns") and (
             _pf.get("balanced") or ((job.get("preview") or {}).get("balanced"))
         )
-        if not step_validated:
-            return customer_workflow.STAGE_UPLOAD      # Step 2 — fix/re-upload the file
-        if unmapped_count > 0:
+        if step_validated or job.get("qbo_connected") or cp in ("parsed", "matched", "reviewed"):
             return customer_workflow.STAGE_MATCH        # Step 3 — match accounts
-        if not job.get("qbo_connected"):
-            return customer_workflow.STAGE_MATCH        # Step 3 — connect QBO
-        if not job.get("qbo_results"):
-            return customer_workflow.STAGE_REVIEW       # Step 4 — review & send
-        return customer_workflow.STAGE_RECONCILE        # Step 6 — done/reconcile
+        return customer_workflow.STAGE_UPLOAD           # Step 2 — only genuinely unparsed
 
     _gl_already_imported = (
         bool((job or {}).get("import_summary"))
