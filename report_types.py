@@ -60,6 +60,10 @@ REPORT_CUSTOMER_LIST = "customer_list"
 # Used to stamp persisted parsed_vendor_list so re-push survives ephemeral disk wipe.
 VENDOR_PARSER_VERSION = 1
 
+# Parser version for customer lists. Bump when parse_customer_list alignment changes.
+# Used to stamp persisted parsed_customer_list so re-push survives ephemeral disk wipe.
+CUSTOMER_PARSER_VERSION = 1
+
 # Neutral type for a failed / unrecognized upload. A file that could not be
 # parsed must NOT default to general_ledger: that fallback let broken or
 # wrong-shape files pool with real general-ledger jobs and become a Step 5

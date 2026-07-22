@@ -6919,6 +6919,11 @@ def _process_uploaded_csv(
             }
             jobs[job_id]["preflight"] = preflight
             jobs[job_id]["parsed_vendor_list"] = vendor_rows
+            # Stamp parser version so the persisted parse is trusted across
+            # ephemeral disk wipes (Render redeploys). The parse is produced
+            # by the current parser, so it's safe to trust durable.
+            from report_types import VENDOR_PARSER_VERSION
+            jobs[job_id]["parsed_vendor_list_parser_version"] = VENDOR_PARSER_VERSION
             message = (
                 "Vendor List accepted. We use it to match the people you "
                 "pay to the right QuickBooks vendor when posting your "
@@ -6940,6 +6945,11 @@ def _process_uploaded_csv(
             }
             jobs[job_id]["preflight"] = preflight
             jobs[job_id]["parsed_customer_list"] = customer_rows
+            # Stamp parser version so the persisted parse is trusted across
+            # ephemeral disk wipes (Render redeploys). The parse is produced
+            # by the current parser, so it's safe to trust durable.
+            from report_types import CUSTOMER_PARSER_VERSION
+            jobs[job_id]["parsed_customer_list_parser_version"] = CUSTOMER_PARSER_VERSION
             message = (
                 "Client List accepted. We use it to match deposits to the "
                 "right QuickBooks customer when posting your General "
