@@ -4085,8 +4085,23 @@ def build_vendor_payload(row):
         v = (v or "").strip()
         return "" if (v == "" or _ZERO_RE.match(v)) else v
 
+    def _valid_email(e):
+        """Validate email format strictly: require TLD ≥2 alpha chars.
+
+        Drops truncated/garbage emails (e.g. "iamsobrooke@mmode.c" from PCLaw
+        report-width truncation) so vendor still pushes with address/phone/acctnum.
+        """
+        e = (e or "").strip()
+        if not e or " " in e or e.count("@") != 1:
+            return False
+        local, _, domain = e.partition("@")
+        if not local or "." not in domain:
+            return False
+        tld = domain.rsplit(".", 1)[-1]
+        return len(tld) >= 2 and tld.isalpha()
+
     _email = _clean(row.get("email"))
-    if _email and "@" in _email and "." in _email.rsplit("@", 1)[-1] and " " not in _email:
+    if _valid_email(_email):
         payload["PrimaryEmailAddr"] = {"Address": _email}
 
     _street = _clean(row.get("street"))
