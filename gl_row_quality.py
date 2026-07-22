@@ -201,21 +201,36 @@ def is_zero_activity_row(row: dict) -> bool:
 
 
 def is_subtotal_row(row: dict) -> bool:
-    """True for PCLaw section-subtotal rows (non-zero amount, no transaction_id).
+    """True for PCLaw section-subtotal rows (non-zero amount, no transaction_id, no context).
 
     PCLaw GL exports append a "Total of Recoveries" (or similar) summary row
     at the end of a CER section.  These carry a date, account, and a summed
     debit/credit but have no transaction_id or reference number.  Left in,
     they form a phantom one-line "transaction" that blocks the import.
 
-    They are distinct from zero-activity account-listing rows (those have no
-    amount) and from blank rows (those have no account).
+    However, a row without transaction_id is still a REAL entry (not droppable)
+    when it has a date or description/memo — e.g. "Total of Recoveries" with
+    date + description + balancing debit (fixes Feb imbalance). Only a bare
+    amount with NO date and NO description/memo is a true dangling footer.
+
+    Distinct from zero-activity account-listing rows (no amount) and blank rows
+    (no account).
     """
     if is_blank_row(row) or is_zero_activity_row(row):
         return False
     if (row.get("transaction_id") or "").strip():
         return False  # real transaction row — has a reference
-    return money(row.get("debit")) != 0 or money(row.get("credit")) != 0
+    has_amount = money(row.get("debit")) != 0 or money(row.get("credit")) != 0
+    if not has_amount:
+        return False
+    # A no-transaction_id row with a date or description/memo is a real entry.
+    # Only a bare amount (no id, no date, no context) is a footer to drop.
+    has_date = bool(parse_gl_date(row.get("date")))
+    has_desc = bool((row.get("description") or "").strip()
+                    or (row.get("memo") or "").strip())
+    if has_date or has_desc:
+        return False  # real entry — keep it
+    return True  # amount only, no id/date/description → footer → drop
 
 
 def is_droppable_row(row: dict) -> bool:

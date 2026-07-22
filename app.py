@@ -4322,8 +4322,9 @@ def _finish_vendor_push(job_id, pushed=0, updated=0, failed=0, skipped=0, total=
     state = {"import_progress": prog}
     if vdp:
         state["vendor_details_pushed"] = True
-    if failures:
-        state["vendor_push_failures"] = failures
+    # Always write vendor_push_failures, even when empty, to clear stale entries.
+    # None persists as NULL; hydrate reads it back falsy → card hidden.
+    state["vendor_push_failures"] = failures or None
     db.save_job_state(job_id, state)
     jobs.pop(job_id, None)
 
@@ -4523,10 +4524,11 @@ def start_vendor_push(job_id):
                 version_key: VENDOR_PARSER_VERSION,
             })
     initial_progress = {
-        "pushed": 0, "updated": 0, "failed": 0,
+        "pushed": 0, "updated": 0, "failed": 0, "skipped": 0,
         "total": len(rows) if rows else 0, "done": False
     }
-    db.save_job_state(job_id, {"import_progress": initial_progress})
+    # Clear stale vendor_push_failures from prior run (fresh slate for this attempt)
+    db.save_job_state(job_id, {"import_progress": initial_progress, "vendor_push_failures": None})
     jobs.pop(job_id, None)
 
     thread = threading.Thread(target=_async_vendor_push, args=(job_id, user))
