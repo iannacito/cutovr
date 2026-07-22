@@ -4079,9 +4079,11 @@ def build_vendor_payload(row):
         payload["PrimaryPhone"] = {"FreeFormNumber": row["phone"]}
     if row.get("fax"):
         payload["Fax"] = {"FreeFormNumber": row["fax"]}
+    import re
+    _ZERO_RE = re.compile(r"^0+(\.0+)?$")  # "0", "00", "0.0", "0.00", etc.
     def _clean(v):
         v = (v or "").strip()
-        return "" if v in ("", "0") else v
+        return "" if (v == "" or _ZERO_RE.match(v)) else v
 
     _email = _clean(row.get("email"))
     if _email and "@" in _email and "." in _email.rsplit("@", 1)[-1] and " " not in _email:
@@ -4110,6 +4112,16 @@ def build_vendor_payload(row):
     if notes:
         payload["Notes"] = notes
     return payload
+
+
+def _has_vendor_enrichment(payload):
+    """Check if a vendor payload has anything beyond the name.
+
+    Vendor names are synced during GL import, so we only push if there's
+    actual enrichment (contact details, address, account number, notes).
+    """
+    _ENRICH_KEYS = ("AcctNum", "PrimaryPhone", "Fax", "PrimaryEmailAddr", "BillAddr", "Notes")
+    return any(payload.get(k) for k in _ENRICH_KEYS)
 
 
 @app.route("/jobs/<job_id>/push-entity-list", methods=["POST"])
@@ -4202,6 +4214,11 @@ def push_entity_list(job_id):
                 if is_vendor:
                     # Vendor: build full payload, update existing in place, create with details
                     payload = build_vendor_payload(row)
+                    # Skip vendors with nothing to enrich (name-only). Names are synced
+                    # during GL import, so omit redundant empty pushes and spare 429 budget.
+                    if not _has_vendor_enrichment(payload):
+                        skipped += 1
+                        continue
                     existing = qbo.find_vendor_by_name(name)
                     if existing:
                         # Use SyncToken from find_vendor_by_name (Phase 1: dropped get_vendor_by_id call)
@@ -4279,10 +4296,10 @@ def push_entity_list(job_id):
     return redirect(url_for("migration_nexus"))
 
 
-def _finish_vendor_push(job_id, pushed=0, updated=0, failed=0, total=0, error=None, vdp=False, failures=None):
+def _finish_vendor_push(job_id, pushed=0, updated=0, failed=0, skipped=0, total=0, error=None, vdp=False, failures=None):
     """Terminal progress write for vendor push (ensures spinner always resolves)."""
     prog = {
-        "pushed": pushed, "updated": updated, "failed": failed,
+        "pushed": pushed, "updated": updated, "failed": failed, "skipped": skipped,
         "total": total, "done": True
     }
     if error:
@@ -4355,7 +4372,7 @@ def _async_vendor_push(job_id, user):
         _finish_vendor_push(job_id, total=len(rows), failed=len(rows), error="QuickBooks not connected")
         return
 
-    pushed, updated, failed = 0, 0, 0
+    pushed, updated, failed, skipped = 0, 0, 0, 0
     vendor_push_failures = []
     _QBO_BATCH_CALLS = 25  # Pace by API calls, not vendors (~2 calls per vendor = 12-13 vendors)
     call_count = 0
@@ -4367,6 +4384,11 @@ def _async_vendor_push(job_id, user):
 
         try:
             payload = build_vendor_payload(row)
+            # Skip vendors with nothing to enrich (name-only). Names are synced
+            # during GL import, so omit redundant empty pushes and spare 429 budget.
+            if not _has_vendor_enrichment(payload):
+                skipped += 1
+                continue
             existing = qbo.find_vendor_by_name(name)
             call_count += 1  # find_vendor_by_name call
             if existing:
@@ -4402,7 +4424,7 @@ def _async_vendor_push(job_id, user):
             call_count = 0
             # Update progress mid-push AND persist failures so far (Bug C fix)
             progress = {
-                "pushed": pushed, "updated": updated, "failed": failed,
+                "pushed": pushed, "updated": updated, "failed": failed, "skipped": skipped,
                 "total": len(rows), "done": False
             }
             mid_state = {"import_progress": progress}
@@ -4413,7 +4435,7 @@ def _async_vendor_push(job_id, user):
     # Final progress update (use helper to ensure done:True always)
     _finish_vendor_push(
         job_id,
-        pushed=pushed, updated=updated, failed=failed, total=len(rows),
+        pushed=pushed, updated=updated, failed=failed, skipped=skipped, total=len(rows),
         vdp=True, failures=vendor_push_failures if vendor_push_failures else None
     )
     db.update_job_status(job_id, "completed")

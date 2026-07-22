@@ -255,7 +255,8 @@
                 <strong id="vendor-progress-text">
                   {{ vpp.pushed|default(0) }} pushed,
                   {{ vpp.updated|default(0) }} updated,
-                  {{ vpp.failed|default(0) }} failed
+                  {{ vpp.failed|default(0) }} failed{% if vpp.skipped %},
+                  {{ vpp.skipped|default(0) }} skipped{% endif %}
                 </strong>
                 <span class="muted" id="vendor-progress-percent"></span>
               </div>
@@ -279,7 +280,8 @@
               <div class="muted" style="font-size:.9rem;margin-top:0.2rem;">
                 {{ vpp.pushed|default(0) }} pushed,
                 {{ vpp.updated|default(0) }} updated,
-                {{ vpp.failed|default(0) }} failed
+                {{ vpp.failed|default(0) }} failed{% if vpp.skipped %},
+                {{ vpp.skipped|default(0) }} skipped{% endif %}
                 (of {{ vpp.total|default(0) }})
                 {% if vpp.error %}<br><span style="color:var(--error,#b91c1c);">{{ vpp.error }}</span>{% endif %}
               </div>
