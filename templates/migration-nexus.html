@@ -189,64 +189,79 @@
     </div>
   </div>
 
-  <div style="background:var(--warning-soft,#fef3c7);border:1px solid var(--warning,#d97706);
-              border-radius:var(--radius);padding:var(--space-4);margin-bottom:var(--space-6);
-              display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);">
-    <div>
-      <span style="font-weight:700;font-size:.875rem;color:var(--warning,#d97706);">
-        &#9888; Dev — Reset Migration
-      </span>
-      <span style="font-size:.8rem;color:var(--ink-muted);margin-left:var(--space-3);">
-        Reverts all QBO journal entries, then wipes all local job data. Use before starting a fresh run.
-      </span>
-    </div>
-    <form action="{{ url_for('dev_reset_migration') }}" method="post" style="margin:0;"
-          onsubmit="return confirm('RESET: deletes all QBO journal entries AND all local job data. Cannot be undone. Continue?');">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button type="submit" class="btn btn-sm"
-              style="color:var(--error);border-color:var(--error);background:transparent;white-space:nowrap;">
-        Reset migration
-      </button>
-    </form>
-  </div>
-
-  <div style="background:var(--info-soft,#dbeafe);border:1px solid var(--info,#3b82f6);
-              border-radius:var(--radius);padding:var(--space-4);margin-bottom:var(--space-6);
-              display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);">
-    <div>
-      <span style="font-weight:700;font-size:.875rem;color:var(--info,#3b82f6);">
-        Delete Local Data
-      </span>
-      <span style="font-size:.8rem;color:var(--ink-muted);margin-left:var(--space-3);">
-        Wipes local job data &amp; import history. QuickBooks stays untouched. Mappings preserved.
-      </span>
-    </div>
-    <form action="{{ url_for('delete_local_migration_data') }}" method="post" style="margin:0;"
-          onsubmit="return confirm('Delete all local job data and import history for this firm? QuickBooks data (already-posted journal entries) will NOT be touched or removed. Account and vendor/customer mappings will be preserved. This cannot be undone. Continue?');">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button type="submit" class="btn btn-sm"
-              style="color:var(--info,#3b82f6);border-color:var(--info,#3b82f6);background:transparent;white-space:nowrap;">
-        Delete local data
-      </button>
-    </form>
-  </div>
-
-  {# COA Consolidation — moved out of One-time Setup per Cesar 2026-07-14,
-     surfaced ahead of In Progress since it's a blocking prerequisite most
-     firms hit early and repeatedly before every GL batch. #}
-  <a href="{{ url_for('coa_consolidation') }}"
-     class="hub-setup-card"
-     style="text-decoration:none;color:inherit;display:block;margin-bottom:var(--space-6);
-             padding:var(--space-4);border:1px solid var(--line);border-radius:var(--radius);
-             background:var(--bg-muted);">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;">
-      <div>
-        <div class="hub-setup-card__title">COA Consolidation</div>
-        <div class="hub-setup-card__desc">Assign QBO Account Type to every PCLaw account before the first GL batch.</div>
+  {# Dev Tools — consolidated card with collapse pattern #}
+  <details class="hub-section" style="border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);padding:var(--space-5);margin-bottom:var(--space-6);">
+    <summary style="cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:var(--space-2);">
+      <div class="hub-section__title" style="margin-bottom:0;">
+        Dev Tools
       </div>
-      <div class="hub-setup-card__status" style="color:var(--accent);white-space:nowrap;margin-left:var(--space-4);">Open &rarr;</div>
+      <span style="font-size:.8rem;color:var(--ink-faint);">▸ expand</span>
+    </summary>
+    <div style="margin-top:var(--space-5);display:flex;flex-direction:column;gap:var(--space-6);">
+
+      {# Dev — Reset Migration #}
+      <div style="background:var(--warning-soft,#fef3c7);border:1px solid var(--warning,#d97706);
+                  border-radius:var(--radius);padding:var(--space-4);
+                  display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);">
+        <div>
+          <span style="font-weight:700;font-size:.875rem;color:var(--warning,#d97706);">
+            &#9888; Dev — Reset Migration
+          </span>
+          <span style="font-size:.8rem;color:var(--ink-muted);margin-left:var(--space-3);">
+            Reverts all QBO journal entries, then wipes all local job data. Use before starting a fresh run.
+          </span>
+        </div>
+        <form action="{{ url_for('dev_reset_migration') }}" method="post" style="margin:0;"
+              onsubmit="return confirm('RESET: deletes all QBO journal entries AND all local job data. Cannot be undone. Continue?');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-sm"
+                  style="color:var(--error);border-color:var(--error);background:transparent;white-space:nowrap;">
+            Reset migration
+          </button>
+        </form>
+      </div>
+
+      {# Delete Local Data #}
+      <div style="background:var(--info-soft,#dbeafe);border:1px solid var(--info,#3b82f6);
+                  border-radius:var(--radius);padding:var(--space-4);
+                  display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);">
+        <div>
+          <span style="font-weight:700;font-size:.875rem;color:var(--info,#3b82f6);">
+            Delete Local Data
+          </span>
+          <span style="font-size:.8rem;color:var(--ink-muted);margin-left:var(--space-3);">
+            Wipes local job data &amp; import history. QuickBooks stays untouched. Mappings preserved.
+          </span>
+        </div>
+        <form action="{{ url_for('delete_local_migration_data') }}" method="post" style="margin:0;"
+              onsubmit="return confirm('Delete all local job data and import history for this firm? QuickBooks data (already-posted journal entries) will NOT be touched or removed. Account and vendor/customer mappings will be preserved. This cannot be undone. Continue?');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-sm"
+                  style="color:var(--info,#3b82f6);border-color:var(--info,#3b82f6);background:transparent;white-space:nowrap;">
+            Delete local data
+          </button>
+        </form>
+      </div>
+
+      {# COA Consolidation — moved out of One-time Setup per Cesar 2026-07-14,
+         surfaced ahead of In Progress since it's a blocking prerequisite most
+         firms hit early and repeatedly before every GL batch. #}
+      <a href="{{ url_for('coa_consolidation') }}"
+         class="hub-setup-card"
+         style="text-decoration:none;color:inherit;display:block;
+                 padding:var(--space-4);border:1px solid var(--line);border-radius:var(--radius);
+                 background:var(--bg-muted);">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+          <div>
+            <div class="hub-setup-card__title">COA Consolidation</div>
+            <div class="hub-setup-card__desc">Assign QBO Account Type to every PCLaw account before the first GL batch.</div>
+          </div>
+          <div class="hub-setup-card__status" style="color:var(--accent);white-space:nowrap;margin-left:var(--space-4);">Open &rarr;</div>
+        </div>
+      </a>
+
     </div>
-  </a>
+  </details>
 
   {# Active batches #}
   <section class="hub-section">
