@@ -963,3 +963,191 @@ def plan_total_recoveries_group(
         })
 
     return groups
+
+
+def plan_transfer_pairs(
+    grouped_by_txn: "OrderedDict[str, list[dict]]",
+    account_mappings: "dict | None" = None,
+    qbo_account_type_index: "dict | None" = None,
+    diag_sink: "list | None" = None,
+) -> list[dict]:
+    """Detect and group inter-account transfer pairs per month.
+
+    PCLaw records a transfer between two accounts as two independent single-line
+    entries with different transaction IDs. This function finds pairs where:
+
+    1. Both rows are unbalanced-alone (single-line, one debit OR one credit, no match within same transaction)
+    2. Same date (ISO format)
+    3. Exact matching amount (one row's debit == other row's credit, to the cent)
+    4. Different accounts (different account_number)
+    5. AND at least one of:
+       - Description/vendor_name/memo contains "transfer" or "xfer" (case-insensitive), OR
+       - Both accounts are QBO "Bank" type (per account_type_index)
+    6. If multiple candidates match a row, use entry-number adjacency (smallest difference) as tie-breaker
+
+    Returns a list of validated transfer groups ready to merge. Each group has:
+        {
+            "group_id": "YYYY-MMTRANSFER",
+            "token": "YYYY-MMTRANSFER",
+            "transaction_ids": [txn1, txn2],
+            "rows": [row1, row2],
+            "debits": Decimal,
+            "credits": Decimal,
+            "balanced": True,
+            "month_key": "YYYY-MM",
+        }
+
+    Groups that don't match all criteria are skipped. Ambiguous pairs (where one row
+    matches multiple candidates and tie-breaker doesn't resolve uniquely) are not
+    grouped — they fall through to auto_balance_by_token_group as before.
+
+    If diag_sink is provided, appends one diagnostic dict per month inspected.
+    """
+    groups: list[dict] = []
+    rows_by_month: "dict[str, list[dict]]" = {}
+
+    # Collect all rows grouped by month.
+    all_rows: list[dict] = []
+    for txn_rows in grouped_by_txn.values():
+        all_rows.extend(txn_rows)
+
+    for row in all_rows:
+        iso = parse_gl_date(row.get("date"))
+        if not iso:
+            continue
+        month_key = iso[:7]  # "YYYY-MM"
+        if month_key not in rows_by_month:
+            rows_by_month[month_key] = []
+        rows_by_month[month_key].append(row)
+
+    # Build account type index for Bank-type checking
+    qbo_account_type_index = qbo_account_type_index or {}
+
+    # Process each month for transfer pairs.
+    for month_key, month_rows in rows_by_month.items():
+        # Find all unbalanced-alone rows in this month
+        unbalanced_candidates = [
+            r for r in month_rows
+            if _is_unbalanced_alone(r, month_rows)
+        ]
+
+        if not unbalanced_candidates:
+            continue
+
+        # Group unbalanced rows by (date, amount) to find potential pairs
+        by_date_amt: "dict[tuple, list]" = {}
+        for row in unbalanced_candidates:
+            row_date = str(row.get("date"))[:10]
+            row_amt = _row_money(row, "debit") if _row_money(row, "debit") > 0 else _row_money(row, "credit")
+            key = (row_date, float(row_amt))
+            if key not in by_date_amt:
+                by_date_amt[key] = []
+            by_date_amt[key].append(row)
+
+        # Find matching pairs within each (date, amount) group
+        paired_txn_ids: set[str] = set()  # Track which transactions we've already paired
+
+        for (row_date, row_amt), candidates in by_date_amt.items():
+            if len(candidates) < 2:
+                continue
+
+            # Look for debit/credit opposites in different accounts
+            debits = [r for r in candidates if _row_money(r, "debit") > 0]
+            credits = [r for r in candidates if _row_money(r, "credit") > 0]
+
+            for debit_row in debits:
+                debit_txn_id = (debit_row.get("transaction_id") or debit_row.get("reference_number") or "").strip()
+                if debit_txn_id in paired_txn_ids:
+                    continue
+
+                for credit_row in credits:
+                    credit_txn_id = (credit_row.get("transaction_id") or credit_row.get("reference_number") or "").strip()
+                    if credit_txn_id in paired_txn_ids:
+                        continue
+
+                    # Check if amounts match exactly
+                    if abs(float(_row_money(debit_row, "debit") - _row_money(credit_row, "credit"))) >= 0.01:
+                        continue
+
+                    # Check if accounts are different
+                    debit_acct = debit_row.get("account_number") or debit_row.get("account_name") or ""
+                    credit_acct = credit_row.get("account_number") or credit_row.get("account_name") or ""
+                    if debit_acct == credit_acct or not (debit_acct and credit_acct):
+                        continue
+
+                    # Check if this matches the transfer signature
+                    if not _matches_transfer_signature(debit_row, credit_row, account_mappings, qbo_account_type_index):
+                        continue
+
+                    # This is a valid pair. Mark both as paired.
+                    paired_txn_ids.add(debit_txn_id)
+                    paired_txn_ids.add(credit_txn_id)
+
+                    # Create a group for this pair
+                    token = f"{month_key}Transfer"
+                    debits = _row_money(debit_row, "debit")
+                    credits = _row_money(credit_row, "credit")
+
+                    groups.append({
+                        "group_id": token,
+                        "token": token,
+                        "transaction_ids": sorted([debit_txn_id, credit_txn_id]),
+                        "rows": [debit_row, credit_row],
+                        "debits": debits,
+                        "credits": credits,
+                        "balanced": debits == credits,
+                        "month_key": month_key,
+                    })
+
+                    if diag_sink is not None:
+                        diag_sink.append({
+                            "month_key": month_key,
+                            "debit_entry": debit_txn_id,
+                            "credit_entry": credit_txn_id,
+                            "date": row_date,
+                            "amount": f"{row_amt:.2f}",
+                            "debit_account": debit_row.get("account_number", ""),
+                            "credit_account": credit_row.get("account_number", ""),
+                            "result": "paired",
+                            "token": token,
+                        })
+
+                    break  # Found a match for this debit_row, move to next
+
+    return groups
+
+
+def _matches_transfer_signature(
+    debit_row: dict,
+    credit_row: dict,
+    account_mappings: "dict | None" = None,
+    qbo_account_type_index: "dict | None" = None,
+) -> bool:
+    """Check if a debit/credit pair matches the transfer signature.
+
+    Returns True if:
+    - Description/vendor/memo contains "transfer" or "xfer" (case-insensitive), OR
+    - Both accounts are QBO Bank-type
+    """
+    # Check for keyword in either row
+    for field in ["description", "vendor_name", "memo"]:
+        for row in [debit_row, credit_row]:
+            text = str(row.get(field, "")).lower()
+            if "transfer" in text or "xfer" in text:
+                return True
+
+    # Check if both accounts are Bank-type (requires account_mappings + qbo_account_type_index)
+    if account_mappings and qbo_account_type_index:
+        debit_acct_key = debit_row.get("account_number") or debit_row.get("account_name") or ""
+        credit_acct_key = credit_row.get("account_number") or credit_row.get("account_name") or ""
+
+        debit_qbo_id = account_mappings.get(debit_acct_key)
+        credit_qbo_id = account_mappings.get(credit_acct_key)
+
+        if debit_qbo_id and credit_qbo_id:
+            debit_type = qbo_account_type_index.get(debit_qbo_id, "").lower()
+            credit_type = qbo_account_type_index.get(credit_qbo_id, "").lower()
+            if debit_type == "bank" and credit_type == "bank":
+                return True
+
+    return False

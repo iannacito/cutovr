@@ -11584,6 +11584,28 @@ def _load_job_gl_rows(job):
         temp_csv.unlink(missing_ok=True)
 
 
+def _get_account_mapping(saved_mappings: list, mapping_mode: str = "number") -> dict:
+    """Build a dict mapping PCLaw accounts (by number or name) to QBO account IDs."""
+    mapping = {}
+    for m in saved_mappings:
+        key = m.get("pclaw_account_number") if mapping_mode == "number" else m.get("pclaw_account_name")
+        qbo_id = m.get("qbo_account_id")
+        if key and qbo_id:
+            mapping[key] = qbo_id
+    return mapping
+
+
+def _get_account_type_index(saved_mappings: list) -> dict:
+    """Build a dict mapping QBO account IDs to their AccountType."""
+    index = {}
+    for m in saved_mappings:
+        qbo_id = m.get("qbo_account_id")
+        account_type = m.get("qbo_account_type")
+        if qbo_id and account_type:
+            index[qbo_id] = account_type
+    return index
+
+
 def _detect_accounts_for_auto_balance(
     still_blocked: list,
     original_rows: list,
@@ -11736,18 +11758,46 @@ def preview_import(job_id):
                             preview["would_post"] = True
                             preview["balanced"] = True
 
-                    # Old auto-balance mechanism: kept as TotalRec-safe fallback for
-                    # other single-sided rows not covered by Total Recoveries grouping.
-                    # Since still_blocked_after_totrec already has TotalRec txn_ids
-                    # filtered out, auto_balance only sees rows genuinely unhandled by
-                    # TotalRec, avoiding the overpowering that plagued earlier versions.
-                    if still_blocked_after_totrec:
+                    # Bank transfer pairing: find and group inter-account transfer pairs
+                    # (two single-line entries with opposite debit/credit, same amount/date)
+                    # before they fall through to auto_balance, which would destroy them.
+                    from gl_grouping import plan_transfer_pairs
+                    transfer_groups = plan_transfer_pairs(
+                        grouped,
+                        account_mappings=_get_account_mapping(saved_mappings, "number"),
+                        qbo_account_type_index=_get_account_type_index(saved_mappings),
+                    )
+                    transfer_txn_ids = set()
+                    for grp in transfer_groups:
+                        transfer_txn_ids.update(grp.get("transaction_ids", []))
+
+                    # Remove transfer-handled transactions from still_blocked.
+                    still_blocked_after_transfers = [
+                        b for b in still_blocked_after_totrec
+                        if str(b.get("transaction_id") or "") not in transfer_txn_ids
+                    ]
+
+                    # If transfer pairs were found, mark preview as balanced if no other blockers.
+                    if transfer_groups:
+                        preview["blocked_transactions"] = [
+                            b for b in preview.get("blocked_transactions", [])
+                            if str(b.get("transaction_id") or "") not in transfer_txn_ids
+                        ]
+                        if not preview["blocked_transactions"]:
+                            preview["would_post"] = True
+                            preview["balanced"] = True
+
+                    # Old auto-balance mechanism: kept as TotalRec/Transfer-safe fallback for
+                    # other single-sided rows not covered by those layers.
+                    # Since still_blocked_after_transfers already has TotalRec and Transfer
+                    # txn_ids filtered out, auto_balance only sees rows genuinely unhandled.
+                    if still_blocked_after_transfers:
                         _bank, _expense = _detect_accounts_for_auto_balance(
-                            still_blocked_after_totrec, rows, saved_mappings
+                            still_blocked_after_transfers, rows, saved_mappings
                         )
                         if _bank["name"]:
                             _synthetic = auto_balance_by_token_group(
-                                still_blocked=still_blocked_after_totrec,
+                                still_blocked=still_blocked_after_transfers,
                                 original_rows=rows,
                                 bank_account_name=_bank["name"],
                                 bank_account_number=_bank["number"],
