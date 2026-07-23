@@ -722,52 +722,19 @@ def plan_total_recoveries_group(
         claimed = {id(tot_rec_row)} | {id(r) for r in cer_candidate_rows}
         refund_rows = [r for r in refund_rows if id(r) not in claimed]
 
-        # Split refund_rows into those with debits (offset surplus) vs credits (might be deficit solution).
-        # Layer 3 uses only refund_debits for the surplus formula.
-        # Refund rows with only credits should remain unclaimed so Layer 4 can find them.
-        refund_debits_total = sum(_row_money(r, "debit") for r in refund_rows)
-        refund_rows_with_debits = [r for r in refund_rows if _row_money(r, "debit") > Decimal("0.01")]
-
         # Initialize layer4_rows (will be populated later if deficit detected).
         layer4_rows = []
 
-        # Build the group: Total of Recoveries + CER candidates (Layers 1+2) + refund lines (Layer 3) + deficit closer (Layer 4).
-        group_rows = [tot_rec_row] + cer_candidate_rows + refund_rows + layer4_rows
-        if not group_rows:
-            result = "no_group_rows"
-            if diag_sink is not None:
-                diag_data = {
-                    "month_key": month_key,
-                    "found_total_of_recoveries_row": True,
-                    "cer_candidate_count": len(cer_candidate_rows),
-                    "refund_row_count": len(refund_rows),
-                    "total_of_recoveries_debit": f"{tot_rec_debit:.2f}",
-                    "cer_candidate_credits": None,
-                    "expected_credits": None,
-                    "balance_delta": None,
-                    "result": result,
-                    "token": None,
-                }
-                # Include Layer 4 info if attempted
-                if round(cer_candidate_credits, 2) < round(tot_rec_debit, 2):
-                    deficit = tot_rec_debit - cer_candidate_credits
-                    diag_data["layer4_attempted"] = True
-                    diag_data["deficit"] = f"{deficit:.2f}"
-                    diag_data["layer4_row_count"] = len(layer4_rows)
-                diag_sink.append(diag_data)
-            continue
-
-        # Compute totals for the group.
-        debits, credits = _txn_totals(group_rows)
-
         # Verify the group balances using the formula (Layer 3 surplus case):
-        # sum(CER candidate credits, Layer 1+2) == total_of_recoveries_debit + sum(GB "Refund" debits, Layer 3)
+        # sum(CER candidate credits, Layer 1+2) + refund_credits == total_of_recoveries_debit + sum(GB "Refund" debits, Layer 3)
+        # (Refund rows may have both debits and credits, e.g., balanced pairs or credit-only "refund" entries)
         cer_candidate_credits = sum(_row_money(r, "credit") for r in cer_candidate_rows)
         refund_debits = sum(_row_money(r, "debit") for r in refund_rows)
-        expected_credits = tot_rec_debit + refund_debits
+        refund_credits = sum(_row_money(r, "credit") for r in refund_rows)
+        expected_credits = cer_candidate_credits + refund_credits
 
-        # Strict balance check — Layers 1-3 (surplus case: CER credits = anchor + refund debits).
-        balance_delta = cer_candidate_credits - expected_credits
+        # Strict balance check — Layers 1-3 (surplus case: CER + refund credits = anchor + refund debits).
+        balance_delta = expected_credits - (tot_rec_debit + refund_debits)
 
         # Attempt Layer 4: deficit closer (when anchor debit > CER credits).
         if round(cer_candidate_credits, 2) < round(tot_rec_debit, 2):
@@ -777,9 +744,11 @@ def plan_total_recoveries_group(
 
             # Find all unbalanced-alone candidates in this month.
             candidate_pool = []
-            # Only claim refund rows that have debits (Layer 3 offset rows).
-            # Refund rows with only credits are potential Layer 4 candidates.
-            claimed_ids = {id(r) for r in ([tot_rec_row] + cer_candidate_rows + refund_rows_with_debits)}
+            # Claim all refund rows (both debit and credit variants) to prevent double-counting.
+            # Once group_rows is correctly rebuilt after Layer 4, refund_rows (including
+            # credit-only rows like May's refunds) will be included, so Layer 4 candidates
+            # must exclude the full refund_rows list to avoid duplication.
+            claimed_ids = {id(r) for r in ([tot_rec_row] + cer_candidate_rows + refund_rows)}
             for r in month_rows:
                 if id(r) not in claimed_ids and _is_unbalanced_alone(r, month_rows):
                     candidate_pool.append(r)
@@ -825,6 +794,36 @@ def plan_total_recoveries_group(
                         "token": None,
                     })
                 continue
+
+        # NOW that Layer 4 has completed (layer4_rows is finalized — empty, one row, or two rows),
+        # rebuild the group_rows and recompute debits/credits. This ensures Layer 4's found rows
+        # are actually included in the balance check (fixing April 2022 and preventing May 2022 double-count).
+        group_rows = [tot_rec_row] + cer_candidate_rows + refund_rows + layer4_rows
+        if not group_rows:
+            result = "no_group_rows"
+            if diag_sink is not None:
+                diag_data = {
+                    "month_key": month_key,
+                    "found_total_of_recoveries_row": True,
+                    "cer_candidate_count": len(cer_candidate_rows),
+                    "refund_row_count": len(refund_rows),
+                    "total_of_recoveries_debit": f"{tot_rec_debit:.2f}",
+                    "cer_candidate_credits": None,
+                    "expected_credits": None,
+                    "balance_delta": None,
+                    "result": result,
+                    "token": None,
+                }
+                if round(cer_candidate_credits, 2) < round(tot_rec_debit, 2):
+                    deficit = tot_rec_debit - cer_candidate_credits
+                    diag_data["layer4_attempted"] = True
+                    diag_data["deficit"] = f"{deficit:.2f}"
+                    diag_data["layer4_row_count"] = len(layer4_rows)
+                diag_sink.append(diag_data)
+            continue
+
+        # Compute totals for the group (now with final layer4_rows included).
+        debits, credits = _txn_totals(group_rows)
 
         # Layer 4: deficit closer (when Layer 4 found rows, skip intermediate formula check).
         # The final JE balance check (below) will validate the full group balance.
