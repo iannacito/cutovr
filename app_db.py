@@ -186,6 +186,21 @@ CREATE TABLE IF NOT EXISTS entity_map (
 CREATE INDEX IF NOT EXISTS idx_entitymap_firm_realm
     ON entity_map(firm_id, realm_id, kind);
 
+-- One "PCLaw Clearing" suspense account per QBO connection, created once and
+-- reused across every job/month for that realm. auto_balance_by_token_group
+-- offsets anything it can't otherwise resolve against this account instead
+-- of self-cancelling or guessing an unrelated account.
+CREATE TABLE IF NOT EXISTS clearing_accounts (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    firm_id           INTEGER NOT NULL REFERENCES firms(id),
+    realm_id          TEXT NOT NULL,
+    qbo_account_id    TEXT NOT NULL,
+    qbo_account_name  TEXT,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    UNIQUE (firm_id, realm_id)
+);
+
 CREATE TABLE IF NOT EXISTS audit_logs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     firm_id     INTEGER,
@@ -1294,6 +1309,45 @@ class AppDB:
                 "AND source_type = ?",
                 (firm_id, realm_id, pclaw_account_number, pclaw_account_name,
                  source_type),
+            )
+
+    # --- clearing account (one PCLaw Clearing account per QBO connection) --
+
+    def get_clearing_account(self, firm_id: int, realm_id: str) -> Optional[dict]:
+        """Return the realm's PCLaw Clearing account record, or None if
+        one hasn't been created yet. Callers should create it via
+        qbo_client.create_account and save_clearing_account on a miss --
+        never recreate/re-detect it on every import."""
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT * FROM clearing_accounts WHERE firm_id = ? AND realm_id = ?",
+                (firm_id, realm_id),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def save_clearing_account(
+        self,
+        firm_id: int,
+        realm_id: str,
+        qbo_account_id: str,
+        qbo_account_name: Optional[str] = None,
+    ) -> None:
+        """Insert or update the realm's PCLaw Clearing account record.
+
+        The unique key is (firm_id, realm_id) -- one Clearing account per
+        QBO connection, reused across every job/month for that client.
+        """
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO clearing_accounts "
+                "(firm_id, realm_id, qbo_account_id, qbo_account_name, "
+                " created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(firm_id, realm_id) "
+                "DO UPDATE SET qbo_account_id = excluded.qbo_account_id, "
+                "              qbo_account_name = excluded.qbo_account_name, "
+                "              updated_at = excluded.updated_at",
+                (firm_id, realm_id, qbo_account_id, qbo_account_name, _now(), _now()),
             )
 
     # --- entity map (resolved QBO customers / vendors) ---------------------

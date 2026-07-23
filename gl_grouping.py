@@ -439,28 +439,45 @@ def _first_date(entries, src_by_txn) -> str:
     return ""
 
 
+# Sentinel account_number for synthetic Clearing rows. The "PCLaw Clearing"
+# QBO account has no PCLaw-side row to map from, so build_journal_entry_payload
+# can't resolve it through the normal account_mapping dict without this key
+# being injected there first (see app.py's centralized injection point).
+# Chosen to be unrepresentable as a real PCLaw account number/name.
+PCLAW_CLEARING_SENTINEL = "__PCLAW_CLEARING__"
+
+
 def auto_balance_by_token_group(
     still_blocked: list[dict],
     original_rows: list[dict],
-    bank_account_name: str,
-    bank_account_number: str,
-    expense_offset_name: str = "",
-    expense_offset_number: str = "",
+    clearing_account_name: str,
+    clearing_account_number: str = PCLAW_CLEARING_SENTINEL,
 ) -> list[dict]:
-    """Generate one synthetic balancing row per blocked single-sided transaction.
+    """Generate one synthetic Clearing-offsetting row per blocked single-sided transaction.
 
     For each entry in still_blocked, emits ONE synthetic row with the same
     transaction_id as the original so the two rows group together at import
     time and form a valid 2-line balanced journal entry.
 
-    Net-credit entry (credit > debit)  → ONE DEBIT row on the same account
-                                         as the source transaction.
-    Net-debit entry  (debit > credit)  → ONE CREDIT row on expense_offset
-                                         (falls back to bank_account if no
-                                         expense offset is supplied).
+    Both net-credit and net-debit entries are offset against the same
+    dedicated "PCLaw Clearing" suspense account — unconditionally, never the
+    row's own account (which silently erases the real transaction's net
+    effect) and never a guessed "expense offset" account (which could
+    misattribute the entry to an unrelated ledger — confirmed wrong for real
+    bank transfers earlier in this investigation). Nothing gets silently
+    resolved; it's honestly parked on Clearing for review.
 
-    Subtotal rows (empty transaction_id) are skipped — they are PCLaw section
-    footers already excluded by is_droppable_row before this is called.
+    A blank transaction_id (e.g. PCLaw's "Total of Recoveries" CER anchor
+    row, which carries no Entry Number) is NOT skipped — it's treated like
+    any other still_blocked entry. An earlier version of this function
+    skipped blank-id rows on the assumption they were always zero-amount
+    PCLaw section footers already dropped upstream by is_droppable_row; that
+    assumption doesn't hold for every caller (still_blocked can reach this
+    function unfiltered), and a real, non-zero blank-id row was being
+    silently dropped instead of parked on Clearing — caught by the zero-net
+    integrity check when a real month's CER group failed to resolve one.
+    Truly-empty rows are still excluded via the ``net == 0`` check below,
+    same as any other already-balanced entry.
     """
     from decimal import Decimal
 
@@ -473,8 +490,6 @@ def auto_balance_by_token_group(
     synthetic: list[dict] = []
     for blocked in still_blocked:
         txn_id = str(blocked.get("transaction_id") or "").strip()
-        if not txn_id:
-            continue  # subtotal / summary row — skip
 
         total_debits = Decimal(str(blocked.get("debits") or "0"))
         total_credits = Decimal(str(blocked.get("credits") or "0"))
@@ -484,54 +499,40 @@ def auto_balance_by_token_group(
 
         src = src_by_txn.get(txn_id) or {}
         date = (src.get("date") or "").strip() or _first_date([blocked], src_by_txn)
-        account_number = (src.get("account_number") or "").strip()
-        account_name = (src.get("account_name") or "").strip()
         memo = (src.get("memo") or blocked.get("token") or "").strip()
         token = (blocked.get("token") or "").strip()
+        base_row = {
+            "date": date,
+            "account_number": clearing_account_number,
+            "account_name": clearing_account_name,
+            "memo": memo,
+            "reference_number": (src.get("reference_number") or "").strip(),
+            "transaction_id": txn_id,
+            "vendor_name": (src.get("vendor_name") or "").strip(),
+            "description": (src.get("description") or "").strip(),
+            "_synthetic": True,
+            "_clearing": True,
+            "_token_group": token,
+        }
 
         if net > 0:
-            # Net credit entry (e.g. CER disbursement recovery posted credit-only).
-            # Add a matching debit on the same account so the transaction balances.
+            # Net credit entry — add a matching debit on Clearing.
             synthetic.append({
-                "date": date,
-                "account_number": account_number,
-                "account_name": account_name,
-                "memo": memo,
-                "reference_number": (src.get("reference_number") or "").strip(),
-                "transaction_id": txn_id,
-                "vendor_name": (src.get("vendor_name") or "").strip(),
-                "description": (src.get("description") or "").strip(),
+                **base_row,
                 "debit": str(net),
                 "credit": "",
-                "_synthetic": True,
-                "_token_group": token,
                 "_synthetic_reason": (
-                    f"auto-balanced: {txn_id} net-credit {net} "
-                    f"→ added debit on {account_number or account_name}"
+                    f"parked on {clearing_account_name}: {txn_id} net-credit {net} unresolved"
                 ),
             })
         else:
-            # Net debit entry (e.g. GB bank refund posted debit-only).
-            # Add a matching credit on the expense-offset account (the account
-            # that originally carried the disbursement expense, typically 5010).
-            offset_number = expense_offset_number or account_number
-            offset_name = expense_offset_name or account_name
+            # Net debit entry — add a matching credit on Clearing.
             synthetic.append({
-                "date": date,
-                "account_number": offset_number,
-                "account_name": offset_name,
-                "memo": memo,
-                "reference_number": (src.get("reference_number") or "").strip(),
-                "transaction_id": txn_id,
-                "vendor_name": (src.get("vendor_name") or "").strip(),
-                "description": (src.get("description") or "").strip(),
+                **base_row,
                 "debit": "",
                 "credit": str(abs(net)),
-                "_synthetic": True,
-                "_token_group": token,
                 "_synthetic_reason": (
-                    f"auto-balanced: {txn_id} net-debit {abs(net)} "
-                    f"→ added credit on {offset_number or offset_name}"
+                    f"parked on {clearing_account_name}: {txn_id} net-debit {abs(net)} unresolved"
                 ),
             })
 

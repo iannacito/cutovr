@@ -42,6 +42,40 @@ from pclaw_pipeline import (
 )
 
 
+def check_clearing_zero_net(clearing_rows: list[dict]) -> dict:
+    """Verify PCLaw Clearing's net movement for this import is exactly $0.00.
+
+    Every layer before this fallback (CER Total Recoveries, transfer
+    autopair) only ever removes groups that are internally balanced, so
+    whatever remains and gets offset against Clearing must itself balance
+    in aggregate — the synthetic debits and credits created to balance the
+    real rows have to cancel each other out. If they don't, that's proof a
+    bug exists somewhere upstream (a row was double-counted, dropped, or a
+    group was partially/incorrectly claimed by an earlier layer) — the same
+    class of bug the residual-balance investigation was built to catch,
+    just now caught at posting time instead of investigation time.
+
+    Returns a dict with ``balanced`` (bool), ``net`` (Decimal — debit_total
+    minus credit_total; nonzero means something mis-grouped upstream),
+    ``debit_total``, ``credit_total``, and ``row_count``. Callers must NOT
+    treat the import as ready to post when ``balanced`` is False — block and
+    surface ``net`` as the diagnostic discrepancy amount, don't flag-and-continue.
+    """
+    debit_total = Decimal("0.00")
+    credit_total = Decimal("0.00")
+    for row in clearing_rows:
+        debit_total += money(row.get("debit"))
+        credit_total += money(row.get("credit"))
+    net = debit_total - credit_total
+    return {
+        "balanced": net == 0,
+        "net": net,
+        "debit_total": debit_total,
+        "credit_total": credit_total,
+        "row_count": len(clearing_rows),
+    }
+
+
 def _dollar(value) -> str:
     """Format a Decimal/str as a fixed-2 dollar amount (no $ sign)."""
     if value is None or value == "":
