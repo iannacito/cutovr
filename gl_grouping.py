@@ -1065,6 +1065,13 @@ def plan_transfer_pairs(
                     if credit_txn_id in paired_txn_ids:
                         continue
 
+                    # Never pair two rows from the same transaction — a shared
+                    # transaction_id/reference_number means these lines already
+                    # belong to one already-balanced entry (e.g. entry 261504's
+                    # own debit+credit lines), not two independent transfer legs.
+                    if debit_txn_id and debit_txn_id == credit_txn_id:
+                        continue
+
                     # Check if amounts match exactly
                     if abs(float(_row_money(debit_row, "debit") - _row_money(credit_row, "credit"))) >= 0.01:
                         continue
@@ -1083,19 +1090,25 @@ def plan_transfer_pairs(
                     paired_txn_ids.add(debit_txn_id)
                     paired_txn_ids.add(credit_txn_id)
 
-                    # Create a group for this pair
+                    # Create a group for this pair.
+                    # NOTE: these must NOT be named `debits`/`credits` — those
+                    # names are the outer lists this loop is still iterating
+                    # over; overwriting them here corrupted `for credit_row in
+                    # credits:` on the next debit_row once a bucket had more
+                    # than one candidate (never hit until real Bank-type pairs
+                    # started matching — every prior test run found 0 pairs).
                     token = f"{month_key}Transfer"
-                    debits = _row_money(debit_row, "debit")
-                    credits = _row_money(credit_row, "credit")
+                    pair_debit_amt = _row_money(debit_row, "debit")
+                    pair_credit_amt = _row_money(credit_row, "credit")
 
                     groups.append({
                         "group_id": token,
                         "token": token,
                         "transaction_ids": sorted([debit_txn_id, credit_txn_id]),
                         "rows": [debit_row, credit_row],
-                        "debits": debits,
-                        "credits": credits,
-                        "balanced": debits == credits,
+                        "debits": pair_debit_amt,
+                        "credits": pair_credit_amt,
+                        "balanced": pair_debit_amt == pair_credit_amt,
                         "month_key": month_key,
                     })
 
@@ -1125,32 +1138,27 @@ def _matches_transfer_signature(
 ) -> bool:
     """Check if a debit/credit pair matches the transfer signature.
 
-    A valid inter-account transfer requires BOTH:
-    1. A "transfer" keyword (distinguishes from normal GL entries), AND
-    2. Both accounts to be Bank-type (distinguishes bank-to-bank from GL control reallocs)
+    A valid inter-account transfer requires EITHER:
+    1. A "transfer"/"xfer" keyword in description/vendor_name/memo, OR
+    2. Both accounts are QBO Bank-type (per account_mappings + qbo_account_type_index)
 
-    This prevents matter-to-matter reallocations (e.g., "Credit Transfer from Invoice-022
-    to Invoice-021") from being wrongly treated as inter-bank transfers.
+    Non-keyword genuine transfers (e.g. "NFCU 4156 to NFCU 0025", "Bus. Sav. to
+    Bus Acct.") have no "transfer"/"xfer" text but ARE bank-to-bank — they only
+    match via the Bank-type branch. Requiring both keyword AND Bank-type (as a
+    prior version of this function did) excludes those real transfers; matter-
+    to-matter reallocations like entry 261504 are excluded instead by the
+    same-transaction_id guard in plan_transfer_pairs, not by this function.
 
     Returns True if:
-    - Description/vendor/memo contains "transfer" or "xfer" (case-insensitive), AND
+    - Description/vendor/memo contains "transfer" or "xfer" (case-insensitive), OR
     - Both accounts are QBO Bank-type (via account_mappings + qbo_account_type_index)
     """
-    # First check: keyword must be present
-    has_transfer_keyword = False
     for field in ["description", "vendor_name", "memo"]:
         for row in [debit_row, credit_row]:
             text = str(row.get(field, "")).lower()
             if "transfer" in text or "xfer" in text:
-                has_transfer_keyword = True
-                break
-        if has_transfer_keyword:
-            break
+                return True
 
-    if not has_transfer_keyword:
-        return False
-
-    # Second check: both accounts must be Bank-type (no exceptions for keyword alone)
     if account_mappings and qbo_account_type_index:
         debit_acct_key = debit_row.get("account_number") or debit_row.get("account_name") or ""
         credit_acct_key = credit_row.get("account_number") or credit_row.get("account_name") or ""
@@ -1164,5 +1172,4 @@ def _matches_transfer_signature(
             if debit_type == "bank" and credit_type == "bank":
                 return True
 
-    # If we reach here: has keyword but no verified Bank-type accounts
     return False
