@@ -728,19 +728,21 @@ def plan_total_recoveries_group(
         # Verify the group balances using the formula (Layer 3 surplus case):
         # sum(CER candidate credits, Layer 1+2) + refund_credits == total_of_recoveries_debit + sum(GB "Refund" debits, Layer 3)
         # (Refund rows may have both debits and credits, e.g., balanced pairs or credit-only "refund" entries)
+        # (CER candidate rows may also contain debit-side entries, e.g., January 2022's $47.93 "Account credit applied")
         cer_candidate_credits = sum(_row_money(r, "credit") for r in cer_candidate_rows)
+        cer_candidate_debits = sum(_row_money(r, "debit") for r in cer_candidate_rows)
         refund_debits = sum(_row_money(r, "debit") for r in refund_rows)
         refund_credits = sum(_row_money(r, "credit") for r in refund_rows)
         expected_credits = cer_candidate_credits + refund_credits
 
-        # Strict balance check — Layers 1-3 (surplus case: CER + refund credits = anchor + refund debits).
-        balance_delta = expected_credits - (tot_rec_debit + refund_debits)
+        # Strict balance check — Layers 1-3 (surplus case: CER + refund credits = anchor + CER debits + refund debits).
+        balance_delta = expected_credits - (tot_rec_debit + cer_candidate_debits + refund_debits)
 
-        # Attempt Layer 4: deficit closer (when anchor debit > CER credits).
-        if round(cer_candidate_credits, 2) < round(tot_rec_debit, 2):
-            # We have a deficit: anchor debit exceeds CER credits.
+        # Attempt Layer 4: deficit closer (when anchor debit + CER debits > CER credits).
+        if round(cer_candidate_credits, 2) < round(tot_rec_debit + cer_candidate_debits, 2):
+            # We have a deficit: anchor debit + CER debits exceed CER credits.
             # Search for unbalanced-alone credit rows that can close it.
-            deficit = tot_rec_debit - cer_candidate_credits
+            deficit = (tot_rec_debit + cer_candidate_debits) - cer_candidate_credits
 
             # Find all unbalanced-alone candidates in this month.
             candidate_pool = []
@@ -815,7 +817,7 @@ def plan_total_recoveries_group(
                     "token": None,
                 }
                 if round(cer_candidate_credits, 2) < round(tot_rec_debit, 2):
-                    deficit = tot_rec_debit - cer_candidate_credits
+                    deficit = (tot_rec_debit + cer_candidate_debits) - cer_candidate_credits
                     diag_data["layer4_attempted"] = True
                     diag_data["deficit"] = f"{deficit:.2f}"
                     diag_data["layer4_row_count"] = len(layer4_rows)
@@ -851,7 +853,7 @@ def plan_total_recoveries_group(
                 }
                 # Include Layer 4 diagnostics if attempted
                 if round(cer_candidate_credits, 2) < round(tot_rec_debit, 2):
-                    deficit = tot_rec_debit - cer_candidate_credits
+                    deficit = (tot_rec_debit + cer_candidate_debits) - cer_candidate_credits
                     diag_data["layer4_attempted"] = True
                     diag_data["deficit"] = f"{deficit:.2f}"
                     diag_data["layer4_row_count"] = len(layer4_rows)
@@ -880,7 +882,7 @@ def plan_total_recoveries_group(
                 # Include Layer 4 info if attempted
                 if layer4_rows:
                     diag_data["layer4_row_count"] = len(layer4_rows)
-                    deficit = tot_rec_debit - cer_candidate_credits
+                    deficit = (tot_rec_debit + cer_candidate_debits) - cer_candidate_credits
                     diag_data["deficit"] = f"{deficit:.2f}"
                 diag_sink.append(diag_data)
             continue
@@ -912,7 +914,7 @@ def plan_total_recoveries_group(
 
         # Track which layer closed the gap and include closing rows details.
         if layer4_rows:
-            deficit = tot_rec_debit - cer_candidate_credits
+            deficit = (tot_rec_debit + cer_candidate_debits) - cer_candidate_credits
             diag_entry["closing_layer"] = "layer4"
             diag_entry["deficit"] = f"{deficit:.2f}"
             diag_entry["layer4_row_count"] = len(layer4_rows)
