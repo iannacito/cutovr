@@ -10348,6 +10348,20 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
                     row["_original_txn_id"] = row.get("transaction_id", "")
                 row["transaction_id"] = token
 
+        # Handle bank transfer pairs (saved by preview_import). Stamp rows with shared
+        # token so they post as 2-line JEs instead of being auto-balanced with synthetics.
+        transfer_groups = job.get("transfer_pair_groups") or []
+        transfer_tokens: set[str] = set()
+        for grp in transfer_groups:
+            token = grp.get("token", "")
+            if not token:
+                continue
+            transfer_tokens.add(token)
+            for row in grp.get("rows", []):
+                if "_original_txn_id" not in row:
+                    row["_original_txn_id"] = row.get("transaction_id", "")
+                row["transaction_id"] = token
+
         payloads, posted_ids = plan_balanced_payloads(
             rows, mapping, mapping_mode=mapping_mode, account_type_index=type_index, account_name_index=name_index
         )
@@ -10370,6 +10384,13 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
             if token:
                 # Create one sub-ref entry per folded row (including id-less rows)
                 # so _row_span(token) matches the physical row count, not just txn_ids
+                rows_in_group = grp.get("rows", [])
+                sub_refs_by_posted_id[token] = [token] * len(rows_in_group) if rows_in_group else [token]
+
+        # Add bank transfer pair groups to sub_refs mapping (same pattern as TotalRec)
+        for grp in transfer_groups:
+            token = grp.get("token", "")
+            if token:
                 rows_in_group = grp.get("rows", [])
                 sub_refs_by_posted_id[token] = [token] * len(rows_in_group) if rows_in_group else [token]
 
@@ -11778,7 +11799,10 @@ def preview_import(job_id):
                     ]
 
                     # If transfer pairs were found, mark preview as balanced if no other blockers.
+                    # Save transfer groups to job state so _run_gl_import can use them during actual posting.
                     if transfer_groups:
+                        job["transfer_pair_groups"] = transfer_groups
+                        db.save_job_state(job_id, job)
                         preview["blocked_transactions"] = [
                             b for b in preview.get("blocked_transactions", [])
                             if str(b.get("transaction_id") or "") not in transfer_txn_ids
