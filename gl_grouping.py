@@ -1125,18 +1125,32 @@ def _matches_transfer_signature(
 ) -> bool:
     """Check if a debit/credit pair matches the transfer signature.
 
+    A valid inter-account transfer requires BOTH:
+    1. A "transfer" keyword (distinguishes from normal GL entries), AND
+    2. Both accounts to be Bank-type (distinguishes bank-to-bank from GL control reallocs)
+
+    This prevents matter-to-matter reallocations (e.g., "Credit Transfer from Invoice-022
+    to Invoice-021") from being wrongly treated as inter-bank transfers.
+
     Returns True if:
-    - Description/vendor/memo contains "transfer" or "xfer" (case-insensitive), OR
-    - Both accounts are QBO Bank-type
+    - Description/vendor/memo contains "transfer" or "xfer" (case-insensitive), AND
+    - Both accounts are QBO Bank-type (via account_mappings + qbo_account_type_index)
     """
-    # Check for keyword in either row
+    # First check: keyword must be present
+    has_transfer_keyword = False
     for field in ["description", "vendor_name", "memo"]:
         for row in [debit_row, credit_row]:
             text = str(row.get(field, "")).lower()
             if "transfer" in text or "xfer" in text:
-                return True
+                has_transfer_keyword = True
+                break
+        if has_transfer_keyword:
+            break
 
-    # Check if both accounts are Bank-type (requires account_mappings + qbo_account_type_index)
+    if not has_transfer_keyword:
+        return False
+
+    # Second check: both accounts must be Bank-type (no exceptions for keyword alone)
     if account_mappings and qbo_account_type_index:
         debit_acct_key = debit_row.get("account_number") or debit_row.get("account_name") or ""
         credit_acct_key = credit_row.get("account_number") or credit_row.get("account_name") or ""
@@ -1150,4 +1164,5 @@ def _matches_transfer_signature(
             if debit_type == "bank" and credit_type == "bank":
                 return True
 
+    # If we reach here: has keyword but no verified Bank-type accounts
     return False
