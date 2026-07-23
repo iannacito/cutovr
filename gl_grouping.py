@@ -722,6 +722,9 @@ def plan_total_recoveries_group(
         claimed = {id(tot_rec_row)} | {id(r) for r in cer_candidate_rows}
         refund_rows = [r for r in refund_rows if id(r) not in claimed]
 
+        # Initialize layer4_rows (will be populated later if deficit detected).
+        layer4_rows = []
+
         # Build the group: Total of Recoveries + CER candidates (Layers 1+2) + refund lines (Layer 3) + deficit closer (Layer 4).
         group_rows = [tot_rec_row] + cer_candidate_rows + refund_rows + layer4_rows
         if not group_rows:
@@ -761,7 +764,6 @@ def plan_total_recoveries_group(
         balance_delta = cer_candidate_credits - expected_credits
 
         # Attempt Layer 4: deficit closer (when anchor debit > CER credits).
-        layer4_rows = []
         if round(cer_candidate_credits, 2) < round(tot_rec_debit, 2):
             # We have a deficit: anchor debit exceeds CER credits.
             # Search for unbalanced-alone credit rows that can close it.
