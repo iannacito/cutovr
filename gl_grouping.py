@@ -826,16 +826,15 @@ def plan_total_recoveries_group(
                     })
                 continue
 
-        # Recompute expected if Layer 4 found rows (add layer4 credits to credit side, not debit side).
+        # Layer 4: deficit closer (when Layer 4 found rows, skip intermediate formula check).
+        # The final JE balance check (below) will validate the full group balance.
         if layer4_rows:
-            expected_credits = cer_candidate_credits + sum(_row_money(r, "credit") for r in layer4_rows)
-            balance_delta = expected_credits - (tot_rec_debit + refund_debits)
+            balance_delta = 0  # Will be validated by final JE balance check
 
-        # Check balance: the formula is balance_delta = expected_credits - (tot_rec_debit + refund_debits)
-        # For Layers 1-3: expected_credits = tot_rec_debit + refund_debits, so balance_delta should be 0
-        # For Layer 4: expected_credits = cer_candidate_credits + layer4_credits
-        #             balance_delta = (cer_cred + layer4_cred) - (tot_rec_debit + refund_debits)
-        if round(balance_delta, 2) != 0:
+        # Check balance: the formula is balance_delta = cer_candidate_credits - (tot_rec_debit + refund_debits)
+        # For Layers 1-3: should be 0 for balanced recovery.
+        # For Layer 4: final JE balance check (lines 851-854) is authoritative.
+        if not layer4_rows and round(balance_delta, 2) != 0:
             # Does not balance via Layers 1-4; skip and flag for manual review.
             result = "unbalanced"
             if diag_sink is not None:
