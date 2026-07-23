@@ -722,6 +722,12 @@ def plan_total_recoveries_group(
         claimed = {id(tot_rec_row)} | {id(r) for r in cer_candidate_rows}
         refund_rows = [r for r in refund_rows if id(r) not in claimed]
 
+        # Split refund_rows into those with debits (offset surplus) vs credits (might be deficit solution).
+        # Layer 3 uses only refund_debits for the surplus formula.
+        # Refund rows with only credits should remain unclaimed so Layer 4 can find them.
+        refund_debits_total = sum(_row_money(r, "debit") for r in refund_rows)
+        refund_rows_with_debits = [r for r in refund_rows if _row_money(r, "debit") > Decimal("0.01")]
+
         # Initialize layer4_rows (will be populated later if deficit detected).
         layer4_rows = []
 
@@ -771,7 +777,9 @@ def plan_total_recoveries_group(
 
             # Find all unbalanced-alone candidates in this month.
             candidate_pool = []
-            claimed_ids = {id(r) for r in ([tot_rec_row] + cer_candidate_rows + refund_rows)}
+            # Only claim refund rows that have debits (Layer 3 offset rows).
+            # Refund rows with only credits are potential Layer 4 candidates.
+            claimed_ids = {id(r) for r in ([tot_rec_row] + cer_candidate_rows + refund_rows_with_debits)}
             for r in month_rows:
                 if id(r) not in claimed_ids and _is_unbalanced_alone(r, month_rows):
                     candidate_pool.append(r)
@@ -818,12 +826,16 @@ def plan_total_recoveries_group(
                     })
                 continue
 
-        # Recompute expected if Layer 4 found rows
+        # Recompute expected if Layer 4 found rows (add layer4 credits to credit side, not debit side).
         if layer4_rows:
-            expected_credits = tot_rec_debit + sum(_row_money(r, "credit") for r in layer4_rows)
-            balance_delta = cer_candidate_credits - expected_credits
+            expected_credits = cer_candidate_credits + sum(_row_money(r, "credit") for r in layer4_rows)
+            balance_delta = expected_credits - (tot_rec_debit + refund_debits)
 
-        if round(cer_candidate_credits, 2) != round(expected_credits, 2):
+        # Check balance: the formula is balance_delta = expected_credits - (tot_rec_debit + refund_debits)
+        # For Layers 1-3: expected_credits = tot_rec_debit + refund_debits, so balance_delta should be 0
+        # For Layer 4: expected_credits = cer_candidate_credits + layer4_credits
+        #             balance_delta = (cer_cred + layer4_cred) - (tot_rec_debit + refund_debits)
+        if round(balance_delta, 2) != 0:
             # Does not balance via Layers 1-4; skip and flag for manual review.
             result = "unbalanced"
             if diag_sink is not None:
