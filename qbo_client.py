@@ -733,20 +733,60 @@ class QBOClient:
             return existing
         return self.create_vendor(display_name)
 
-    def get_vendor_by_id(self, entity_id: str):
+    def get_vendor_by_id(self, entity_id: str, *, max_retries: int = DEFAULT_MAX_RETRIES):
         """Read a single Vendor by QBO Id — works for inactive vendors too.
 
         The query API skips inactive entities; the REST read endpoint does not.
-        Used as fallback when 6240 fires and exact-name lookup returns nothing.
+        This is the LAST fallback step in the duplicate-name recovery chain
+        (_find_or_create_entity) -- the one case where QBO's own error message
+        handed us the exact Id of an entity we already know exists. Without
+        retry, a single transient 429/5xx here made a provably-existing
+        vendor look identical to "doesn't exist," and the whole recovery
+        chain gave up and re-raised the original 6240. Retries on 429/5xx
+        with the same backoff pattern query()/update_vendor() already use in
+        this file; a genuine 404 (or any other non-transient status) still
+        returns None immediately -- that contract is unchanged, both callers
+        in app.py rely on None meaning "confirmed not found."
         """
         url = (
             f"{self.base_url}/v3/company/{self.realm_id}"
             f"/vendor/{entity_id}?minorversion=75"
         )
-        response = requests.get(url, headers=self._headers(), timeout=30)
-        if response.status_code == 200:
-            return response.json().get("Vendor")
-        return None
+        for attempt in range(max_retries):
+            try:
+                response = requests.get(url, headers=self._headers(), timeout=30)
+            except requests.RequestException as e:
+                if attempt + 1 < max_retries:
+                    delay = _retry_after_seconds(
+                        None, attempt,
+                        DEFAULT_BACKOFF_BASE_SECONDS, DEFAULT_BACKOFF_CAP_SECONDS,
+                    )
+                    _log.warning(
+                        "get_vendor_by_id network error id=%s attempt=%s/%s err=%s sleeping=%.1fs",
+                        entity_id, attempt + 1, max_retries, e, delay,
+                    )
+                    _sleep(delay)
+                    continue
+                _log.warning(
+                    "get_vendor_by_id giving up after network errors id=%s: %s",
+                    entity_id, e,
+                )
+                return None
+            tid = self._record_tid(response)
+            if response.status_code == 200:
+                return response.json().get("Vendor")
+            if _is_transient_status(response.status_code) and attempt + 1 < max_retries:
+                delay = _retry_after_seconds(
+                    response, attempt,
+                    DEFAULT_BACKOFF_BASE_SECONDS, DEFAULT_BACKOFF_CAP_SECONDS,
+                )
+                _log.warning(
+                    "get_vendor_by_id transient status=%s id=%s attempt=%s/%s tid=%s sleeping=%.1fs",
+                    response.status_code, entity_id, attempt + 1, max_retries, tid, delay,
+                )
+                _sleep(delay)
+                continue
+            return None
 
     def update_vendor(self, payload, *, max_retries: int = DEFAULT_MAX_RETRIES):
         """Sparse-update a QBO Vendor, with retry on transient failures (429/5xx).
@@ -873,16 +913,51 @@ class QBOClient:
             )
         return response.json().get("Vendor", {})
 
-    def get_customer_by_id(self, entity_id: str):
-        """Read a single Customer by QBO Id — works for inactive customers too."""
+    def get_customer_by_id(self, entity_id: str, *, max_retries: int = DEFAULT_MAX_RETRIES):
+        """Read a single Customer by QBO Id — works for inactive customers too.
+
+        See get_vendor_by_id's docstring -- same retry rationale and same
+        contract (None only for a genuine miss, never for a transient blip).
+        """
         url = (
             f"{self.base_url}/v3/company/{self.realm_id}"
             f"/customer/{entity_id}?minorversion=75"
         )
-        response = requests.get(url, headers=self._headers(), timeout=30)
-        if response.status_code == 200:
-            return response.json().get("Customer")
-        return None
+        for attempt in range(max_retries):
+            try:
+                response = requests.get(url, headers=self._headers(), timeout=30)
+            except requests.RequestException as e:
+                if attempt + 1 < max_retries:
+                    delay = _retry_after_seconds(
+                        None, attempt,
+                        DEFAULT_BACKOFF_BASE_SECONDS, DEFAULT_BACKOFF_CAP_SECONDS,
+                    )
+                    _log.warning(
+                        "get_customer_by_id network error id=%s attempt=%s/%s err=%s sleeping=%.1fs",
+                        entity_id, attempt + 1, max_retries, e, delay,
+                    )
+                    _sleep(delay)
+                    continue
+                _log.warning(
+                    "get_customer_by_id giving up after network errors id=%s: %s",
+                    entity_id, e,
+                )
+                return None
+            tid = self._record_tid(response)
+            if response.status_code == 200:
+                return response.json().get("Customer")
+            if _is_transient_status(response.status_code) and attempt + 1 < max_retries:
+                delay = _retry_after_seconds(
+                    response, attempt,
+                    DEFAULT_BACKOFF_BASE_SECONDS, DEFAULT_BACKOFF_CAP_SECONDS,
+                )
+                _log.warning(
+                    "get_customer_by_id transient status=%s id=%s attempt=%s/%s tid=%s sleeping=%.1fs",
+                    response.status_code, entity_id, attempt + 1, max_retries, tid, delay,
+                )
+                _sleep(delay)
+                continue
+            return None
 
     def update_journal_entry(self, payload):
         """Sparse-update a QBO JournalEntry. Adds Entity refs to existing lines.
