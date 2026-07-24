@@ -11809,9 +11809,20 @@ def preview_import(job_id):
                     # Bank transfer pairing: find and group inter-account transfer pairs
                     # (two single-line entries with opposite debit/credit, same amount/date)
                     # before they fall through to auto_balance, which would destroy them.
+                    # Excludes TotRec-claimed transaction_ids first -- both layers scan the
+                    # same unfiltered `grouped` dict and a row satisfying both layers'
+                    # criteria would otherwise get double-claimed, with whichever stamping
+                    # loop runs later in _run_gl_import silently overwriting the other's
+                    # claim (same guard TotRec's own still_blocked_after_totrec already
+                    # applies -- plan_transfer_pairs needs it too, since it scans `grouped`
+                    # directly rather than still_blocked).
                     from gl_grouping import plan_transfer_pairs
+                    grouped_for_transfers = {
+                        txn_id: txn_rows for txn_id, txn_rows in grouped.items()
+                        if txn_id not in tot_rec_txn_ids
+                    }
                     transfer_groups = plan_transfer_pairs(
-                        grouped,
+                        grouped_for_transfers,
                         account_mappings=_get_account_mapping(saved_mappings, "number"),
                         qbo_account_type_index=_get_account_type_index(saved_mappings),
                     )

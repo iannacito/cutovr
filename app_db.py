@@ -415,6 +415,12 @@ class AppDB:
         # Persisted to DB so the Step 5 balance gate can skip the error block
         # if these are already in place (file WILL be balanced after merge).
         add_col("jobs", "auto_balance_rows_json TEXT")
+        # Bank transfer autopair groups computed at preview time (plan_transfer_pairs).
+        # _run_gl_import reads these back to stamp a shared token onto each paired
+        # row's transaction_id before building JE payloads -- persisted so that
+        # decision survives the real save_job_state/hydrate_job DB round-trip
+        # instead of only existing in the in-process job dict preview_import built.
+        add_col("jobs", "transfer_pair_groups_json TEXT")
         # Canonical migration checkpoint (durable, resumable foundation).
         # One of: uploaded | parsed | matched | reviewed | importing |
         # completed | needs_attention. Distinct from the free-text status
@@ -1012,6 +1018,13 @@ class AppDB:
                 if job_dict["auto_balance_rows"]
                 else None
             )
+        if "transfer_pair_groups" in job_dict:
+            fields.append("transfer_pair_groups_json")
+            values.append(
+                json.dumps(job_dict["transfer_pair_groups"])
+                if job_dict["transfer_pair_groups"]
+                else None
+            )
         if "parsed_trial_balance" in job_dict:
             fields.append("parsed_trial_balance_json")
             values.append(
@@ -1098,6 +1111,7 @@ class AppDB:
             ("vendor_push_failures_json", "vendor_push_failures"),
             ("opening_balance_history_json", "opening_balance_history"),
             ("auto_balance_rows_json", "auto_balance_rows"),
+            ("transfer_pair_groups_json", "transfer_pair_groups"),
             ("parsed_trial_balance_json", "parsed_trial_balance"),
             ("parsed_trust_listing_json", "parsed_trust_listing"),
         ]:
