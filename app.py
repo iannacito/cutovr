@@ -15286,6 +15286,15 @@ def _run_pass2_entity_linking(job, job_id, qbo, user, qbo_conn, account_type_ind
     # name in this run. Resolve each unique (kind, normalized name) once
     # per Pass 2 run and reuse the result for every other line referencing it.
     resolved_this_run: dict = {}
+    # Failures need the same de-dupe as successes -- without it, a
+    # genuinely-failing name gets independently re-resolved (and re-fails)
+    # once per pending_link line referencing it, since entity_id is only
+    # cached into resolved_this_run AFTER _find_or_create_entity returns
+    # successfully; an exception skips that line entirely. Bounded (not
+    # zero, not unlimited): let a name fail this many times for real before
+    # short-circuiting the rest of this run's occurrences.
+    failed_this_run: dict = {}
+    _ENTITY_RESOLUTION_RETRY_LIMIT = 2
 
     failed_links = []
     linked_count = 0
@@ -15342,12 +15351,28 @@ def _run_pass2_entity_linking(job, job_id, qbo, user, qbo_conn, account_type_ind
             ))
             if _run_cache_key in resolved_this_run:
                 entity_id = resolved_this_run[_run_cache_key]
+            elif failed_this_run.get(_run_cache_key, 0) >= _ENTITY_RESOLUTION_RETRY_LIMIT:
+                failed_links.append({
+                    "doc_number": doc_number,
+                    "reason": (
+                        f"Skipped — {kind} {name!r} already failed to resolve "
+                        f"{failed_this_run[_run_cache_key]} time(s) earlier this "
+                        f"run (see the earlier failure entry for the real error)"
+                    ),
+                    "kind": kind,
+                    "name": name,
+                })
+                continue
             else:
-                entity_id = _find_or_create_entity(
-                    qbo, kind, name, persisted, created,
-                    firm_id=user["firm_id"],
-                    realm_id=qbo_conn["realm_id"],
-                )
+                try:
+                    entity_id = _find_or_create_entity(
+                        qbo, kind, name, persisted, created,
+                        firm_id=user["firm_id"],
+                        realm_id=qbo_conn["realm_id"],
+                    )
+                except Exception:
+                    failed_this_run[_run_cache_key] = failed_this_run.get(_run_cache_key, 0) + 1
+                    raise
                 resolved_this_run[_run_cache_key] = entity_id
 
             if not entity_id:
