@@ -64,6 +64,7 @@ from migration_quality import (
     render_validation_csv,
     build_reconciliation_report,
     render_reconciliation_csv,
+    check_clearing_zero_net,
 )
 from initialpost import (
     build_initial_state,
@@ -10288,6 +10289,8 @@ def _run_gl_import(job_id: str, real_import: bool, progress_fn=None) -> None:
                 if m.get("pclaw_account_name"):
                     mapping[m["pclaw_account_name"]] = str(m["qbo_account_id"])
 
+        _inject_clearing_account_mapping(mapping, firm_id, qbo_conn["realm_id"])
+
         unmapped = find_unmapped_accounts(rows, mapping, mapping_mode)
         if unmapped:
             raise RuntimeError(f"Unmapped accounts: {sorted(unmapped)}")
@@ -11080,6 +11083,8 @@ def _import_to_qbo_impl(job_id):
                     if m.get("pclaw_account_name"):
                         mapping[m["pclaw_account_name"]] = m["qbo_account_id"]
 
+            _inject_clearing_account_mapping(mapping, user["firm_id"], realm_id)
+
             unmapped = find_unmapped_accounts(rows, mapping, mapping_mode)
             if unmapped:
                 # Beginner-safe: don't silently fake success. The import
@@ -11627,49 +11632,71 @@ def _get_account_type_index(saved_mappings: list) -> dict:
     return index
 
 
-def _detect_accounts_for_auto_balance(
-    still_blocked: list,
-    original_rows: list,
-    saved_mappings: list,
-) -> tuple:
-    """Return (bank_info, expense_info) dicts for auto-balance.
+def _get_or_create_clearing_account(qbo, firm_id: str, realm_id: str) -> dict:
+    """Return {"name": str, "qbo_account_id": str} for this realm's PCLaw
+    Clearing suspense account, creating it once via QBO's API the first
+    time this connection needs one. Reused across every job/month for the
+    realm afterward — looked up via app_db.get_clearing_account, never
+    recreated or re-detected per import.
 
-    bank_info:    {"name": str, "number": str}  — from first Bank mapping
-    expense_info: {"name": str, "number": str}  — from first credit-only
-                  blocked entry's source GL row (the expense account)
+    Replaces the old _detect_accounts_for_auto_balance guess-a-bank/
+    guess-an-expense-account heuristic, which (a) never actually used the
+    "bank" account it detected (auto_balance_by_token_group's net-credit
+    branch always self-cancelled on the row's own account regardless), and
+    (b) guessed an "expense offset" account from the first credit-only
+    blocked row in the month, with no relation to the row actually being
+    balanced — confirmed wrong for real bank transfers earlier in this
+    investigation. Both behaviors are replaced by a single dedicated
+    Clearing account so nothing gets silently erased or misattributed.
     """
-    from decimal import Decimal
+    existing = db.get_clearing_account(firm_id, realm_id)
+    if existing and existing.get("qbo_account_id"):
+        return {
+            "name": existing.get("qbo_account_name") or "PCLaw Clearing",
+            "qbo_account_id": existing["qbo_account_id"],
+        }
 
-    bank = {"name": "", "number": ""}
-    for m in saved_mappings:
-        if (m.get("qbo_account_type") or "").lower() == "bank":
-            bank = {
-                "name": m.get("qbo_account_name") or m.get("pclaw_account_name") or "",
-                "number": m.get("pclaw_account_number") or "",
-            }
-            break
+    response = qbo.create_account({
+        "Name": "PCLaw Clearing",
+        "AccountType": "Other Current Asset",
+        "AccountSubType": "OtherCurrentAssets",
+    })
+    qbo_account = (response or {}).get("Account") or response or {}
+    qbo_account_id = str(qbo_account.get("Id") or "")
+    qbo_account_name = qbo_account.get("Name") or "PCLaw Clearing"
+    if qbo_account_id:
+        db.save_clearing_account(firm_id, realm_id, qbo_account_id, qbo_account_name)
+    return {"name": qbo_account_name, "qbo_account_id": qbo_account_id}
 
-    src_by_txn = {}
-    for r in original_rows:
-        tid = (r.get("transaction_id") or r.get("reference_number") or "").strip()
-        if tid and tid not in src_by_txn:
-            src_by_txn[tid] = r
 
-    expense = {"name": "", "number": ""}
-    for blocked in still_blocked:
-        credits = Decimal(str(blocked.get("credits") or "0"))
-        debits = Decimal(str(blocked.get("debits") or "0"))
-        if credits > 0 and debits == 0:
-            txn_id = str(blocked.get("transaction_id") or "").strip()
-            src = src_by_txn.get(txn_id) or {}
-            if src:
-                expense = {
-                    "name": src.get("account_name", ""),
-                    "number": src.get("account_number", ""),
-                }
-            break
+def _inject_clearing_account_mapping(mapping: dict, firm_id, realm_id) -> None:
+    """Ensure synthetic PCLaw-Clearing rows resolve through ``mapping``.
 
-    return bank, expense
+    Clearing-offset rows (see gl_grouping.auto_balance_by_token_group) use
+    PCLAW_CLEARING_SENTINEL as their account_number and the Clearing
+    account's real QBO name as their account_name — neither has a
+    PCLaw-side mapping entry, since the account doesn't come from PCLaw's
+    chart of accounts. build_journal_entry_payload/find_unmapped_accounts
+    would otherwise raise on these rows. Injects both keys (mapping-mode
+    agnostic) so it resolves whether this firm maps by number or by name.
+    Mutates ``mapping`` in place. This is the one, centralized place this
+    injection happens — every caller that builds its own ``mapping`` dict
+    before calling find_unmapped_accounts/plan_balanced_payloads calls this
+    instead of duplicating the logic.
+
+    No-op if this connection has no Clearing account yet — nothing to
+    inject, and nothing should be referencing it in that case either.
+    """
+    from gl_grouping import PCLAW_CLEARING_SENTINEL
+
+    clearing = db.get_clearing_account(firm_id, realm_id)
+    if not clearing:
+        return
+    qbo_id = str(clearing.get("qbo_account_id") or "")
+    if not qbo_id:
+        return
+    mapping[PCLAW_CLEARING_SENTINEL] = qbo_id
+    mapping[clearing.get("qbo_account_name") or "PCLaw Clearing"] = qbo_id
 
 
 @app.route("/jobs/<job_id>/preview-import")
@@ -11782,9 +11809,20 @@ def preview_import(job_id):
                     # Bank transfer pairing: find and group inter-account transfer pairs
                     # (two single-line entries with opposite debit/credit, same amount/date)
                     # before they fall through to auto_balance, which would destroy them.
+                    # Excludes TotRec-claimed transaction_ids first -- both layers scan the
+                    # same unfiltered `grouped` dict and a row satisfying both layers'
+                    # criteria would otherwise get double-claimed, with whichever stamping
+                    # loop runs later in _run_gl_import silently overwriting the other's
+                    # claim (same guard TotRec's own still_blocked_after_totrec already
+                    # applies -- plan_transfer_pairs needs it too, since it scans `grouped`
+                    # directly rather than still_blocked).
                     from gl_grouping import plan_transfer_pairs
+                    grouped_for_transfers = {
+                        txn_id: txn_rows for txn_id, txn_rows in grouped.items()
+                        if txn_id not in tot_rec_txn_ids
+                    }
                     transfer_groups = plan_transfer_pairs(
-                        grouped,
+                        grouped_for_transfers,
                         account_mappings=_get_account_mapping(saved_mappings, "number"),
                         qbo_account_type_index=_get_account_type_index(saved_mappings),
                     )
@@ -11811,39 +11849,59 @@ def preview_import(job_id):
                             preview["would_post"] = True
                             preview["balanced"] = True
 
-                    # Old auto-balance mechanism: kept as TotalRec/Transfer-safe fallback for
-                    # other single-sided rows not covered by those layers.
-                    # Since still_blocked_after_transfers already has TotalRec and Transfer
-                    # txn_ids filtered out, auto_balance only sees rows genuinely unhandled.
-                    if still_blocked_after_transfers:
-                        _bank, _expense = _detect_accounts_for_auto_balance(
-                            still_blocked_after_transfers, rows, saved_mappings
+                    # PCLaw Clearing fallback: anything TotalRec/Transfer didn't
+                    # claim gets honestly parked on a dedicated suspense account
+                    # instead of being self-cancelled or misattributed.
+                    # Since still_blocked_after_transfers already has TotalRec and
+                    # Transfer txn_ids filtered out, this only sees rows genuinely
+                    # unhandled by any real matching layer.
+                    if still_blocked_after_transfers and qbo_conn:
+                        _clearing = _get_or_create_clearing_account(
+                            qbo, user["firm_id"], qbo_conn["realm_id"]
                         )
-                        if _bank["name"]:
+                        if _clearing["qbo_account_id"]:
                             _synthetic = auto_balance_by_token_group(
                                 still_blocked=still_blocked_after_transfers,
                                 original_rows=rows,
-                                bank_account_name=_bank["name"],
-                                bank_account_number=_bank["number"],
-                                expense_offset_name=_expense["name"],
-                                expense_offset_number=_expense["number"],
+                                clearing_account_name=_clearing["name"],
                             )
                             if _synthetic:
-                                job["auto_balance_rows"] = _synthetic
-                                jobs[job_id] = job
-                                db.save_job_state(job_id, job)
-                                logging.getLogger("app").info(
-                                    "auto_balance: added %d synthetic rows for job %s "
-                                    "(bank=%r, expense=%r)",
-                                    len(_synthetic), job_id, _bank["name"], _expense["name"],
-                                )
-                                preview["blocked_transactions"] = [
-                                    b for b in preview.get("blocked_transactions", [])
-                                    if str(b.get("transaction_id") or "") not in tot_rec_txn_ids
-                                ]
-                                if not preview["blocked_transactions"]:
-                                    preview["would_post"] = True
-                                    preview["balanced"] = True
+                                # Integrity check: every layer before this fallback only
+                                # ever removes internally-balanced groups, so whatever's
+                                # left and gets offset against Clearing must itself
+                                # balance in aggregate. If it doesn't, something upstream
+                                # mis-grouped a row -- block, don't post through it.
+                                _zero_net = check_clearing_zero_net(_synthetic)
+                                if not _zero_net["balanced"]:
+                                    preview["clearing_integrity_error"] = (
+                                        f"PCLaw Clearing did not balance to $0.00 for this "
+                                        f"import — off by ${_zero_net['net']:.2f}. This means "
+                                        f"an earlier layer (CER Total Recoveries or transfer "
+                                        f"matching) likely mis-grouped a row. Import blocked "
+                                        f"until this is resolved."
+                                    )
+                                    logging.getLogger("app").error(
+                                        "clearing: zero-net check FAILED for job %s — "
+                                        "debit=%s credit=%s net=%s across %d rows; blocking import",
+                                        job_id, _zero_net["debit_total"], _zero_net["credit_total"],
+                                        _zero_net["net"], _zero_net["row_count"],
+                                    )
+                                else:
+                                    job["auto_balance_rows"] = _synthetic
+                                    jobs[job_id] = job
+                                    db.save_job_state(job_id, job)
+                                    logging.getLogger("app").info(
+                                        "clearing: parked %d synthetic rows for job %s "
+                                        "on %r (zero-net check passed)",
+                                        len(_synthetic), job_id, _clearing["name"],
+                                    )
+                                    preview["blocked_transactions"] = [
+                                        b for b in preview.get("blocked_transactions", [])
+                                        if str(b.get("transaction_id") or "") not in tot_rec_txn_ids
+                                    ]
+                                    if not preview["blocked_transactions"]:
+                                        preview["would_post"] = True
+                                        preview["balanced"] = True
 
                 elif job.get("auto_balance_rows") and preview.get("blocked_transactions"):
                     preview["blocked_transactions"] = []
@@ -11856,7 +11914,7 @@ def preview_import(job_id):
 
         # Case 3: global imbalance with no per-txn blockers and no saved auto rows.
         # The individual transactions all balance but the overall debits ≠ credits.
-        # Build ONE synthetic adjustment row on the bank account to zero out the diff.
+        # Build ONE synthetic adjustment row on PCLaw Clearing to zero out the diff.
         if (
             not preview.get("blocked_transactions")
             and not preview.get("balanced")
@@ -11865,6 +11923,7 @@ def preview_import(job_id):
             and saved_mappings
         ):
             from decimal import Decimal as _Decimal
+            from gl_grouping import PCLAW_CLEARING_SENTINEL
             try:
                 _raw_dr = (preview.get("total_debits") or "0").replace(",", "")
                 _raw_cr = (preview.get("total_credits") or "0").replace(",", "")
@@ -11872,10 +11931,10 @@ def preview_import(job_id):
                 _global_cr = _Decimal(_raw_cr)
                 _diff = _global_dr - _global_cr  # positive = excess debits
                 if _diff != 0:
-                    _bank2, _ = _detect_accounts_for_auto_balance(
-                        [], rows, saved_mappings
+                    _clearing2 = _get_or_create_clearing_account(
+                        qbo, user["firm_id"], qbo_conn["realm_id"]
                     )
-                    if _bank2["name"]:
+                    if _clearing2["qbo_account_id"]:
                         _abs = abs(_diff)
                         # Find a date from any GL row
                         _any_date = next(
@@ -11886,8 +11945,8 @@ def preview_import(job_id):
                         )
                         _synthetic_global = [{
                             "date": _any_date,
-                            "account_number": _bank2["number"] or "",
-                            "account_name": _bank2["name"],
+                            "account_number": PCLAW_CLEARING_SENTINEL,
+                            "account_name": _clearing2["name"],
                             "memo": "Auto-balance (global adjustment)",
                             "reference_number": "",
                             "transaction_id": "GLOBAL-BALANCE-ADJ",
@@ -11895,20 +11954,22 @@ def preview_import(job_id):
                             # excess debits → add credit; excess credits → add debit
                             "debit": f"{_abs:.2f}" if _diff < 0 else "0.00",
                             "credit": f"{_abs:.2f}" if _diff > 0 else "0.00",
+                            "_synthetic": True,
+                            "_clearing": True,
                         }]
                         job["auto_balance_rows"] = _synthetic_global
                         jobs[job_id] = job
                         db.save_job_state(job_id, job)
                         logging.getLogger("app").info(
-                            "auto_balance(global): 1 synthetic row for job %s "
-                            "diff=%s bank=%r",
-                            job_id, _diff, _bank2["name"],
+                            "clearing(global): 1 synthetic row for job %s "
+                            "diff=%s clearing=%r",
+                            job_id, _diff, _clearing2["name"],
                         )
                         preview["balanced"] = True
                         preview["would_post"] = True
             except Exception:  # noqa: BLE001
                 logging.getLogger("app").warning(
-                    "auto_balance(global): failed for job %s", job_id, exc_info=True
+                    "clearing(global): failed for job %s", job_id, exc_info=True
                 )
 
     _audit("import_preview", target_type="job", target_id=job_id,

@@ -588,6 +588,64 @@
   </section>
   {% endif %}
 
+  {% if preview.clearing_integrity_error %}
+  <section class="card error-panel" data-testid="clearing-integrity-error-card">
+    <p class="eyebrow" style="color:var(--error);">Import blocked — integrity check failed</p>
+    <h2>PCLaw Clearing did not balance to $0.00.</h2>
+    <p class="muted" style="max-width:62ch;" data-testid="clearing-integrity-error-summary">
+      {{ preview.clearing_integrity_error }}
+    </p>
+  </section>
+  {% endif %}
+
+  {% set clearing_rows = (job.auto_balance_rows or [])|selectattr('_clearing')|list %}
+  {% if clearing_rows %}
+  <section class="card warning-panel" data-testid="clearing-account-card">
+    <p class="eyebrow" style="color:var(--warning);">Parked for review, not resolved</p>
+    <h2>{{ clearing_rows|length }} item{% if clearing_rows|length != 1 %}s{% endif %}
+      posted to PCLaw Clearing &mdash; review these.</h2>
+    <p class="muted" style="max-width:62ch;">
+      These transactions didn&rsquo;t match any known pattern (a bank
+      transfer, a client cost recovery, or a balanced batch), so instead of
+      guessing an account or erasing their effect, each one is offset
+      against a dedicated <strong>PCLaw Clearing</strong> account in
+      QuickBooks. Nothing is lost &mdash; review these in QuickBooks and
+      reclassify them to their correct account once you know where they belong.
+    </p>
+    <div class="table-wrap" style="margin-top:var(--space-3);">
+      <table>
+        <thead>
+          <tr>
+            <th>Transaction reference</th>
+            <th>Date</th>
+            <th>Description</th>
+            <th>Debit</th>
+            <th>Credit</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in clearing_rows[:25] %}
+          <tr>
+            <td><code>{{ r.transaction_id }}</code></td>
+            <td>{{ r.date }}</td>
+            <td>{{ r.description }}</td>
+            <td>{{ r.debit }}</td>
+            <td>{{ r.credit }}</td>
+          </tr>
+          {% endfor %}
+          {% if clearing_rows|length > 25 %}
+          <tr>
+            <td colspan="5" class="muted">
+              &hellip;and {{ clearing_rows|length - 25 }} more.
+            </td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
   {% if preview.sample_lines %}
   <section class="card">
     <p class="eyebrow">Sample entries</p>

@@ -373,6 +373,47 @@
   </section>
   {% endif %}
 
+  {# PCLaw Clearing warning: surfaces items parked on the Clearing account at Step 4 #}
+  {% set _clearing_rows = (job.auto_balance_rows or [])|selectattr('_clearing')|list %}
+  {% if _clearing_rows %}
+  <section class="card" data-testid="clearing-account-card"
+           style="padding:var(--space-4);margin-bottom:var(--space-5);
+                  border-left:3px solid var(--warning,#f59e0b);
+                  background:var(--warning-soft,#fffbeb);">
+    <details>
+      <summary style="cursor:pointer;font-weight:600;font-size:.9rem;">
+        &#9888;&#65039; {{ _clearing_rows|length }} item(s) posted to PCLaw Clearing &mdash; review these
+      </summary>
+      <p style="font-size:.83rem;color:var(--ink-muted);margin:var(--space-2) 0;">
+        These transactions didn&rsquo;t match a known pattern, so they&rsquo;re
+        offset against a dedicated PCLaw Clearing account instead of being
+        guessed or erased. Nothing is lost &mdash; reclassify them in
+        QuickBooks once you know where they belong.
+      </p>
+      <table style="width:100%;border-collapse:collapse;font-size:.8rem;margin-top:var(--space-2);">
+        <thead>
+          <tr style="text-align:left;border-bottom:1px solid var(--line);">
+            <th style="padding:4px 8px;width:20%;">Transaction</th>
+            <th style="padding:4px 8px;">Description</th>
+            <th style="padding:4px 8px;width:15%;">Debit</th>
+            <th style="padding:4px 8px;width:15%;">Credit</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in _clearing_rows %}
+          <tr style="border-bottom:1px solid var(--line);">
+            <td style="padding:4px 8px;font-family:monospace;">{{ r.transaction_id }}</td>
+            <td style="padding:4px 8px;color:var(--ink-muted);">{{ r.description }}</td>
+            <td style="padding:4px 8px;">{{ r.debit }}</td>
+            <td style="padding:4px 8px;">{{ r.credit }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </details>
+  </section>
+  {% endif %}
+
   {% if not already_imported and not import_in_progress %}
     <section class="card" data-testid="send-to-qbo-card"
              style="padding:var(--space-6);margin-bottom:var(--space-6);">
